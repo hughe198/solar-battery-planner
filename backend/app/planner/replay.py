@@ -210,7 +210,7 @@ class Replayer:
     ) -> list[str]:
         """What happened on the latest replayed day and what the charge decision was worth."""
         prices = CyclePrices.of(self.book, cycle.night_starts(), cycle.day_starts())
-        label = d.day.strftime("%A %-d %B")
+        label = f"{d.day:%A} {d.day.day} {d.day:%B}"  # %-d isn't supported on Windows
         usage = (
             f"On {label} your home used {d.load_kwh:.1f} kWh "
             f"and the panels made {d.solar_kwh:.1f} kWh"
