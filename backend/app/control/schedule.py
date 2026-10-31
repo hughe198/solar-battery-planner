@@ -2,8 +2,8 @@
 
 The inverter's schedule (Fox "Mode Scheduler", Open API v1) is a list of periods that repeat
 every day. Each has a start and an end in local wall-clock time, both inclusive to the minute
-(a period "to 05:30" is stored as ending 05:29), a work mode, and for a forced charge the level
-to charge to (fdSoc, %) and the power to charge at (fdPwr, W). Periods can't cross midnight, so
+(a period "to 05:30" is stored as ending 05:29), a work mode, and for a forced charge or
+discharge the level to stop at (fdSoc, %) and the power (fdPwr, W). Periods can't cross midnight, so
 a charge from 23:40 to 05:30 is written as two periods.
 
 Only the periods that overlap tonight's charge are replaced; the user's other periods are kept
@@ -19,6 +19,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 FORCE_CHARGE = "ForceCharge"
+FORCE_DISCHARGE = "ForceDischarge"
 DEFAULT_MAX_GROUPS = 8
 # Documented ranges for the battery SoC settings; the inverter's own ranges win when it
 # reports them in the schedule's `properties`.
@@ -135,9 +136,15 @@ class Schedule:
 
 
 def charge_periods(
-    start: datetime, stop: datetime, tz: str, fd_soc: float, fd_pwr: float, min_soc: float
+    start: datetime,
+    stop: datetime,
+    tz: str,
+    fd_soc: float,
+    fd_pwr: float,
+    min_soc: float,
+    work_mode: str = FORCE_CHARGE,
 ) -> list[Period]:
-    """Force charge periods covering [start, stop), split at local midnight."""
+    """Force charge (or discharge) periods covering [start, stop), split at local midnight."""
     zone = ZoneInfo(tz)
     local_start = start.astimezone(zone)
     # Fox ends are inclusive to the minute; round a stop with seconds up to the next minute.
@@ -153,7 +160,7 @@ def charge_periods(
     last = first + minutes - 1
     spans = [(first, last)] if last < 24 * 60 else [(first, 24 * 60 - 1), (0, last - 24 * 60)]
     return [
-        Period(s, e, FORCE_CHARGE, fd_soc=fd_soc, fd_pwr=fd_pwr, min_soc_on_grid=min_soc)
+        Period(s, e, work_mode, fd_soc=fd_soc, fd_pwr=fd_pwr, min_soc_on_grid=min_soc)
         for s, e in spans
     ]
 

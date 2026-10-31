@@ -43,6 +43,7 @@ class BatteryIn(BaseModel):
     max_charge_kw: float = Field(gt=0, le=50)
     max_discharge_kw: float = Field(gt=0, le=50)
     round_trip_efficiency_percent: float = Field(default=90, gt=50, le=100)
+    wear_pence_per_cycle: float = Field(default=0, ge=0, le=1000)
 
 
 class SolarArrayIn(BaseModel):
@@ -327,10 +328,18 @@ class RecommendationOut(BaseModel):
     force_charge_stop: datetime | None
     force_charge_minutes: int
     force_charge_reaches_target: bool
+    hold_start: datetime | None
+    hold_stop: datetime | None
+    discharge_start: datetime | None
+    discharge_stop: datetime | None
+    discharge_kwh: float
+    discharge_revenue_pence: float
+    discharge_to_percent: float | None
     expected: OutcomeOut
     dull: OutcomeOut
     bright: OutcomeOut
     reasons: list[str]
+    downsides: list[str]
 
 
 class CandidateOut(BaseModel):
@@ -485,6 +494,12 @@ class ProposalOut(BaseModel):
     charge_kwh: float
     start: datetime | None
     stop: datetime | None
+    hold_start: datetime | None
+    hold_stop: datetime | None
+    discharge_start: datetime | None
+    discharge_stop: datetime | None
+    discharge_soc_percent: float | None
+    discharge_power_w: float | None
     target_soc_percent: float | None
     power_w: float | None
     min_soc_on_grid: float | None

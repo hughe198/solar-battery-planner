@@ -13,6 +13,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.control.schedule import (
+    FORCE_DISCHARGE,
     Period,
     Schedule,
     charge_periods,
@@ -48,6 +49,14 @@ class Proposal:
     charge_kwh: float
     start: datetime | None
     stop: datetime | None
+    # The battery is held (the house on the grid) for this span before the charge.
+    hold_start: datetime | None
+    hold_stop: datetime | None
+    # Before a free window the battery is exported down to this level.
+    discharge_start: datetime | None
+    discharge_stop: datetime | None
+    discharge_soc_percent: float | None
+    discharge_power_w: float | None
     target_soc_percent: float | None
     power_w: float | None
     min_soc_on_grid: float | None
@@ -73,12 +82,24 @@ def propose(
     current, replaced = without(schedule.periods, previous)
 
     start, stop = rec.force_charge_start, rec.force_charge_stop
+    hold_start, hold_stop = getattr(rec, "hold_start", None), getattr(rec, "hold_stop", None)
     target = power = min_soc = None
     added: list[Period] = []
+    power = schedule.clamp("fdpwr", round(battery.max_charge_kw * 1000))
+    min_soc = schedule.clamp("minsocongrid", round(battery.min_soc_percent))
+    hold: list[Period] = []
+    if hold_start is not None and hold_stop is not None and hold_stop > hold_start:
+        # A forced charge to the lowest level the inverter accepts charges nothing once the
+        # battery is above it, but keeps the house on the grid: the battery is held.
+        floor = schedule.ranges["fdsoc"][0]
+        hold = charge_periods(hold_start, hold_stop, system.timezone, floor, power, min_soc)
+        notes.append(
+            "Until the charge, the battery is held: a forced charge to "
+            f"{floor:g}% keeps the house on the cheap grid without charging, so stored energy "
+            "isn't used overnight only to be bought back."
+        )
     if rec.charge_kwh > 0 and start is not None and stop is not None and stop > start:
         target = schedule.clamp("fdsoc", ceil(rec.target_soc_percent))
-        power = schedule.clamp("fdpwr", round(battery.max_charge_kw * 1000))
-        min_soc = schedule.clamp("minsocongrid", round(battery.min_soc_percent))
         added = charge_periods(start, stop, system.timezone, target, power, min_soc)
         if "maxsoc" in schedule.reported:
             top = schedule.ranges["maxsoc"][1]
@@ -99,6 +120,35 @@ def propose(
             notes.append("The charge may not reach the target before the cheap rate ends.")
     else:
         notes.append("No charge is needed, so no force charge period is written.")
+    drain: list[Period] = []
+    drain_start = getattr(rec, "discharge_start", None)
+    drain_stop = getattr(rec, "discharge_stop", None)
+    drain_soc = drain_power = None
+    if drain_start is not None and drain_stop is not None and drain_stop > drain_start:
+        wanted = ceil(getattr(rec, "discharge_to_percent", None) or battery.min_soc_percent)
+        drain_soc = schedule.clamp("fdsoc", wanted)
+        drain_power = schedule.clamp("fdpwr", round(battery.max_discharge_kw * 1000))
+        drain = charge_periods(
+            drain_start,
+            drain_stop,
+            system.timezone,
+            drain_soc,
+            drain_power,
+            min_soc,
+            work_mode=FORCE_DISCHARGE,
+        )
+        notes.append(
+            f"Before the free window the battery is force discharged to {drain_soc:g}% at "
+            f"{drain_power:g} W, exporting what's stored; the free window refills it."
+        )
+        if drain_soc != wanted:
+            notes.append(
+                f"The inverter accepts discharge levels from {schedule.ranges['fdsoc'][0]:g}%, "
+                f"so it stops at {drain_soc:g}% rather than {wanted:g}%."
+            )
+    added = drain + hold + added
+    if not added:
+        power = min_soc = None
 
     after, overlapping = merge(current, added)
     removed = replaced + overlapping
@@ -119,15 +169,21 @@ def propose(
             + ", ".join(f"{p.work_mode} {p.label()}" for p in current)
             + "."
         )
-    if removed and any(p.work_mode != "ForceCharge" for p in removed):
+    if removed and any(p.work_mode not in ("ForceCharge", FORCE_DISCHARGE) for p in removed):
         notes.append("Some of your own schedule periods overlap the charge and are replaced.")
     return Proposal(
         day=plan.day,
         mode=rec.mode,
         planned_soc_percent=rec.target_soc_percent,
         charge_kwh=rec.charge_kwh,
-        start=start if added else None,
-        stop=stop if added else None,
+        start=start if target is not None else None,
+        stop=stop if target is not None else None,
+        hold_start=hold_start if hold else None,
+        hold_stop=hold_stop if hold else None,
+        discharge_start=drain_start if drain else None,
+        discharge_stop=drain_stop if drain else None,
+        discharge_soc_percent=drain_soc if drain else None,
+        discharge_power_w=drain_power if drain else None,
         target_soc_percent=target,
         power_w=power,
         min_soc_on_grid=min_soc,

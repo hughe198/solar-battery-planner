@@ -142,3 +142,20 @@ def test_upgrades_step_one_tariffs():
     assert s.rate_at(utc(2026, 12, 2, 23, 30), "import") == 7.5
     assert s.rate_at(utc(2026, 12, 2, 5, 30), "import") == 27.5
     assert s.rate_at(utc(2026, 12, 2, 12, 0), "export") == 15
+
+
+def test_upgrade_adds_battery_wear_cost():
+    engine = create_engine("sqlite://", poolclass=StaticPool)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE batteries (id INTEGER PRIMARY KEY, system_id INTEGER, "
+                "capacity_kwh FLOAT, min_soc_percent FLOAT, max_charge_kw FLOAT, "
+                "max_discharge_kw FLOAT, round_trip_efficiency_percent FLOAT)"
+            )
+        )
+        conn.execute(text("INSERT INTO batteries VALUES (1, 1, 10, 10, 5, 5, 90)"))
+    upgrade(engine)
+    upgrade(engine)
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT wear_pence_per_cycle FROM batteries")).scalar() == 0

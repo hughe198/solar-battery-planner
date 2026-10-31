@@ -2,10 +2,10 @@
 
 An inverter in forced charge keeps drawing from the grid until the schedule ends, whatever the
 battery level, so the target percentage alone isn't enough: the user needs a start and stop
-time too. The charge is timed to finish as the charge window closes, so the battery starts the
-day at the target rather than holding it (and being topped up) through the night. Until the
-charge starts the inverter is in self-use, so the house runs from the battery; that drain is
-added to what the charge has to put back.
+time too. The charge is timed to finish as the charge window closes, so the whole cheap period
+is used and the battery starts the day at the target. Until the charge starts the battery is
+held, so the house runs on the cheap (or free) grid rather than spending stored energy that
+would only be bought back, with losses, before morning.
 
 The charge rate is learned from history where it can be: half hours in which the grid charged
 the battery, split at the level where batteries usually slow down near full.
@@ -14,6 +14,7 @@ the battery, split at the level where batteries usually slow down near full.
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from math import ceil
+from typing import Protocol
 
 import numpy as np
 from sqlalchemy import func, select
@@ -121,18 +122,27 @@ def reachable_kwh(
 
 @dataclass(frozen=True)
 class ChargeSchedule:
-    """When to force charge, in UTC. Empty (start == stop) when no charge is needed."""
+    """What the inverter does through the charge window, in UTC.
 
+    From the window opening until the forced charge starts the battery is held: the house runs
+    on the grid at the cheap (or free) rate instead of from the battery, so stored energy isn't
+    spent overnight only to be bought back, with losses, before morning. With no charge needed
+    the whole window is a hold. `start == stop` when there is no forced charge.
+    """
+
+    hold_start: datetime
+    hold_stop: datetime
     start: datetime
     stop: datetime
-    # Battery level when the charge starts, after the house has run from it since the window
-    # opened.
-    start_soc_percent: float
     reaches_target: bool
 
     @property
     def minutes(self) -> int:
         return int((self.stop - self.start).total_seconds() // 60)
+
+    @property
+    def hold_minutes(self) -> int:
+        return int((self.hold_stop - self.hold_start).total_seconds() // 60)
 
 
 def _floor(moment: datetime, step: timedelta) -> datetime:
@@ -147,35 +157,82 @@ def schedule(
     target_kwh: float,
     window_start: datetime,
     window_end: datetime,
-    night_starts: list[datetime],
-    night_net_load_kwh: list[float],
 ) -> ChargeSchedule:
-    """Start late enough to finish as the window closes, allowing for the house's use of the
-    battery until then; start times are rounded to five minutes earlier."""
-    if target_kwh <= start_kwh + 1e-6 or window_end <= window_start:
-        return ChargeSchedule(window_end, window_end, battery.percent(start_kwh), True)
-
-    def drained_by(moment: datetime) -> float:
-        used = 0.0
-        for s, net in zip(night_starts, night_net_load_kwh):
-            share = (min(moment, s + INTERVAL) - s) / INTERVAL
-            if share > 0:
-                used += max(net, 0.0) * min(share, 1.0)
-        if start_kwh <= battery.reserve_kwh:
-            return start_kwh
-        return max(battery.reserve_kwh, start_kwh - used / battery.discharge_efficiency)
-
-    begin = window_start
-    level = start_kwh
-    # A few rounds settle it: starting later drains more, which takes longer to put back.
-    for _ in range(5):
-        hours = charge_hours(rate, battery, level, target_kwh)
-        begin = max(window_start, _floor(window_end - timedelta(hours=hours), SCHEDULE_STEP))
-        new_level = drained_by(begin)
-        if abs(new_level - level) < 1e-3:
-            break
-        level = new_level
-    hours = charge_hours(rate, battery, level, target_kwh)
+    """Hold the battery, then force charge late enough to finish as the window closes, so the
+    whole cheap period is used. Start times are rounded to five minutes earlier."""
+    if window_end <= window_start:
+        return ChargeSchedule(window_end, window_end, window_end, window_end, True)
+    if target_kwh <= start_kwh + 1e-6:
+        return ChargeSchedule(window_start, window_end, window_end, window_end, True)
+    hours = charge_hours(rate, battery, start_kwh, target_kwh)
+    begin = max(window_start, _floor(window_end - timedelta(hours=hours), SCHEDULE_STEP))
     finish = begin + timedelta(hours=hours)
     stop = min(window_end, begin + ceil((finish - begin) / SCHEDULE_STEP) * SCHEDULE_STEP)
-    return ChargeSchedule(begin, stop, battery.percent(level), finish <= window_end)
+    return ChargeSchedule(window_start, begin, begin, stop, finish <= window_end)
+
+
+# The longest forced discharge before a free window. Nightly control writes the plan from two
+# hours before the window opens, so a discharge must start inside that.
+DISCHARGE_MAX = timedelta(minutes=90)
+# Don't bother draining less than this, kWh stored.
+DISCHARGE_MIN_KWH = 0.1
+
+
+class ExportRates(Protocol):
+    def rate_at(self, when: datetime, direction: str) -> float: ...
+
+
+@dataclass(frozen=True)
+class Discharge:
+    """A forced discharge (export) that ends as a free window opens, in UTC.
+
+    Energy left in the battery when power turns free is worth only what it saves later, and
+    the free window refills it for nothing, so it is better sold first. `stored_kwh` leaves the
+    cells; `export_kwh` reaches the grid after losses (less whatever the house uses meanwhile,
+    which the battery would have supplied anyway).
+    """
+
+    start: datetime
+    stop: datetime
+    stored_kwh: float
+    export_kwh: float
+    revenue_pence: float
+
+    @property
+    def minutes(self) -> int:
+        return int((self.stop - self.start).total_seconds() // 60)
+
+
+def discharge(
+    battery: BatterySpec, start_kwh: float, window_start: datetime, book: ExportRates
+) -> Discharge | None:
+    """Export down to the reserve just before the window, if any of it pays. Starts are rounded
+    to five minutes earlier and the discharge is capped at `DISCHARGE_MAX`."""
+    stored = start_kwh - battery.reserve_kwh
+    if stored < DISCHARGE_MIN_KWH or battery.max_discharge_kw <= 0:
+        return None
+    hours = stored * battery.discharge_efficiency / battery.max_discharge_kw
+    length = min(DISCHARGE_MAX, ceil(timedelta(hours=hours) / SCHEDULE_STEP) * SCHEDULE_STEP)
+    begin = _floor(window_start - length, SCHEDULE_STEP)
+    exported = min(
+        stored * battery.discharge_efficiency,
+        battery.max_discharge_kw * (window_start - begin).total_seconds() / 3600,
+    )
+    # Price each five minutes of the discharge at the export rate, the earliest first.
+    revenue, left, moment = 0.0, exported, begin
+    step_kwh = battery.max_discharge_kw * SCHEDULE_STEP.total_seconds() / 3600
+    while left > 1e-9 and moment < window_start:
+        part = min(step_kwh, left)
+        revenue += part * book.rate_at(moment, "export")
+        left -= part
+        moment += SCHEDULE_STEP
+    # Refilling it wears the battery; only sell when the export beats that.
+    if revenue <= exported / battery.discharge_efficiency * battery.wear_pence_per_kwh:
+        return None
+    return Discharge(
+        start=begin,
+        stop=window_start,
+        stored_kwh=exported / battery.discharge_efficiency,
+        export_kwh=exported,
+        revenue_pence=revenue,
+    )

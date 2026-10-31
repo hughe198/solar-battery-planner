@@ -178,6 +178,10 @@ def test_dull_day_charges_to_cover_the_house():
     assert own.force_charge_minutes == 110
     assert own.force_charge_reaches_target
     assert own.reasons[1].startswith("Force charge from 03:40 to 05:30")
+    # Held from the window opening (the evening before) until the charge starts.
+    assert own.hold_start == datetime(2026, 6, 1, 23, 30, tzinfo=timezone.utc)
+    assert own.hold_stop == own.force_charge_start
+    assert "battery is held so the house runs on the cheap grid" in own.reasons[1]
 
 
 def test_over_charging_on_a_sunny_day_is_penalised():
@@ -277,3 +281,68 @@ def test_single_rate_tariff_has_no_charge_window():
     cycle = cycle_for(DAY, flat, "UTC")
     assert cycle.window == timedelta(0)
     assert len(cycle.day_starts()) == 48
+
+
+def free_window_system(export_rate=15.0):
+    system = make_system(export_rate=export_rate)
+    system.tariff.bands[0] = band("import", "23:30", "05:30", 0.0)
+    return system
+
+
+def test_battery_is_sold_before_a_free_window():
+    result = plan(free_window_system(), make_forecast(evening_peak, bright), start_soc_percent=60)
+    own = result.recommendations[0]
+    # 5 kWh above the 10% reserve at 5 kW: an hour, ending as the free window opens.
+    assert own.discharge_start == datetime(2026, 6, 1, 22, 30, tzinfo=timezone.utc)
+    assert own.discharge_stop == datetime(2026, 6, 1, 23, 30, tzinfo=timezone.utc)
+    assert own.discharge_kwh == pytest.approx(5.0)
+    assert own.discharge_revenue_pence == pytest.approx(75.0)
+    assert own.discharge_to_percent == pytest.approx(10.0)
+    assert own.reasons[0].startswith("Before the free window, force discharge from 22:30")
+    # The user's level is kept; the charge is planned from the drained battery.
+    assert result.start_soc_percent == 60
+    assert own.stored_kwh == pytest.approx(own.target_soc_percent / 10 - 1.0, abs=0.01)
+    assert result.timeline[0].soc_percent <= 10.1
+
+
+def test_no_discharge_when_the_window_costs_or_export_pays_nothing():
+    forecast = make_forecast(evening_peak, bright)
+    paid = plan(make_system(export_rate=15), forecast, start_soc_percent=60)
+    unpaid = plan(free_window_system(export_rate=0), forecast, start_soc_percent=60)
+    for result in (paid, unpaid):
+        assert all(r.discharge_start is None for r in result.recommendations)
+        assert result.recommendations[0].discharge_kwh == 0
+
+
+def test_downsides_explain_wear_and_risk():
+    free = plan(free_window_system(), make_forecast(evening_peak, bright), start_soc_percent=60)
+    own, export = free.recommendations
+    assert own.downsides[0].startswith("Battery wear: the discharge and refill put an extra 0.50")
+    assert "per full cycle" in own.downsides[0]
+    assert any("free window doesn't happen" in d for d in own.downsides)
+    # Export mode fills up to sell solar: more cycling, and time near full.
+    assert export.downsides[0].startswith("Charges")
+    assert any("above 90%" in d for d in export.downsides)
+
+    dull = plan(make_system(), make_forecast(evening_peak, bright, spread=0.4), 10)
+    assert any(d.startswith("If the day turns out dull") for d in dull.recommendations[0].downsides)
+
+
+def test_wear_cost_is_counted():
+    system = free_window_system()
+    system.battery.wear_pence_per_cycle = 50  # 5p per kWh stored, under the 15p export
+    result = plan(system, make_forecast(evening_peak, bright), start_soc_percent=60)
+    own = result.recommendations[0]
+    assert own.discharge_start is not None
+    assert "At your 50p a cycle that wears about 25p" in own.downsides[0]
+    assert any(r.startswith("Battery wear is counted at 50p") for r in own.reasons)
+
+    system.battery.wear_pence_per_cycle = 200  # 20p per kWh: selling at 15p doesn't pay
+    result = plan(system, make_forecast(evening_peak, bright), start_soc_percent=60)
+    assert result.recommendations[0].discharge_start is None
+
+    # Wear dearer than the gap between cheap and day rates: grid charging stops paying.
+    dear = make_system()
+    dear.battery.wear_pence_per_cycle = 300
+    result = plan(dear, make_forecast(evening_peak, no_sun), start_soc_percent=10)
+    assert result.recommendations[0].target_soc_percent < 15

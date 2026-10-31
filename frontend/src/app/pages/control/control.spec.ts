@@ -33,6 +33,12 @@ const PROPOSAL: ControlProposal = {
   charge_kwh: 4.2,
   start: '2026-11-01T02:10:00Z',
   stop: '2026-11-01T05:30:00Z',
+  hold_start: '2026-10-31T23:30:00Z',
+  hold_stop: '2026-11-01T02:10:00Z',
+  discharge_start: '2026-10-31T22:30:00Z',
+  discharge_stop: '2026-10-31T23:30:00Z',
+  discharge_soc_percent: 10,
+  discharge_power_w: 5000,
   target_soc_percent: 64,
   power_w: 3600,
   min_soc_on_grid: 10,
@@ -130,6 +136,7 @@ describe('Control', () => {
     const el = fixture.nativeElement as HTMLElement;
     expect(el.textContent).toContain('64%');
     expect(el.textContent).toContain('02:10');
+    expect(el.textContent).toContain('force discharge to 10%');
     expect(el.textContent).toContain('Added');
     const apply = Array.from(el.querySelectorAll('button')).find((b) =>
       b.textContent?.includes('Apply to inverter'),

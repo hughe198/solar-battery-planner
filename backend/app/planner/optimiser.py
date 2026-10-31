@@ -36,6 +36,8 @@ from app.planner.charging import (
     TAPER_FROM_PERCENT,
     ChargeRate,
     ChargeSchedule,
+    Discharge,
+    discharge,
     reachable_kwh,
 )
 from app.planner.charging import schedule as charge_schedule
@@ -57,12 +59,15 @@ LEAN_UNDER_PENCE = 2.0
 # Alternatives described in the explanation, in SoC percentage points either side.
 COMPARE_STEP_PERCENT = 10
 FULL_TOLERANCE_KWH = 0.01
+# Held above this level for long, lithium cells age faster.
+HIGH_SOC_PERCENT = 90
+HIGH_SOC_HOURS = 2.0
 
 MODES = (PlanningMode.maximise_own_usage, PlanningMode.maximise_export_revenue)
 
 
 def effective_cost(c: Costs, mode: PlanningMode) -> np.ndarray:
-    base = c.import_cost - c.stored_value
+    base = c.import_cost - c.stored_value + c.wear
     if mode is PlanningMode.maximise_export_revenue:
         return base - c.export_revenue
     return base
@@ -178,9 +183,7 @@ class Explainer:
     def clock(self, moment: datetime) -> str:
         return moment.astimezone(self.zone).strftime("%H:%M")
 
-    def timing(
-        self, timing: ChargeSchedule, rate: ChargeRate, battery: BatterySpec, start_kwh: float
-    ) -> str:
+    def timing(self, timing: ChargeSchedule, rate: ChargeRate, battery: BatterySpec) -> str:
         hours, minutes = divmod(timing.minutes, 60)
         length = f"{hours} h {minutes} min" if hours else f"{minutes} min"
         if rate.samples:
@@ -192,16 +195,102 @@ class Explainer:
         line = (
             f"Force charge from {self.clock(timing.start)} to {self.clock(timing.stop)} "
             f"({length}). That is timed from {source}, so it finishes as the cheap rate ends "
-            "instead of keeping the grid on after reaching the target."
+            "and uses the whole cheap period."
         )
-        if timing.start_soc_percent < battery.percent(start_kwh) - 0.5:
-            line += (
-                " Until it starts, the house runs from the battery, "
-                f"down to about {timing.start_soc_percent:.0f}%."
-            )
+        if timing.hold_minutes:
+            line += " " + self.hold(timing)
         if not timing.reaches_target:
             line += " Even starting at once it may fall a little short by the window's end."
         return line
+
+    def hold(self, timing: ChargeSchedule) -> str:
+        rate = "free" if self.prices.charge <= 0 else "cheap"
+        return (
+            f"From {self.clock(timing.hold_start)} to {self.clock(timing.hold_stop)} the battery "
+            f"is held so the house runs on the {rate} grid instead of using stored energy that "
+            "would only have to be bought back."
+        )
+
+    def discharge(self, drain: Discharge, before_kwh: float, after_kwh: float) -> str:
+        b = self.battery
+        return (
+            f"Before the free window, force discharge from {self.clock(drain.start)} to "
+            f"{self.clock(drain.stop)}, taking the battery from {b.percent(before_kwh):.0f}% to "
+            f"{b.percent(after_kwh):.0f}%: about {drain.export_kwh:.1f} kWh exported earns "
+            f"{pence(drain.revenue_pence)}, and the free window refills it for nothing."
+        )
+
+    def downsides(
+        self,
+        target_kwh: float,
+        start_kwh: float,
+        drain: Discharge | None,
+        sim: Simulation,
+        row: int,
+        results: dict[str, Outcome],
+    ) -> list[str]:
+        """The costs of a strategy that aren't in the money score, plainly."""
+        b, prices = self.battery, self.prices
+        lines = []
+        added = max(target_kwh - start_kwh, 0.0)
+        per_cycle = b.wear_pence_per_kwh * b.capacity_kwh
+        if drain:
+            cycle = drain.stored_kwh / b.capacity_kwh
+            earned = drain.revenue_pence / cycle if cycle else 0.0
+            line = (
+                f"Battery wear: the discharge and refill put an extra {cycle:.2f} of a full "
+                f"cycle through the battery each night, at full power, for "
+                f"{pence(drain.revenue_pence)} ({pence(earned)} per full cycle). "
+            )
+            if per_cycle > 0:
+                wear = drain.stored_kwh * b.wear_pence_per_kwh
+                line += (
+                    f"At your {pence(per_cycle)} a cycle that wears about {pence(wear)}, "
+                    f"leaving {pence(drain.revenue_pence - wear)}."
+                )
+            else:
+                line += (
+                    "As a rough guide, a £3,000 battery rated for 6,000 cycles wears about 50p "
+                    "a cycle. Set your battery's wear cost on the System page and the planner "
+                    "only discharges when it pays after wear."
+                )
+            lines.append(line)
+            lines.append(
+                "If the free window doesn't happen (a missed schedule or a tariff change), the "
+                f"battery starts the night at {b.percent(start_kwh):.0f}% and the house imports "
+                "at the normal rate until morning."
+            )
+        elif added > 0.05:
+            lines.append(
+                f"Battery wear: charging puts {added / b.capacity_kwh:.2f} of a full cycle "
+                "through the battery from the grid"
+                + (
+                    f", about {pence(added * b.wear_pence_per_kwh)} of wear at your "
+                    f"{pence(per_cycle)} a cycle (counted in the plan)."
+                    if per_cycle > 0
+                    else "."
+                )
+            )
+        high = b.capacity_kwh * HIGH_SOC_PERCENT / 100
+        hours_high = float((sim.stored_kwh[row, 1:] >= high).sum()) * HOURS_PER_INTERVAL
+        if b.percent(target_kwh) >= HIGH_SOC_PERCENT or hours_high >= HIGH_SOC_HOURS:
+            lines.append(
+                f"The battery spends about {hours_high:.0f} hours above {HIGH_SOC_PERCENT}% on "
+                "the expected day. Lithium batteries age faster kept near full, and charging "
+                "slows above 90%."
+                if hours_high >= HIGH_SOC_HOURS
+                else f"Charging to {b.percent(target_kwh):.0f}% is near full: lithium batteries "
+                "age faster held there, and charging slows above 90%."
+            )
+        d = results["dull"]
+        if d.reserve_at is not None and d.net_cost_pence > results["expected"].net_cost_pence + 1:
+            lines.append(
+                f"If the day turns out dull the battery reaches its reserve at "
+                f"{self.clock(d.reserve_at)} and the house imports at "
+                f"{rate(prices.day_import_mean)}p: that day {net_phrase(d.net_cost_pence)}, "
+                f"where the expected day {net_phrase(results['expected'].net_cost_pence)}."
+            )
+        return lines
 
     def reasons(
         self,
@@ -326,7 +415,13 @@ def plan(
     day_starts = [i.start for i in day]
     prices = CyclePrices.of(schedule, [i.start for i in night], day_starts)
 
-    start_kwh = float(np.clip(battery.kwh(start_soc_percent), 0, battery.capacity_kwh))
+    before_kwh = float(np.clip(battery.kwh(start_soc_percent), 0, battery.capacity_kwh))
+    # Before a free (or paid-to-use) window, sell what's in the battery: the window refills it
+    # for nothing.
+    drain = None
+    if len(prices.night_import) and prices.night_import.max() <= 0:
+        drain = discharge(battery, before_kwh, cycle.night_start, schedule)
+    start_kwh = before_kwh - (drain.stored_kwh if drain else 0.0)
     max_kwh = reachable_kwh(rate, battery, start_kwh, cycle.window)
     targets = candidate_targets(battery, start_kwh, max_kwh)
 
@@ -342,8 +437,6 @@ def plan(
     }
 
     explainer = Explainer(system, battery, prices)
-    night_starts = [i.start for i in night]
-    night_net = [i.load_kwh - i.solar_kwh for i in night]
 
     def force_charge(target_kwh: float) -> ChargeSchedule:
         return charge_schedule(
@@ -353,8 +446,6 @@ def plan(
             float(target_kwh),
             cycle.night_start,
             cycle.night_end,
-            night_starts,
-            night_net,
         )
 
     plans: dict[PlanningMode, tuple[int, ChargeSchedule]] = {}
@@ -380,7 +471,23 @@ def plan(
             day_starts,
         )
         if timing.minutes:
-            reasons.insert(1, explainer.timing(timing, rate, battery, start_kwh))
+            reasons.insert(1, explainer.timing(timing, rate, battery))
+        elif timing.hold_minutes:
+            reasons.insert(1, explainer.hold(timing))
+        if drain:
+            reasons.insert(0, explainer.discharge(drain, before_kwh, start_kwh))
+        _, sim_e, _ = runs["expected"]
+        if battery.wear_pence_per_kwh > 0:
+            c_e = runs["expected"][2]
+            reasons.append(
+                f"Battery wear is counted at "
+                f"{pence(battery.wear_pence_per_kwh * battery.capacity_kwh)} a full cycle: on "
+                f"the expected day this plan stores {c_e.stored_in_kwh[chosen]:.1f} kWh "
+                f"(overnight and from solar), about {pence(c_e.wear[chosen])} of wear."
+            )
+        downsides = explainer.downsides(
+            float(targets[chosen]), start_kwh, drain, sim_e, chosen, results
+        )
         recommendations.append(
             Recommendation(
                 mode=mode,
@@ -392,11 +499,40 @@ def plan(
                 force_charge_stop=timing.stop if timing.minutes else None,
                 force_charge_minutes=timing.minutes,
                 force_charge_reaches_target=timing.reaches_target,
+                hold_start=timing.hold_start if timing.hold_minutes else None,
+                hold_stop=timing.hold_stop if timing.hold_minutes else None,
+                discharge_start=drain.start if drain else None,
+                discharge_stop=drain.stop if drain else None,
+                discharge_kwh=round(drain.export_kwh, 2) if drain else 0.0,
+                discharge_revenue_pence=round(drain.revenue_pence, 1) if drain else 0.0,
+                discharge_to_percent=(
+                    round(float(battery.percent(start_kwh)), 1) if drain else None
+                ),
                 expected=results["expected"],
                 dull=results["dull"],
                 bright=results["bright"],
                 reasons=reasons,
+                downsides=downsides,
             )
+        )
+
+    by_mode = {r.mode: r for r in recommendations}
+    own, export = (
+        by_mode[PlanningMode.maximise_own_usage],
+        by_mode[PlanningMode.maximise_export_revenue],
+    )
+    extra = export.stored_kwh - own.stored_kwh
+    if extra > 0.05:
+        gain = own.expected.net_cost_pence - export.expected.net_cost_pence
+        export.downsides.insert(
+            0,
+            f"Charges {extra:.1f} kWh more than maximise own usage ("
+            f"{extra / battery.capacity_kwh:.2f} of a cycle) to sell more solar, for "
+            + (
+                f"{pence(gain)} more on the expected day."
+                if gain >= 0.5
+                else "little difference on the expected day; it pays on bright days."
+            ),
         )
 
     chosen, timing = plans[system.planning_mode]
@@ -407,22 +543,12 @@ def plan(
     level = start_kwh
 
     def night_point(i: IntervalForecast) -> TimelinePoint:
-        """Self-use until the forced charge starts, then charging from the grid."""
+        """The battery held (the house on the grid) until the forced charge, then charging."""
         nonlocal level
         end = i.start + INTERVAL
-        net = i.load_kwh - i.solar_kwh
+        grid = i.load_kwh - i.solar_kwh
         charging = max(timedelta(0), min(end, timing.stop) - max(i.start, timing.start))
         share = charging / INTERVAL
-        grid = net * share
-        # Before the charge, the battery covers the house down to its reserve.
-        uncovered = net * (1 - share)
-        if uncovered > 0:
-            available = max(level - battery.reserve_kwh, 0.0) * battery.discharge_efficiency
-            from_battery = min(uncovered, available)
-            level -= from_battery / battery.discharge_efficiency
-            grid += uncovered - from_battery
-        else:
-            grid += uncovered
         if share > 0:
             stored = min(
                 charge_kw[level < knee] * HOURS_PER_INTERVAL * share, max(target_kwh - level, 0)
@@ -454,7 +580,7 @@ def plan(
     return ChargePlan(
         day=forecast.day,
         mode=system.planning_mode,
-        start_soc_percent=round(float(battery.percent(start_kwh)), 1),
+        start_soc_percent=round(float(battery.percent(before_kwh)), 1),
         max_soc_percent=round(float(battery.percent(max_kwh)), 1),
         charge_start=cycle.night_start,
         charge_end=cycle.night_end,

@@ -19,6 +19,14 @@
         </p>
       }
       <p class="muted">{{ p.recommendations[0].reasons[0] }}</p>
+      @if (p.recommendations[0].downsides.length) {
+        <p class="muted">
+          <strong>Downside:</strong> {{ p.recommendations[0].downsides[0] }}
+          @if (p.recommendations[0].downsides.length > 1) {
+            (and {{ p.recommendations[0].downsides.length - 1 }} more on the plan page)
+          }
+        </p>
+      }
       <p><a routerLink="/plan">See why, and set tonight's starting level</a></p>
     } @else if (planError()) {
       <p class="muted">{{ planError() }} <a routerLink="/plan">Open the charge plan</a></p>

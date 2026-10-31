@@ -11,7 +11,7 @@
 @if (plan(); as p) {
   <h2>For {{ dayLabel(p.day) }}</h2>
   <label class="soc-input">
-    Battery level when the cheap window opens at {{ localTime(p.charge_start) }} (%)
+    Battery level just before the cheap window opens at {{ localTime(p.charge_start) }} (%)
     <span class="row">
       <input #soc type="number" min="0" max="100" step="1" [value]="p.start_soc_percent" />
       <button type="button" class="secondary" (click)="recalculate(soc.value)">Recalculate</button>
@@ -24,6 +24,22 @@
         <span class="muted">{{ modeLabels[r.mode] }}{{ first ? ' (your mode)' : '' }}</span>
         <div class="target">{{ r.target_soc_percent | number: '1.0-0' }}%</div>
         <p>
+          @if (r.discharge_start) {
+            <strong
+              >Force discharge {{ localTime(r.discharge_start) }}–{{
+                localTime(r.discharge_stop)
+              }}</strong
+            >
+            to {{ r.discharge_to_percent | number: '1.0-0' }}%:
+            {{ r.discharge_kwh | number: '1.1-1' }} kWh exported, earning
+            {{ pence(r.discharge_revenue_pence) }}.<br />
+          }
+          @if (r.hold_start) {
+            <span class="muted"
+              >Hold the battery {{ localTime(r.hold_start) }}–{{ localTime(r.hold_stop) }}, house on
+              the grid.</span
+            ><br />
+          }
           @if (r.force_charge_start) {
             <strong
               >Force charge {{ localTime(r.force_charge_start) }}–{{
@@ -43,6 +59,16 @@
           Expected day: imports {{ pence(r.expected.import_cost_pence) }}, exports
           {{ pence(r.expected.export_revenue_pence) }}, so it {{ net(r.expected.net_cost_pence) }}.
         </p>
+        @if (r.downsides.length) {
+          <div class="downsides">
+            <strong>Downsides</strong>
+            <ul>
+              @for (d of r.downsides; track $index) {
+                <li>{{ d }}</li>
+              }
+            </ul>
+          </div>
+        }
         @if (!first) {
           <details>
             <summary>Why</summary>

@@ -13,6 +13,8 @@ export interface Battery {
   max_charge_kw: number;
   max_discharge_kw: number;
   round_trip_efficiency_percent: number;
+  /** Pence of wear per full charge cycle (battery price / rated cycles); 0 to ignore. */
+  wear_pence_per_cycle: number;
 }
 
 export interface SolarArray {
@@ -199,10 +201,21 @@ export interface Recommendation {
   force_charge_stop: string | null;
   force_charge_minutes: number;
   force_charge_reaches_target: boolean;
+  /** The battery is held (the house on the grid) until the forced charge, or all window. */
+  hold_start: string | null;
+  hold_stop: string | null;
+  /** Before a free window the battery is exported down to discharge_to_percent. */
+  discharge_start: string | null;
+  discharge_stop: string | null;
+  discharge_kwh: number;
+  discharge_revenue_pence: number;
+  discharge_to_percent: number | null;
   expected: PlanOutcome;
   dull: PlanOutcome;
   bright: PlanOutcome;
   reasons: string[];
+  /** Costs besides money: battery wear and the risks the strategy takes on. */
+  downsides: string[];
 }
 
 /** Average effective cost of one target under each mode (lower is better), in pence. */
@@ -351,6 +364,12 @@ export interface ControlProposal {
   charge_kwh: number;
   start: string | null;
   stop: string | null;
+  hold_start: string | null;
+  hold_stop: string | null;
+  discharge_start: string | null;
+  discharge_stop: string | null;
+  discharge_soc_percent: number | null;
+  discharge_power_w: number | null;
   target_soc_percent: number | null;
   power_w: number | null;
   min_soc_on_grid: number | null;

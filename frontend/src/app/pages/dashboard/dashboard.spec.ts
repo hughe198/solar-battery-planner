@@ -18,6 +18,7 @@ const SYSTEM: SystemConfig = {
     max_charge_kw: 5,
     max_discharge_kw: 5,
     round_trip_efficiency_percent: 90,
+    wear_pence_per_cycle: 0,
   },
   tariff: {
     name: 'Octopus Go',

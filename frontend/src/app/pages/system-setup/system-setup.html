@@ -39,10 +39,21 @@
         <input type="number" step="0.1" formControlName="max_discharge_kw" />
       </label>
     </div>
-    <label>
-      Round-trip efficiency (%)
-      <input type="number" step="1" formControlName="round_trip_efficiency_percent" />
-    </label>
+    <div class="row">
+      <label>
+        Round-trip efficiency (%)
+        <input type="number" step="1" formControlName="round_trip_efficiency_percent" />
+      </label>
+      <label>
+        Wear cost per full cycle (p)
+        <input type="number" step="1" min="0" formControlName="wear_pence_per_cycle" />
+      </label>
+    </div>
+    <p class="muted">
+      Wear cost is what each full charge and discharge takes off the battery's life: its price
+      divided by its rated cycles, e.g. £3,000 ÷ 6,000 cycles = 50p. The planner only charges from
+      the grid, or sells before a free window, when it pays after wear. Leave at 0 to ignore wear.
+    </p>
   </fieldset>
 
   <fieldset class="card" formArrayName="arrays">
