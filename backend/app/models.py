@@ -112,6 +112,8 @@ class Battery(Base):
     max_charge_kw: Mapped[float] = mapped_column(Float)
     max_discharge_kw: Mapped[float] = mapped_column(Float)
     round_trip_efficiency_percent: Mapped[float] = mapped_column(Float, default=90)
+    # What one full charge cycle wears off the battery, in pence (price / rated cycles).
+    wear_pence_per_cycle: Mapped[float] = mapped_column(Float, default=0, server_default="0")
 
     system: Mapped[System] = relationship(back_populates="battery")
 

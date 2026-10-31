@@ -33,6 +33,8 @@ class BatterySpec:
     max_discharge_kw: float
     charge_efficiency: float
     discharge_efficiency: float
+    # Wear per kWh stored, whether from the grid or solar: a full cycle's wear over capacity.
+    wear_pence_per_kwh: float = 0.0
 
     @classmethod
     def of(cls, battery: Battery) -> "BatterySpec":
@@ -44,6 +46,7 @@ class BatterySpec:
             max_discharge_kw=battery.max_discharge_kw,
             charge_efficiency=one_way,
             discharge_efficiency=one_way,
+            wear_pence_per_kwh=(battery.wear_pence_per_cycle or 0) / battery.capacity_kwh,
         )
 
     def percent(self, kwh):
@@ -264,6 +267,9 @@ class Costs:
     import_cost: np.ndarray
     export_revenue: np.ndarray
     stored_value: np.ndarray
+    # Battery wear for the energy stored overnight and from solar, at the user's cost a cycle.
+    wear: np.ndarray
+    stored_in_kwh: np.ndarray
 
     @property
     def net(self) -> np.ndarray:
@@ -281,7 +287,12 @@ def costs(sim: Simulation, battery: BatterySpec, prices: CyclePrices, start_kwh:
     night_spill = (sim.night_export_kwh - np.clip(-sim.night_net_kwh, 0, None).sum()) * (
         float(prices.night_export.mean()) if len(prices.night_export) else 0.0
     )
+    overnight = np.clip(sim.targets_kwh - start_kwh, 0, None)
+    from_solar = np.clip(np.diff(sim.stored_kwh, axis=1), 0, None).sum(axis=1)
+    stored_in = overnight + from_solar
     return Costs(
+        wear=stored_in * battery.wear_pence_per_kwh,
+        stored_in_kwh=stored_in,
         import_cost=night_cost + sim.day_import_kwh @ prices.day_import,
         export_revenue=sim.day_export_kwh @ prices.day_export + surplus_night + night_spill,
         stored_value=battery.grid_kwh_to_store(sim.end_kwh - start_kwh) * prices.charge,

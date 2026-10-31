@@ -226,7 +226,8 @@ def discharge(
         revenue += part * book.rate_at(moment, "export")
         left -= part
         moment += SCHEDULE_STEP
-    if revenue <= 0:
+    # Refilling it wears the battery; only sell when the export beats that.
+    if revenue <= exported / battery.discharge_efficiency * battery.wear_pence_per_kwh:
         return None
     return Discharge(
         start=begin,

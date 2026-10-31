@@ -57,5 +57,19 @@ def upgrade_single_window_tariffs(engine: Engine) -> None:
         db.flush()
 
 
+def add_battery_wear_cost(engine: Engine) -> None:
+    """Battery wear cost per cycle, added after step 4; 0 (not counted) for existing systems."""
+    inspector = inspect(engine)
+    if not inspector.has_table("batteries"):
+        return
+    if "wear_pence_per_cycle" in {c["name"] for c in inspector.get_columns("batteries")}:
+        return
+    with engine.begin() as conn:
+        conn.execute(
+            text("ALTER TABLE batteries ADD COLUMN wear_pence_per_cycle FLOAT NOT NULL DEFAULT 0")
+        )
+
+
 def upgrade(engine: Engine) -> None:
     upgrade_single_window_tariffs(engine)
+    add_battery_wear_cost(engine)

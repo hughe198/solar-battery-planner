@@ -326,3 +326,23 @@ def test_downsides_explain_wear_and_risk():
 
     dull = plan(make_system(), make_forecast(evening_peak, bright, spread=0.4), 10)
     assert any(d.startswith("If the day turns out dull") for d in dull.recommendations[0].downsides)
+
+
+def test_wear_cost_is_counted():
+    system = free_window_system()
+    system.battery.wear_pence_per_cycle = 50  # 5p per kWh stored, under the 15p export
+    result = plan(system, make_forecast(evening_peak, bright), start_soc_percent=60)
+    own = result.recommendations[0]
+    assert own.discharge_start is not None
+    assert "At your 50p a cycle that wears about 25p" in own.downsides[0]
+    assert any(r.startswith("Battery wear is counted at 50p") for r in own.reasons)
+
+    system.battery.wear_pence_per_cycle = 200  # 20p per kWh: selling at 15p doesn't pay
+    result = plan(system, make_forecast(evening_peak, bright), start_soc_percent=60)
+    assert result.recommendations[0].discharge_start is None
+
+    # Wear dearer than the gap between cheap and day rates: grid charging stops paying.
+    dear = make_system()
+    dear.battery.wear_pence_per_cycle = 300
+    result = plan(dear, make_forecast(evening_peak, no_sun), start_soc_percent=10)
+    assert result.recommendations[0].target_soc_percent < 15

@@ -13,6 +13,8 @@ export interface Battery {
   max_charge_kw: number;
   max_discharge_kw: number;
   round_trip_efficiency_percent: number;
+  /** Pence of wear per full charge cycle (battery price / rated cycles); 0 to ignore. */
+  wear_pence_per_cycle: number;
 }
 
 export interface SolarArray {

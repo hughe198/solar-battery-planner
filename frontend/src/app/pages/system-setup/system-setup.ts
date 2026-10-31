@@ -49,6 +49,7 @@ export class SystemSetup implements OnInit {
         90,
         [Validators.required, Validators.min(51), Validators.max(100)],
       ],
+      wear_pence_per_cycle: [0, [Validators.required, Validators.min(0), Validators.max(1000)]],
     }),
     tariff: tariffForm(this.fb),
     arrays: this.fb.array([this.arrayGroup()]),

@@ -67,7 +67,7 @@ MODES = (PlanningMode.maximise_own_usage, PlanningMode.maximise_export_revenue)
 
 
 def effective_cost(c: Costs, mode: PlanningMode) -> np.ndarray:
-    base = c.import_cost - c.stored_value
+    base = c.import_cost - c.stored_value + c.wear
     if mode is PlanningMode.maximise_export_revenue:
         return base - c.export_revenue
     return base
@@ -233,17 +233,28 @@ class Explainer:
         b, prices = self.battery, self.prices
         lines = []
         added = max(target_kwh - start_kwh, 0.0)
+        per_cycle = b.wear_pence_per_kwh * b.capacity_kwh
         if drain:
             cycle = drain.stored_kwh / b.capacity_kwh
-            per_cycle = drain.revenue_pence / cycle if cycle else 0.0
-            lines.append(
+            earned = drain.revenue_pence / cycle if cycle else 0.0
+            line = (
                 f"Battery wear: the discharge and refill put an extra {cycle:.2f} of a full "
                 f"cycle through the battery each night, at full power, for "
-                f"{pence(drain.revenue_pence)} ({pence(per_cycle)} per full cycle). Batteries "
-                "are rated for a limited number of cycles; as a rough guide, a £3,000 battery "
-                "rated for 6,000 cycles wears about 50p a cycle, so check your warranty before "
-                "relying on this for small sums."
+                f"{pence(drain.revenue_pence)} ({pence(earned)} per full cycle). "
             )
+            if per_cycle > 0:
+                wear = drain.stored_kwh * b.wear_pence_per_kwh
+                line += (
+                    f"At your {pence(per_cycle)} a cycle that wears about {pence(wear)}, "
+                    f"leaving {pence(drain.revenue_pence - wear)}."
+                )
+            else:
+                line += (
+                    "As a rough guide, a £3,000 battery rated for 6,000 cycles wears about 50p "
+                    "a cycle. Set your battery's wear cost on the System page and the planner "
+                    "only discharges when it pays after wear."
+                )
+            lines.append(line)
             lines.append(
                 "If the free window doesn't happen (a missed schedule or a tariff change), the "
                 f"battery starts the night at {b.percent(start_kwh):.0f}% and the house imports "
@@ -252,7 +263,13 @@ class Explainer:
         elif added > 0.05:
             lines.append(
                 f"Battery wear: charging puts {added / b.capacity_kwh:.2f} of a full cycle "
-                "through the battery from the grid."
+                "through the battery from the grid"
+                + (
+                    f", about {pence(added * b.wear_pence_per_kwh)} of wear at your "
+                    f"{pence(per_cycle)} a cycle (counted in the plan)."
+                    if per_cycle > 0
+                    else "."
+                )
             )
         high = b.capacity_kwh * HIGH_SOC_PERCENT / 100
         hours_high = float((sim.stored_kwh[row, 1:] >= high).sum()) * HOURS_PER_INTERVAL
@@ -460,6 +477,14 @@ def plan(
         if drain:
             reasons.insert(0, explainer.discharge(drain, before_kwh, start_kwh))
         _, sim_e, _ = runs["expected"]
+        if battery.wear_pence_per_kwh > 0:
+            c_e = runs["expected"][2]
+            reasons.append(
+                f"Battery wear is counted at "
+                f"{pence(battery.wear_pence_per_kwh * battery.capacity_kwh)} a full cycle: on "
+                f"the expected day this plan stores {c_e.stored_in_kwh[chosen]:.1f} kWh "
+                f"(overnight and from solar), about {pence(c_e.wear[chosen])} of wear."
+            )
         downsides = explainer.downsides(
             float(targets[chosen]), start_kwh, drain, sim_e, chosen, results
         )

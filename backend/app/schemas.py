@@ -43,6 +43,7 @@ class BatteryIn(BaseModel):
     max_charge_kw: float = Field(gt=0, le=50)
     max_discharge_kw: float = Field(gt=0, le=50)
     round_trip_efficiency_percent: float = Field(default=90, gt=50, le=100)
+    wear_pence_per_cycle: float = Field(default=0, ge=0, le=1000)
 
 
 class SolarArrayIn(BaseModel):
