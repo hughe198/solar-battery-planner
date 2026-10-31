@@ -27,6 +27,7 @@ Backend (FastAPI, Python 3.12+), on http://localhost:8000 with API docs at `/doc
 cd backend
 python -m venv .venv && . .venv/bin/activate
 pip install -r requirements-dev.txt
+python setup_env.py   # writes backend/.env, see Configuration
 uvicorn app.main:app --reload
 pytest
 ```
@@ -44,12 +45,37 @@ npm test
 ## Configuration
 
 Backend settings are read from environment variables (or `backend/.env`) with the `SBP_`
-prefix:
+prefix.
+
+### Generating `backend/.env`
+
+`backend/setup_env.py` walks through every setting below, explains it, suggests a value and
+generates the two secrets with Python's `secrets` module. It uses only the standard library, so
+it runs before `pip install`:
+
+```bash
+cd backend
+python setup_env.py              # ask about each setting (Enter accepts the suggestion)
+python setup_env.py --advanced   # also ask about the token algorithm and API addresses
+python setup_env.py --defaults   # accept every suggestion, just generate fresh secrets
+python setup_env.py --print      # show the result instead of writing it
+```
+
+If `backend/.env` already exists it asks before overwriting (`--force` skips the question) and
+offers the current values as defaults, so re-running keeps your secrets. Typing `new` at a
+secret generates a fresh one; replacing `SBP_CREDENTIALS_SECRET` asks again, because saved
+Fox ESS keys can't be decrypted afterwards. The file is written readable by its owner only.
+The backend refuses to start if `.env` contains keys it doesn't know, so any such lines are
+carried over commented out. `tests/test_setup_env.py` fails if a setting is added to
+`app/config.py` without adding it to the script.
+
+### Settings
 
 | Variable | Default | Notes |
 | --- | --- | --- |
 | `SBP_DATABASE_URL` | `sqlite:///./solar.db` | Any SQLAlchemy URL, e.g. Postgres |
 | `SBP_JWT_SECRET` | dev-only value | **Must** be set to a long random string in production |
+| `SBP_JWT_ALGORITHM` | `HS256` | |
 | `SBP_ACCESS_TOKEN_MINUTES` | `10080` (7 days) | |
 | `SBP_CORS_ORIGINS` | `["http://localhost:4200"]` | JSON list |
 | `SBP_CREDENTIALS_SECRET` | dev-only value | Encrypts stored Fox ESS API keys. **Must** be set in production and kept stable |
@@ -62,6 +88,116 @@ deployment use Postgres (`SBP_DATABASE_URL=postgresql+psycopg://…` and `pip in
 
 Tables are created on startup. Migrations (Alembic) will be added once the schema starts
 changing with real data in it.
+
+## Deploying on Ubuntu
+
+A single-server setup: uvicorn behind nginx under systemd, Postgres for the database, and nginx
+serving the built frontend with `/api` passed to the backend, so browser and API share one
+origin. Ubuntu 24.04 ships Python 3.12, which is enough; the paths and the `solar` user below are
+examples.
+
+1. **User, code and packages.**
+
+   ```bash
+   sudo apt install python3-venv postgresql nginx
+   sudo useradd --system --create-home --home-dir /opt/solar-battery-planner solar
+   sudo -u solar git clone https://github.com/hughe198/solar-battery-planner /opt/solar-battery-planner/app
+   cd /opt/solar-battery-planner/app/backend
+   sudo -u solar python3 -m venv .venv
+   sudo -u solar .venv/bin/pip install -r requirements.txt "psycopg[binary]"
+   ```
+
+2. **Database.**
+
+   ```bash
+   sudo -u postgres createuser solar
+   sudo -u postgres createdb -O solar solar
+   ```
+
+   With the app running as the `solar` Unix user, Postgres's default peer login needs no
+   password: the URL is `postgresql+psycopg://solar@/solar`.
+
+3. **Settings.** Run the setup script as the service user so it owns `backend/.env` (mode 600):
+
+   ```bash
+   sudo -u solar python3 setup_env.py
+   ```
+
+   Use the Postgres URL above, set the allowed origins to `https://your-domain`, and leave
+   auto-apply off (see step 5). Copy `SBP_CREDENTIALS_SECRET` into a password manager: without
+   it, saved Fox ESS keys can't be decrypted after a rebuild. The backend reads `.env` from the
+   directory it is started in, which is why the unit below sets `WorkingDirectory`. Settings
+   given as real environment variables (for example a systemd `EnvironmentFile=`) win over
+   `.env`.
+
+4. **Backend service.** `/etc/systemd/system/solar-battery-planner.service`:
+
+   ```ini
+   [Unit]
+   Description=Solar Battery Planner API
+   After=network-online.target postgresql.service
+
+   [Service]
+   User=solar
+   WorkingDirectory=/opt/solar-battery-planner/app/backend
+   ExecStart=/opt/solar-battery-planner/app/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 2 --proxy-headers
+   Restart=on-failure
+
+   [Install]
+   WantedBy=multi-user.target
+   ```
+
+   ```bash
+   sudo systemctl daemon-reload && sudo systemctl enable --now solar-battery-planner
+   journalctl -u solar-battery-planner -f
+   ```
+
+5. **Nightly auto-apply.** With more than one worker, keep `SBP_AUTO_APPLY=false`: each worker
+   would run its own loop. Run the pass from cron instead, every five minutes like the built-in
+   loop (`sudo crontab -u solar -e`):
+
+   ```cron
+   */5 * * * * cd /opt/solar-battery-planner/app/backend && .venv/bin/python -m app.control.nightly
+   ```
+
+6. **Frontend.** Build it (Node 22; on another machine is fine) and copy `dist/frontend/browser`
+   to the server:
+
+   ```bash
+   cd frontend && npm ci && npx ng build
+   rsync -a dist/frontend/browser/ server:/var/www/solar-battery-planner/
+   ```
+
+7. **nginx.** `/etc/nginx/sites-available/solar-battery-planner`, then link it into
+   `sites-enabled`, `sudo nginx -t && sudo systemctl reload nginx`, and add HTTPS with
+   `sudo certbot --nginx -d your-domain` (package `python3-certbot-nginx`):
+
+   ```nginx
+   server {
+       listen 80;
+       server_name your-domain;
+       root /var/www/solar-battery-planner;
+
+       location /api/ {
+           proxy_pass http://127.0.0.1:8000;
+           proxy_set_header Host $host;
+           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+           proxy_set_header X-Forwarded-Proto $scheme;
+       }
+
+       # Angular routes such as /plan are handled in the browser.
+       location / {
+           try_files $uri $uri/ /index.html;
+       }
+   }
+   ```
+
+   Leave `/docs` unproxied as above unless you want the API docs public.
+
+**Updating:** `git pull`, then `.venv/bin/pip install -r requirements.txt` and
+`sudo systemctl restart solar-battery-planner`, then rebuild and copy the frontend. Tables are
+created on startup. Back up the database (`sudo -u solar pg_dump solar > backup.sql`) and
+`backend/.env` together.
 
 ## Tariffs
 
