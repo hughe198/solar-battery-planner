@@ -38,6 +38,10 @@ class Recommendation:
     force_charge_stop: datetime | None
     force_charge_minutes: int
     force_charge_reaches_target: bool
+    # The battery is held (the house runs on the grid) from the window opening until the
+    # forced charge starts, or for the whole window when no charge is needed.
+    hold_start: datetime | None
+    hold_stop: datetime | None
     expected: Outcome
     # Usage at the top of its likely range with solar at the bottom, and the reverse.
     dull: Outcome

@@ -327,6 +327,8 @@ class RecommendationOut(BaseModel):
     force_charge_stop: datetime | None
     force_charge_minutes: int
     force_charge_reaches_target: bool
+    hold_start: datetime | None
+    hold_stop: datetime | None
     expected: OutcomeOut
     dull: OutcomeOut
     bright: OutcomeOut
@@ -485,6 +487,8 @@ class ProposalOut(BaseModel):
     charge_kwh: float
     start: datetime | None
     stop: datetime | None
+    hold_start: datetime | None
+    hold_stop: datetime | None
     target_soc_percent: float | None
     power_w: float | None
     min_soc_on_grid: float | None

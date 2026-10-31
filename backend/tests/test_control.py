@@ -120,8 +120,10 @@ def test_matches_reports_differences():
     assert "missing" in matches(written, [])[0]
 
 
-def plan_for(start, stop, target=80.0, charge_kwh=4.0):
+def plan_for(start, stop, target=80.0, charge_kwh=4.0, hold=None):
     rec = SimpleNamespace(
+        hold_start=hold[0] if hold else None,
+        hold_stop=hold[1] if hold else None,
         mode=PlanningMode.maximise_own_usage,
         target_soc_percent=target,
         charge_kwh=charge_kwh,
@@ -172,6 +174,36 @@ def test_no_charge_writes_no_force_charge():
     )
     assert proposal.added == [] and proposal.after == []
     assert "No charge is needed" in proposal.notes[0]
+
+
+def test_hold_before_the_charge_is_a_forced_charge_to_the_floor():
+    schedule = Schedule.from_fox(FakeInverter().scheduler("x"))
+    proposal = service.propose(
+        system_with(),
+        InverterControl(),
+        plan_for(
+            utc(2026, 1, 11, 3, 40),
+            utc(2026, 1, 11, 5, 30),
+            hold=(utc(2026, 1, 10, 23, 30), utc(2026, 1, 11, 3, 40)),
+        ),
+        schedule,
+    )
+    labels = [(p.label(), p.fd_soc) for p in proposal.after]
+    assert labels == [("00:00–03:40", 10), ("03:40–05:30", 80), ("23:30–00:00", 10)]
+    assert proposal.hold_stop == proposal.start
+    assert any("battery is held" in n for n in proposal.notes)
+
+
+def test_no_charge_still_holds_the_battery_through_the_window():
+    schedule = Schedule.from_fox(FakeInverter().scheduler("x"))
+    proposal = service.propose(
+        system_with(),
+        InverterControl(),
+        plan_for(None, None, charge_kwh=0, hold=(utc(2026, 1, 11, 0, 30), utc(2026, 1, 11, 5, 30))),
+        schedule,
+    )
+    assert [(p.label(), p.fd_soc) for p in proposal.after] == [("00:30–05:30", 10)]
+    assert proposal.start is None and proposal.target_soc_percent is None
 
 
 def test_full_schedule_is_refused():

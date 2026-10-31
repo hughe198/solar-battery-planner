@@ -238,6 +238,8 @@ def preview(
         charge_kwh=p.charge_kwh,
         start=p.start,
         stop=p.stop,
+        hold_start=p.hold_start,
+        hold_stop=p.hold_stop,
         target_soc_percent=p.target_soc_percent,
         power_w=p.power_w,
         min_soc_on_grid=p.min_soc_on_grid,

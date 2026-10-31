@@ -33,6 +33,8 @@ const PROPOSAL: ControlProposal = {
   charge_kwh: 4.2,
   start: '2026-11-01T02:10:00Z',
   stop: '2026-11-01T05:30:00Z',
+  hold_start: '2026-10-31T23:30:00Z',
+  hold_stop: '2026-11-01T02:10:00Z',
   target_soc_percent: 64,
   power_w: 3600,
   min_soc_on_grid: 10,

@@ -97,7 +97,11 @@
         <div class="preview">
           <p>
             Plan for {{ p.day }} ({{ modeLabels[p.mode] }}):
-            @if (p.added.length) {
+            @if (p.hold_start) {
+              hold the battery from {{ localTime(p.hold_start) }} to
+              {{ localTime(p.hold_stop) }} (house on the grid),
+            }
+            @if (p.target_soc_percent !== null) {
               force charge to <strong>{{ p.target_soc_percent }}%</strong> at
               {{ p.power_w | number: '1.0-0' }} W from {{ localTime(p.start) }} to
               {{ localTime(p.stop) }}, minimum charge {{ p.min_soc_on_grid }}%.

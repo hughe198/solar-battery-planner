@@ -172,7 +172,11 @@ The planner (`backend/app/planner`) picks the overnight charge by simulation, no
   finish as the charge window closes. The time it takes uses the charge rate learned from recent
   grid-charging half hours, with a slower rate above 90% if history shows one. Without that
   history it uses the battery's charge rate, which is read from the Fox ESS schedule on connect
-  when one is set. Until the charge starts, the house is assumed to run from the battery.
+  when one is set. From the window opening until the charge starts the battery is held, so the
+  house runs on the cheap (or free) grid instead of spending stored energy that would only be
+  bought back with losses. With no charge needed, the whole window is a hold. On Fox ESS the hold
+  is written as a forced charge to the lowest level the inverter accepts, which keeps the house
+  on the grid without charging.
 - **Replay.** Past days with imported battery level are replayed from the charge that was
   actually made. Simulated import, export and battery level are compared with the meter to check
   the simulator, and every other target is simulated on the same day to find the best charge

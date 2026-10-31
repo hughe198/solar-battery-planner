@@ -178,6 +178,10 @@ def test_dull_day_charges_to_cover_the_house():
     assert own.force_charge_minutes == 110
     assert own.force_charge_reaches_target
     assert own.reasons[1].startswith("Force charge from 03:40 to 05:30")
+    # Held from the window opening (the evening before) until the charge starts.
+    assert own.hold_start == datetime(2026, 6, 1, 23, 30, tzinfo=timezone.utc)
+    assert own.hold_stop == own.force_charge_start
+    assert "battery is held so the house runs on the cheap grid" in own.reasons[1]
 
 
 def test_over_charging_on_a_sunny_day_is_penalised():

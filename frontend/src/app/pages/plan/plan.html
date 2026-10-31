@@ -24,6 +24,12 @@
         <span class="muted">{{ modeLabels[r.mode] }}{{ first ? ' (your mode)' : '' }}</span>
         <div class="target">{{ r.target_soc_percent | number: '1.0-0' }}%</div>
         <p>
+          @if (r.hold_start) {
+            <span class="muted"
+              >Hold the battery {{ localTime(r.hold_start) }}–{{ localTime(r.hold_stop) }}, house on
+              the grid.</span
+            ><br />
+          }
           @if (r.force_charge_start) {
             <strong
               >Force charge {{ localTime(r.force_charge_start) }}–{{

@@ -178,9 +178,7 @@ class Explainer:
     def clock(self, moment: datetime) -> str:
         return moment.astimezone(self.zone).strftime("%H:%M")
 
-    def timing(
-        self, timing: ChargeSchedule, rate: ChargeRate, battery: BatterySpec, start_kwh: float
-    ) -> str:
+    def timing(self, timing: ChargeSchedule, rate: ChargeRate, battery: BatterySpec) -> str:
         hours, minutes = divmod(timing.minutes, 60)
         length = f"{hours} h {minutes} min" if hours else f"{minutes} min"
         if rate.samples:
@@ -192,16 +190,21 @@ class Explainer:
         line = (
             f"Force charge from {self.clock(timing.start)} to {self.clock(timing.stop)} "
             f"({length}). That is timed from {source}, so it finishes as the cheap rate ends "
-            "instead of keeping the grid on after reaching the target."
+            "and uses the whole cheap period."
         )
-        if timing.start_soc_percent < battery.percent(start_kwh) - 0.5:
-            line += (
-                " Until it starts, the house runs from the battery, "
-                f"down to about {timing.start_soc_percent:.0f}%."
-            )
+        if timing.hold_minutes:
+            line += " " + self.hold(timing)
         if not timing.reaches_target:
             line += " Even starting at once it may fall a little short by the window's end."
         return line
+
+    def hold(self, timing: ChargeSchedule) -> str:
+        rate = "free" if self.prices.charge <= 0 else "cheap"
+        return (
+            f"From {self.clock(timing.hold_start)} to {self.clock(timing.hold_stop)} the battery "
+            f"is held so the house runs on the {rate} grid instead of using stored energy that "
+            "would only have to be bought back."
+        )
 
     def reasons(
         self,
@@ -342,8 +345,6 @@ def plan(
     }
 
     explainer = Explainer(system, battery, prices)
-    night_starts = [i.start for i in night]
-    night_net = [i.load_kwh - i.solar_kwh for i in night]
 
     def force_charge(target_kwh: float) -> ChargeSchedule:
         return charge_schedule(
@@ -353,8 +354,6 @@ def plan(
             float(target_kwh),
             cycle.night_start,
             cycle.night_end,
-            night_starts,
-            night_net,
         )
 
     plans: dict[PlanningMode, tuple[int, ChargeSchedule]] = {}
@@ -380,7 +379,9 @@ def plan(
             day_starts,
         )
         if timing.minutes:
-            reasons.insert(1, explainer.timing(timing, rate, battery, start_kwh))
+            reasons.insert(1, explainer.timing(timing, rate, battery))
+        elif timing.hold_minutes:
+            reasons.insert(1, explainer.hold(timing))
         recommendations.append(
             Recommendation(
                 mode=mode,
@@ -392,6 +393,8 @@ def plan(
                 force_charge_stop=timing.stop if timing.minutes else None,
                 force_charge_minutes=timing.minutes,
                 force_charge_reaches_target=timing.reaches_target,
+                hold_start=timing.hold_start if timing.hold_minutes else None,
+                hold_stop=timing.hold_stop if timing.hold_minutes else None,
                 expected=results["expected"],
                 dull=results["dull"],
                 bright=results["bright"],
@@ -407,22 +410,12 @@ def plan(
     level = start_kwh
 
     def night_point(i: IntervalForecast) -> TimelinePoint:
-        """Self-use until the forced charge starts, then charging from the grid."""
+        """The battery held (the house on the grid) until the forced charge, then charging."""
         nonlocal level
         end = i.start + INTERVAL
-        net = i.load_kwh - i.solar_kwh
+        grid = i.load_kwh - i.solar_kwh
         charging = max(timedelta(0), min(end, timing.stop) - max(i.start, timing.start))
         share = charging / INTERVAL
-        grid = net * share
-        # Before the charge, the battery covers the house down to its reserve.
-        uncovered = net * (1 - share)
-        if uncovered > 0:
-            available = max(level - battery.reserve_kwh, 0.0) * battery.discharge_efficiency
-            from_battery = min(uncovered, available)
-            level -= from_battery / battery.discharge_efficiency
-            grid += uncovered - from_battery
-        else:
-            grid += uncovered
         if share > 0:
             stored = min(
                 charge_kw[level < knee] * HOURS_PER_INTERVAL * share, max(target_kwh - level, 0)

@@ -199,6 +199,9 @@ export interface Recommendation {
   force_charge_stop: string | null;
   force_charge_minutes: number;
   force_charge_reaches_target: boolean;
+  /** The battery is held (the house on the grid) until the forced charge, or all window. */
+  hold_start: string | null;
+  hold_stop: string | null;
   expected: PlanOutcome;
   dull: PlanOutcome;
   bright: PlanOutcome;
@@ -351,6 +354,8 @@ export interface ControlProposal {
   charge_kwh: number;
   start: string | null;
   stop: string | null;
+  hold_start: string | null;
+  hold_stop: string | null;
   target_soc_percent: number | null;
   power_w: number | null;
   min_soc_on_grid: number | null;
