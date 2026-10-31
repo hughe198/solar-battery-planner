@@ -127,11 +127,13 @@ def connect_fox_ess(
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
     fox_client: Callable[[str], FoxEssClient] = Depends(get_fox_client_factory),
-) -> FoxEssConnection:
-    """Check the key against Fox ESS, then store it encrypted."""
+) -> FoxEssOut:
+    """Check the key against Fox ESS, then store it encrypted. The battery's minimum charge is
+    read from the inverter too, when Fox reports it, and copied into the battery settings."""
     system = _system(user)
+    client = fox_client(body.api_key)
     try:
-        serials = fox_client(body.api_key).device_serials()
+        serials = client.device_serials()
     except FoxEssAuthError:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Fox ESS did not accept that API key")
     except FoxEssError as exc:
@@ -146,9 +148,17 @@ def connect_fox_ess(
     connection.api_key_hint = body.api_key[-4:]
     connection.device_sn = body.device_sn
     system.data_source = DataSourceKind.fox_ess
+    try:
+        min_soc = client.battery_min_soc(body.device_sn)
+    except FoxEssError:
+        min_soc = None  # Not every inverter or account exposes it; the user can set it.
+    if min_soc is not None and system.battery is not None:
+        system.battery.min_soc_percent = min_soc
     db.add(connection)
     db.commit()
-    return connection
+    out = FoxEssOut.model_validate(connection)
+    out.battery_min_soc_percent = min_soc
+    return out
 
 
 @router.delete("/fox-ess", status_code=status.HTTP_204_NO_CONTENT)

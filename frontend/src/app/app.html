@@ -2,6 +2,7 @@
   <a routerLink="/" class="brand">Solar Battery Planner</a>
   @if (auth.user(); as user) {
     <nav>
+      <a routerLink="/plan">Charge plan</a>
       <a routerLink="/forecast">Forecast</a>
       <a routerLink="/setup">System</a>
       <a routerLink="/data">Data</a>

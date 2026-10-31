@@ -145,6 +145,8 @@ class FoxEssOut(BaseModel):
     device_sn: str
     api_key_hint: str
     last_synced_at: datetime | None
+    # Set on connect when the battery's minimum charge was read from the inverter.
+    battery_min_soc_percent: float | None = None
 
     _as_utc = field_validator("last_synced_at")(_utc)
 
@@ -291,3 +293,110 @@ class DayForecastOut(BaseModel):
 class AccuracyOut(BaseModel):
     history_days: int
     backtest: BacktestOut | None
+
+
+class OutcomeOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    load_kwh: float
+    solar_kwh: float
+    import_kwh: float
+    export_kwh: float
+    import_cost_pence: float
+    export_revenue_pence: float
+    net_cost_pence: float
+    end_soc_percent: float
+    full_at: datetime | None
+    reserve_at: datetime | None
+
+
+class RecommendationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    mode: PlanningMode
+    target_soc_percent: float
+    stored_kwh: float
+    charge_kwh: float
+    charge_cost_pence: float
+    expected: OutcomeOut
+    dull: OutcomeOut
+    bright: OutcomeOut
+    reasons: list[str]
+
+
+class CandidateOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    target_soc_percent: float
+    own_usage_pence: float
+    export_revenue_pence: float
+
+
+class TimelinePointOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    start: datetime
+    load_kwh: float
+    solar_kwh: float
+    import_kwh: float
+    export_kwh: float
+    soc_percent: float
+    cheap: bool
+
+
+class ChargePlanOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    day: date
+    mode: PlanningMode
+    start_soc_percent: float
+    max_soc_percent: float
+    charge_start: datetime
+    charge_end: datetime
+    recommendations: list[RecommendationOut]
+    candidates: list[CandidateOut]
+    timeline: list[TimelinePointOut]
+    load: RangeOut
+    solar: RangeOut
+    load_method: str
+    solar_method: str
+    history_days: int
+
+
+class ReplayDayOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    day: date
+    load_kwh: float
+    solar_kwh: float
+    soc_before_percent: float
+    soc_after_charge_percent: float
+    actual_import_kwh: float
+    actual_export_kwh: float
+    actual_net_cost_pence: float
+    simulated_import_kwh: float
+    simulated_export_kwh: float
+    soc_error_percent: float | None
+    best_soc_percent: float
+    missed_saving_pence: float
+    wasted_export_kwh: float
+    shortfall_import_kwh: float
+
+
+class ReviewOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    day: ReplayDayOut
+    comments: list[str]
+
+
+class ReplayOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    mode: PlanningMode
+    days: list[ReplayDayOut]
+    import_error_percent: float | None
+    export_error_percent: float | None
+    soc_error_percent: float | None
+    missed_saving_pence: float
+    review: ReviewOut | None

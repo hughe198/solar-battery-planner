@@ -1,20 +1,128 @@
-from dataclasses import dataclass
-from typing import Protocol
+"""Charge planner (step 4): turn a day's forecast, the battery and the tariff into an overnight
+charge target for each planning mode, and look back at how past charge decisions worked out."""
 
-from app.forecasting.base import IntervalForecast
-from app.models import PlanningMode, System
+from dataclasses import dataclass
+from datetime import date, datetime
+
+from app.forecasting.base import Method, Range
+from app.models import PlanningMode
+
+
+@dataclass(frozen=True)
+class Outcome:
+    """One charge target played out over one version of the day. Money in pence."""
+
+    load_kwh: float
+    solar_kwh: float
+    import_kwh: float
+    export_kwh: float
+    import_cost_pence: float
+    export_revenue_pence: float
+    net_cost_pence: float
+    end_soc_percent: float
+    # When the battery first fills, or first runs down to its reserve, during the day.
+    full_at: datetime | None
+    reserve_at: datetime | None
+
+
+@dataclass(frozen=True)
+class Recommendation:
+    mode: PlanningMode
+    target_soc_percent: float
+    # Energy stored by the charge, and what it takes from the grid (more, after losses).
+    stored_kwh: float
+    charge_kwh: float
+    charge_cost_pence: float
+    expected: Outcome
+    # Usage at the top of its likely range with solar at the bottom, and the reverse.
+    dull: Outcome
+    bright: Outcome
+    reasons: list[str]
+
+
+@dataclass(frozen=True)
+class Candidate:
+    """Average effective cost of one target under each mode (lower is better), in pence."""
+
+    target_soc_percent: float
+    own_usage_pence: float
+    export_revenue_pence: float
+
+
+@dataclass(frozen=True)
+class TimelinePoint:
+    """Expected flows for one half hour under the recommendation for the chosen mode."""
+
+    start: datetime
+    load_kwh: float
+    solar_kwh: float
+    import_kwh: float
+    export_kwh: float
+    soc_percent: float  # at the end of the half hour
+    cheap: bool
 
 
 @dataclass(frozen=True)
 class ChargePlan:
-    target_soc_percent: float
-    charge_kwh: float
-    expected_import_cost_pence: float
-    expected_export_revenue_pence: float
+    day: date
     mode: PlanningMode
+    start_soc_percent: float
+    max_soc_percent: float
+    charge_start: datetime
+    charge_end: datetime
+    # The chosen mode first.
+    recommendations: list[Recommendation]
+    candidates: list[Candidate]
+    timeline: list[TimelinePoint]
+    load: Range
+    solar: Range
+    load_method: Method
+    solar_method: Method
+    history_days: int
 
 
-class Planner(Protocol):
-    def plan(
-        self, system: System, forecast: list[IntervalForecast], current_soc_percent: float
-    ) -> ChargePlan: ...
+@dataclass(frozen=True)
+class ReplayDay:
+    """A past day replayed through the simulator from the charge that was actually made.
+
+    `actual_*` are metered; `simulated_*` are what the simulator says the same load and solar
+    would have done from the same start, which checks the simulator. `best_*` is the target
+    that would have cost least with hindsight, and `missed_saving_pence` what it would have
+    saved against the charge actually made (both simulated, so like is compared with like).
+    """
+
+    day: date
+    load_kwh: float
+    solar_kwh: float
+    soc_before_percent: float
+    soc_after_charge_percent: float
+    actual_import_kwh: float
+    actual_export_kwh: float
+    actual_net_cost_pence: float
+    simulated_import_kwh: float
+    simulated_export_kwh: float
+    soc_error_percent: float | None
+    best_soc_percent: float
+    missed_saving_pence: float
+    wasted_export_kwh: float
+    shortfall_import_kwh: float
+
+
+@dataclass(frozen=True)
+class Review:
+    """Plain-language look back at the most recent replayed day."""
+
+    day: ReplayDay
+    comments: list[str]
+
+
+@dataclass(frozen=True)
+class Replay:
+    mode: PlanningMode
+    days: list[ReplayDay]
+    # Simulated against metered totals over all days, as % of metered.
+    import_error_percent: float | None
+    export_error_percent: float | None
+    soc_error_percent: float | None
+    missed_saving_pence: float
+    review: Review | None

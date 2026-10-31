@@ -84,9 +84,16 @@ export class DataImport implements OnInit {
       return;
     }
     const { api_key, device_sn } = this.connectForm.getRawValue();
-    this.run(this.imports.connectFoxEss(api_key, device_sn), () => {
+    this.run(this.imports.connectFoxEss(api_key, device_sn), (connection) => {
       this.connectForm.reset();
-      this.notice.set('Fox ESS connected. Choose how much history to import.');
+      const minSoc = connection.battery_min_soc_percent;
+      this.notice.set(
+        'Fox ESS connected. ' +
+          (minSoc != null
+            ? `Your battery's minimum charge (${minSoc}%) was read from the inverter. `
+            : '') +
+          'Choose how much history to import.',
+      );
     });
   }
 

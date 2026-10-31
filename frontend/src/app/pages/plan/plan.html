@@ -1,0 +1,193 @@
+<h1>Overnight charge</h1>
+<p class="muted">
+  Every possible charge level is played out half hour by half hour over the forecast day, and on a
+  dull and a bright version of it, to find the one that leaves you best off.
+</p>
+
+@if (error()) {
+  <p class="form-error" role="alert">{{ error() }}</p>
+}
+
+@if (plan(); as p) {
+  <h2>For {{ dayLabel(p.day) }}</h2>
+  <label class="soc-input">
+    Battery level when the cheap window opens at {{ localTime(p.charge_start) }} (%)
+    <span class="row">
+      <input #soc type="number" min="0" max="100" step="1" [value]="p.start_soc_percent" />
+      <button type="button" class="secondary" (click)="recalculate(soc.value)">Recalculate</button>
+    </span>
+  </label>
+
+  <div class="plan-modes">
+    @for (r of p.recommendations; track r.mode; let first = $first) {
+      <section class="card" [class.chosen]="first">
+        <span class="muted">{{ modeLabels[r.mode] }}{{ first ? ' (your mode)' : '' }}</span>
+        <div class="target">{{ r.target_soc_percent | number: '1.0-0' }}%</div>
+        <p>
+          @if (r.charge_kwh > 0) {
+            Charge {{ r.charge_kwh | number: '1.1-1' }} kWh between
+            {{ localTime(p.charge_start) }} and {{ localTime(p.charge_end) }}, costing
+            {{ pence(r.charge_cost_pence) }}.
+          } @else {
+            No charge needed.
+          }
+        </p>
+        <p class="muted">
+          Expected day: imports {{ pence(r.expected.import_cost_pence) }}, exports
+          {{ pence(r.expected.export_revenue_pence) }}, so it {{ net(r.expected.net_cost_pence) }}.
+        </p>
+        @if (!first) {
+          <details>
+            <summary>Why</summary>
+            <ul class="plain">
+              @for (reason of r.reasons; track $index) {
+                <li>{{ reason }}</li>
+              }
+            </ul>
+          </details>
+        }
+      </section>
+    }
+  </div>
+
+  @if (chosen(); as r) {
+    <section class="card">
+      <h2>Why {{ r.target_soc_percent | number: '1.0-0' }}%</h2>
+      <ul class="plain">
+        @for (reason of r.reasons; track $index) {
+          <li>{{ reason }}</li>
+        }
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>The expected day with this charge</h2>
+      <app-flow-chart
+        [points]="p.timeline"
+        [timeZone]="system()?.timezone"
+        label="Planned battery level and grid import and export per half hour"
+      />
+      <div class="table-scroll">
+        <table class="plan-table">
+          <thead>
+            <tr>
+              <th>If the day is</th>
+              <th>Solar</th>
+              <th>Use</th>
+              <th>Import</th>
+              <th>Export</th>
+              <th>Battery full</th>
+              <th>Net</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (s of scenarios(); track s.name) {
+              <tr>
+                <td>{{ s.name }}</td>
+                <td>{{ s.outcome.solar_kwh | number: '1.1-1' }} kWh</td>
+                <td>{{ s.outcome.load_kwh | number: '1.1-1' }} kWh</td>
+                <td>{{ s.outcome.import_kwh | number: '1.1-1' }} kWh</td>
+                <td>{{ s.outcome.export_kwh | number: '1.1-1' }} kWh</td>
+                <td>{{ localTime(s.outcome.full_at) }}</td>
+                <td>{{ pence(s.outcome.net_cost_pence) }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">
+        Import includes tonight's charge and overnight use at the cheap rate. Forecast from
+        {{ p.history_days }} days of your history; see <a routerLink="/forecast">Forecast</a>.
+      </p>
+    </section>
+  }
+} @else if (loading()) {
+  <p class="muted">Working out tonight's charge…</p>
+}
+
+<section class="card">
+  <h2>How your last charge worked out</h2>
+  @if (review(); as rv) {
+    <div class="tiles">
+      <div class="tile">
+        <span class="muted">You charged to</span>
+        <strong>{{ rv.day.soc_after_charge_percent | number: '1.0-0' }}%</strong>
+      </div>
+      <div class="tile">
+        <span class="muted">Best with hindsight</span>
+        <strong>{{ rv.day.best_soc_percent | number: '1.0-0' }}%</strong>
+      </div>
+      <div class="tile">
+        <span class="muted">Cost of the decision</span>
+        <strong>{{
+          rv.day.missed_saving_pence < 1 ? 'Nothing' : pence(rv.day.missed_saving_pence)
+        }}</strong>
+        <span class="muted">against the best charge</span>
+      </div>
+    </div>
+    <ul class="plain">
+      @for (c of rv.comments; track $index) {
+        <li>{{ c }}</li>
+      }
+    </ul>
+  } @else {
+    <p class="muted">
+      Once you've imported days with battery level (Fox ESS includes it), this shows how each
+      night's charge worked out and what a better one would have saved.
+      <a routerLink="/data">Import data</a>
+    </p>
+  }
+</section>
+
+@if (replay(); as rp) {
+  @if (rp.days.length) {
+    <section class="card">
+      <h2>Recent charges, replayed</h2>
+      <p>
+        Each day is replayed through the planner's battery simulation from the charge you actually
+        made. Over {{ rp.days.length }} days, better charge decisions would have saved
+        <strong>{{ pence(rp.missed_saving_pence) }}</strong
+        >.
+      </p>
+      <p class="muted">
+        Simulation check against your meter: import within
+        {{ rp.import_error_percent ?? 0 | number: '1.0-0' }}%, export within
+        {{ rp.export_error_percent ?? 0 | number: '1.0-0' }}%, battery level within
+        {{ rp.soc_error_percent ?? 0 | number: '1.0-0' }} points on average. Large gaps usually mean
+        the battery settings on the <a routerLink="/setup">System</a> page need adjusting.
+      </p>
+      <div class="table-scroll">
+        <table class="plan-table">
+          <thead>
+            <tr>
+              <th>Day</th>
+              <th>Charged to</th>
+              <th>Best</th>
+              <th>Lost</th>
+              <th>Import: metered / simulated</th>
+              <th>Export: metered / simulated</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (d of reviewDays(); track d.day) {
+              <tr>
+                <td>{{ d.day }}</td>
+                <td>{{ d.soc_after_charge_percent | number: '1.0-0' }}%</td>
+                <td>{{ d.best_soc_percent | number: '1.0-0' }}%</td>
+                <td>{{ d.missed_saving_pence < 1 ? '–' : pence(d.missed_saving_pence) }}</td>
+                <td>
+                  {{ d.actual_import_kwh | number: '1.1-1' }} /
+                  {{ d.simulated_import_kwh | number: '1.1-1' }}
+                </td>
+                <td>
+                  {{ d.actual_export_kwh | number: '1.1-1' }} /
+                  {{ d.simulated_export_kwh | number: '1.1-1' }}
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+  }
+}

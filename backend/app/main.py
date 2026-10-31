@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import migrations, models  # noqa: F401  (registers tables)
-from app.api import auth, forecast, imports, system
+from app.api import auth, forecast, history, imports, plan, system
 from app.config import settings
 from app.database import Base, SessionLocal, engine
 
@@ -29,6 +29,8 @@ app.include_router(auth.router)
 app.include_router(system.router)
 app.include_router(imports.router)
 app.include_router(forecast.router)
+app.include_router(plan.router)
+app.include_router(history.router)
 
 
 @app.get("/api/health")

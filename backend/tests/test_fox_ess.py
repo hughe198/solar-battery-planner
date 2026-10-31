@@ -97,6 +97,25 @@ def test_client_backs_off_when_too_frequent():
     assert 5 in sleeps
 
 
+def test_client_reads_battery_min_soc():
+    seen = []
+    client = make_client(
+        [
+            {"errno": 0, "result": {"minSoc": 10, "minSocOnGrid": 5}},
+            {"errno": 0, "result": {"minSoc": 15}},
+            {"errno": 0, "result": {}},
+        ],
+        seen,
+        [],
+    )
+    assert client.battery_min_soc("ABC123") == 5
+    assert client.battery_min_soc("ABC123") == 15
+    assert client.battery_min_soc("ABC123") is None
+    assert seen[0].method == "GET"
+    assert seen[0].url.path == "/op/v0/device/battery/soc/get"
+    assert seen[0].url.params["sn"] == "ABC123"
+
+
 def test_client_auth_error():
     client = make_client([{"errno": 41808, "msg": "token expired"}], [], [])
     with pytest.raises(FoxEssAuthError):

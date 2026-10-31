@@ -24,6 +24,9 @@ class FakeFox:
             raise FoxEssAuthError("nope")
         return ["INV0001"]
 
+    def battery_min_soc(self, sn):
+        return 5.0
+
     def history(self, sn, begin, end):
         FakeFox.calls.append((begin, end))
         points, moment = [], begin
@@ -87,7 +90,10 @@ def test_connect_validates_key_and_serial(client, headers):
     assert resp.status_code == 200, resp.text
     assert resp.json()["api_key_hint"] == "-123"
     assert "api_key" not in resp.json()
-    assert client.get("/api/system", headers=headers).json()["data_source"] == "fox_ess"
+    assert resp.json()["battery_min_soc_percent"] == 5.0
+    system = client.get("/api/system", headers=headers).json()
+    assert system["data_source"] == "fox_ess"
+    assert system["battery"]["min_soc_percent"] == 5.0  # read from the inverter
     status = client.get("/api/import/status", headers=headers).json()
     assert status["fox_ess"]["device_sn"] == "inv0001"
 

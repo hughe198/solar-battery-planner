@@ -4,7 +4,8 @@ Recommends how much to charge a home battery overnight on a cheap tariff, based 
 household usage and solar generation for the next day. Two planning modes:
 
 - **Maximise own usage** (default): charge enough to cover the house until solar takes over.
-- **Maximise export revenue**: charge less and leave headroom so more solar is exported.
+- **Maximise export revenue**: count export income too, so when export pays more than
+  charging costs it fills up from the grid and sells more solar.
 
 ## Roadmap
 
@@ -12,10 +13,11 @@ household usage and solar generation for the next day. Two planning modes:
    location and tariff.
 2. **Data import**: Fox ESS cloud API and CSV upload, matched to historical weather
    (`backend/app/importers`, `backend/app/weather`). See [Data import](#data-import).
-3. **Prediction model** (this step): forecast tomorrow's load and solar per half hour, with
+3. **Prediction model**: forecast tomorrow's load and solar per half hour, with
    a likely range and recent accuracy (`backend/app/forecasting`). See
    [Prediction model](#prediction-model).
-4. **Planner page**: turn the forecast into an overnight charge target (`backend/app/planner`).
+4. **Planner** (this step): turn the forecast into an overnight charge target, review past
+   charges and chart the last week (`backend/app/planner`). See [Planner](#planner).
 
 ## Running locally
 
@@ -140,3 +142,38 @@ how the battery was charged; the planner (step 4) simulates the battery on top o
 half-hourly forecast, daily totals with ranges, the method used, the learned array multipliers
 and the backtest. `GET /api/forecast/accuracy` returns just the backtest and needs no weather
 fetch. The Forecast page (`/forecast`) shows both.
+
+## Planner
+
+The planner (`backend/app/planner`) picks the overnight charge by simulation, not a formula.
+
+- **Cycle.** The charge window that ends on the planned day, then the day until the next window
+  opens. The window is read from the tariff: the longest run of the cheapest import rate between
+  18:00 and noon (none on a single-rate tariff, so no grid charge). Overnight the battery charges to the target and holds while the house runs on cheap
+  grid power; by day the inverter is in self-use (solar feeds the house, surplus fills the
+  battery then exports, shortfalls come from the battery down to its minimum charge, then the
+  grid). Charge and discharge rates, minimum charge and round-trip losses come from the system.
+- **Candidates and scenarios.** Every whole-percent target from tonight's starting level to the
+  most the window can reach is simulated half-hourly, all at once as one numpy array, on the
+  expected forecast, a dull day (usage high, solar low, from the forecast ranges) and a bright
+  day. The score is the weighted cost (50/25/25), crediting energy left in the battery at the
+  price of recharging it.
+- **Modes.** *Own usage* scores import cost only, so it never buys grid energy just to push your
+  own solar out. *Export revenue* subtracts export income as well.
+- **Over-charging** is caught by the simulation: grid energy bought overnight that leaves the
+  battery full by mid-morning forces later solar out at the export rate (or for nothing, in own
+  usage mode). The planner takes the lowest target within 2p of the best average, so it leans
+  under when extra charge only pays off on a dull day, and explains its choice in plain words.
+- **Prices** for every half hour come from `TariffSchedule.rate_at`, so any number of import
+  and export bands, weekday or weekend, are priced as they are.
+- **Replay.** Past days with imported battery level are replayed from the charge that was
+  actually made. Simulated import, export and battery level are compared with the meter to check
+  the simulator, and every other target is simulated on the same day to find the best charge
+  with hindsight and what the actual decision cost. The latest day becomes a plain-language
+  review.
+
+`GET /api/plan?day=&start_soc_percent=` returns a recommendation per mode (the system's mode
+first) with outcomes for each scenario, reasons, the cost of every candidate and the expected
+half-hourly timeline. `GET /api/plan/replay?days=30` returns the replay and review, and
+`GET /api/history?days=7` the metered half hours and daily totals for the home page charts.
+The Charge plan page (`/plan`) and home page show them.

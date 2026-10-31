@@ -74,6 +74,8 @@ export interface FoxEssConnection {
   /** Last four characters of the stored API key. */
   api_key_hint: string;
   last_synced_at: string | null;
+  /** Set on connect when the battery's minimum charge was read from the inverter. */
+  battery_min_soc_percent?: number | null;
 }
 
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed';
@@ -167,4 +169,113 @@ export interface DayForecast {
   /** Learned multiplier on each array's physics estimate, in array order. */
   array_performance: number[];
   backtest: Backtest | null;
+}
+
+/** One charge target played out over one version of the day. Money in pence. */
+export interface PlanOutcome {
+  load_kwh: number;
+  solar_kwh: number;
+  import_kwh: number;
+  export_kwh: number;
+  import_cost_pence: number;
+  export_revenue_pence: number;
+  net_cost_pence: number;
+  end_soc_percent: number;
+  full_at: string | null;
+  reserve_at: string | null;
+}
+
+export interface Recommendation {
+  mode: PlanningMode;
+  target_soc_percent: number;
+  /** Energy the charge stores, and what it draws from the grid after losses. */
+  stored_kwh: number;
+  charge_kwh: number;
+  charge_cost_pence: number;
+  expected: PlanOutcome;
+  dull: PlanOutcome;
+  bright: PlanOutcome;
+  reasons: string[];
+}
+
+/** Average effective cost of one target under each mode (lower is better), in pence. */
+export interface PlanCandidate {
+  target_soc_percent: number;
+  own_usage_pence: number;
+  export_revenue_pence: number;
+}
+
+/** Half-hourly flows (UTC start); used for both planned and metered days. */
+export interface FlowPoint {
+  start: string;
+  load_kwh: number;
+  solar_kwh: number;
+  import_kwh: number;
+  export_kwh: number;
+  soc_percent: number | null;
+  cheap: boolean;
+}
+
+export interface ChargePlan {
+  day: string;
+  mode: PlanningMode;
+  start_soc_percent: number;
+  max_soc_percent: number;
+  charge_start: string;
+  charge_end: string;
+  /** The system's chosen mode first. */
+  recommendations: Recommendation[];
+  candidates: PlanCandidate[];
+  timeline: FlowPoint[];
+  load: EnergyRange;
+  solar: EnergyRange;
+  load_method: ForecastMethod;
+  solar_method: ForecastMethod;
+  history_days: number;
+}
+
+export interface ReplayDay {
+  day: string;
+  load_kwh: number;
+  solar_kwh: number;
+  soc_before_percent: number;
+  soc_after_charge_percent: number;
+  actual_import_kwh: number;
+  actual_export_kwh: number;
+  actual_net_cost_pence: number;
+  simulated_import_kwh: number;
+  simulated_export_kwh: number;
+  soc_error_percent: number | null;
+  best_soc_percent: number;
+  missed_saving_pence: number;
+  wasted_export_kwh: number;
+  shortfall_import_kwh: number;
+}
+
+export interface Replay {
+  mode: PlanningMode;
+  days: ReplayDay[];
+  import_error_percent: number | null;
+  export_error_percent: number | null;
+  soc_error_percent: number | null;
+  missed_saving_pence: number;
+  review: { day: ReplayDay; comments: string[] } | null;
+}
+
+export interface HistoryDay {
+  day: string;
+  load_kwh: number;
+  solar_kwh: number;
+  import_kwh: number;
+  export_kwh: number;
+  self_sufficiency_percent: number | null;
+  import_cost_pence: number;
+  export_revenue_pence: number;
+  min_soc_percent: number | null;
+  max_soc_percent: number | null;
+}
+
+export interface History {
+  points: FlowPoint[];
+  days: HistoryDay[];
 }

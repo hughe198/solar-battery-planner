@@ -17,8 +17,9 @@ header {
 
 nav {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 1rem;
+  gap: 0.25rem 1rem;
 }
 
 main {

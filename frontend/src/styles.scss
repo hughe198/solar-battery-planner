@@ -8,6 +8,7 @@
   --accent-text: #ffffff;
   --error: #b42318;
   --load: #2563eb;
+  --battery: #15803d;
   color-scheme: light;
 }
 
@@ -22,6 +23,7 @@
     --accent-text: #1b1300;
     --error: #f97066;
     --load: #60a5fa;
+    --battery: #4ade80;
     color-scheme: dark;
   }
 }
@@ -293,9 +295,141 @@ button.destructive {
     background: var(--load);
   }
 
-  &.solar {
+  &.solar,
+  &.export {
     background: var(--accent);
   }
+
+  &.import {
+    background: var(--load);
+  }
+
+  &.battery {
+    background: var(--battery);
+  }
+
+  &.ss {
+    background: var(--muted);
+  }
+
+  &.cheap {
+    background: var(--border);
+  }
+}
+
+.flow-chart,
+.week-chart {
+  width: 100%;
+  height: auto;
+  display: block;
+
+  .grid {
+    stroke: var(--border);
+  }
+
+  .axis,
+  .value {
+    fill: var(--muted);
+    font-size: 11px;
+  }
+
+  .value {
+    fill: var(--text);
+  }
+
+  .divider {
+    stroke: var(--border);
+    stroke-dasharray: 2 3;
+  }
+
+  .cheap {
+    fill: var(--border);
+    opacity: 0.45;
+  }
+
+  .soc {
+    fill: none;
+    stroke: var(--battery);
+    stroke-width: 2;
+  }
+
+  .import {
+    fill: var(--load);
+  }
+
+  .export {
+    fill: var(--accent);
+  }
+
+  .ss {
+    fill: var(--muted);
+    opacity: 0.55;
+  }
+
+  .soc-range {
+    stroke: var(--battery);
+    stroke-width: 2;
+  }
+
+  .soc-end {
+    fill: var(--battery);
+    stroke: var(--surface);
+    stroke-width: 2;
+  }
+
+  .crosshair {
+    stroke: var(--muted);
+  }
+
+  .hit {
+    fill: transparent;
+  }
+}
+
+.plan-modes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
+
+  .chosen {
+    border-color: var(--accent);
+    border-width: 2px;
+  }
+
+  .target {
+    font-size: 2rem;
+    font-weight: 700;
+    line-height: 1.1;
+  }
+}
+
+table.plan-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  margin-bottom: 0.5rem;
+
+  th,
+  td {
+    text-align: right;
+    padding: 0.3rem 0.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  th:first-child,
+  td:first-child {
+    text-align: left;
+    padding-left: 0;
+  }
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.soc-input {
+  max-width: 16rem;
 }
 
 ul.plain {
