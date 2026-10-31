@@ -148,16 +148,27 @@ def connect_fox_ess(
     connection.api_key_hint = body.api_key[-4:]
     connection.device_sn = body.device_sn
     system.data_source = DataSourceKind.fox_ess
+    # Not every inverter or account exposes these settings; the user can still enter them.
     try:
         min_soc = client.battery_min_soc(body.device_sn)
     except FoxEssError:
-        min_soc = None  # Not every inverter or account exposes it; the user can set it.
-    if min_soc is not None and system.battery is not None:
-        system.battery.min_soc_percent = min_soc
+        min_soc = None
+    try:
+        charge_kw = client.force_charge_power_kw(body.device_sn)
+    except FoxEssError:
+        charge_kw = None
+    if system.battery is not None:
+        if min_soc is not None:
+            system.battery.min_soc_percent = min_soc
+        if charge_kw is not None and 0 < charge_kw <= 50:
+            system.battery.max_charge_kw = charge_kw
+        else:
+            charge_kw = None
     db.add(connection)
     db.commit()
     out = FoxEssOut.model_validate(connection)
     out.battery_min_soc_percent = min_soc
+    out.battery_max_charge_kw = charge_kw
     return out
 
 

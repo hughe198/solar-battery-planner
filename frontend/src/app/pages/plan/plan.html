@@ -24,10 +24,17 @@
         <span class="muted">{{ modeLabels[r.mode] }}{{ first ? ' (your mode)' : '' }}</span>
         <div class="target">{{ r.target_soc_percent | number: '1.0-0' }}%</div>
         <p>
-          @if (r.charge_kwh > 0) {
-            Charge {{ r.charge_kwh | number: '1.1-1' }} kWh between
-            {{ localTime(p.charge_start) }} and {{ localTime(p.charge_end) }}, costing
-            {{ pence(r.charge_cost_pence) }}.
+          @if (r.force_charge_start) {
+            <strong
+              >Force charge {{ localTime(r.force_charge_start) }}–{{
+                localTime(r.force_charge_stop)
+              }}</strong
+            >
+            ({{ duration(r.force_charge_minutes) }}): {{ r.charge_kwh | number: '1.1-1' }} kWh,
+            costing {{ pence(r.charge_cost_pence) }}.
+            @if (!r.force_charge_reaches_target) {
+              <span class="muted">It may fall a little short by the end of the cheap rate.</span>
+            }
           } @else {
             No charge needed.
           }
@@ -96,8 +103,18 @@
         </table>
       </div>
       <p class="muted">
-        Import includes tonight's charge and overnight use at the cheap rate. Forecast from
-        {{ p.history_days }} days of your history; see <a routerLink="/forecast">Forecast</a>.
+        Import includes tonight's charge and overnight use at the cheap rate. Charge timing uses
+        {{
+          p.charge_rate_samples
+            ? 'the rate your battery has charged at recently'
+            : 'the charge rate in your battery settings'
+        }}
+        ({{ p.charge_rate_kw | number: '1.1-1' }} kW{{
+          p.taper_rate_kw < p.charge_rate_kw - 0.05
+            ? ', ' + (p.taper_rate_kw | number: '1.1-1') + ' kW above ' + p.taper_from_percent + '%'
+            : ''
+        }}). Forecast from {{ p.history_days }} days of your history; see
+        <a routerLink="/forecast">Forecast</a>.
       </p>
     </section>
   }

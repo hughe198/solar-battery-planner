@@ -89,6 +89,12 @@ export class Plan implements OnInit {
     }).format(new Date(`${day}T00:00:00Z`));
   }
 
+  /** "1 h 50 min" or "35 min". */
+  duration(minutes: number): string {
+    const h = Math.floor(minutes / 60);
+    return h ? `${h} h ${minutes % 60} min` : `${minutes} min`;
+  }
+
   /** Net cost as words: "costs 37p" or "earns £1.10". */
   net(pence: number): string {
     return pence >= 0 ? `costs ${formatPence(pence)}` : `earns ${formatPence(-pence)}`;

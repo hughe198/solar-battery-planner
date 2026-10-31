@@ -33,6 +33,11 @@ class Recommendation:
     stored_kwh: float
     charge_kwh: float
     charge_cost_pence: float
+    # When to force charge (UTC), and whether that reaches the target before the window closes.
+    force_charge_start: datetime | None
+    force_charge_stop: datetime | None
+    force_charge_minutes: int
+    force_charge_reaches_target: bool
     expected: Outcome
     # Usage at the top of its likely range with solar at the bottom, and the reverse.
     dull: Outcome
@@ -70,6 +75,12 @@ class ChargePlan:
     max_soc_percent: float
     charge_start: datetime
     charge_end: datetime
+    # Power into the cells while force charging, below and above the taper level, and how many
+    # half hours of history it was learned from (0: from the battery settings).
+    charge_rate_kw: float
+    taper_rate_kw: float
+    taper_from_percent: float
+    charge_rate_samples: int
     # The chosen mode first.
     recommendations: list[Recommendation]
     candidates: list[Candidate]

@@ -11,6 +11,7 @@ from app.forecasting.service import HistoryForecaster
 from app.models import PlanningMode, System, User
 from app.planner import optimiser
 from app.planner.base import ChargePlan, Replay
+from app.planner.charging import learn_rate_from_history
 from app.planner.replay import DEFAULT_DAYS, MAX_DAYS, Replayer
 from app.planner.simulator import cycle_for
 from app.schemas import ChargePlanOut, ReplayOut
@@ -54,7 +55,8 @@ def charge_plan(
     except WeatherError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
     try:
-        return optimiser.plan(system, forecast, start_soc_percent)
+        rate = learn_rate_from_history(db, system)
+        return optimiser.plan(system, forecast, start_soc_percent, rate)
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc))
 
