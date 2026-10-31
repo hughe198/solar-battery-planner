@@ -44,3 +44,46 @@ export interface SystemConfig {
   tariff: Tariff;
   arrays: SolarArray[];
 }
+
+export interface FoxEssConnection {
+  device_sn: string;
+  /** Last four characters of the stored API key. */
+  api_key_hint: string;
+  last_synced_at: string | null;
+}
+
+export type JobStatus = 'queued' | 'running' | 'done' | 'failed';
+
+export interface ImportJob {
+  id: number;
+  status: JobStatus;
+  start_date: string;
+  end_date: string;
+  days_total: number;
+  days_done: number;
+  days_skipped: number;
+  intervals_imported: number;
+  message: string | null;
+  created_at: string;
+  finished_at: string | null;
+}
+
+export interface Coverage {
+  count: number;
+  first: string | null;
+  last: string | null;
+}
+
+export interface ImportStatus {
+  fox_ess: FoxEssConnection | null;
+  usage: Coverage;
+  weather: Coverage;
+  matched_intervals: number;
+  latest_job: ImportJob | null;
+}
+
+export interface CsvImportResult {
+  intervals_imported: number;
+  weather_hours_added: number;
+  message: string | null;
+}

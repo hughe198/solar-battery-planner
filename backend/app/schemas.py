@@ -1,9 +1,9 @@
-from datetime import time
+from datetime import date, datetime, time, timezone
 from zoneinfo import available_timezones
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
-from app.models import DataSourceKind, PlanningMode
+from app.models import DataSourceKind, JobStatus, PlanningMode, UsageSource
 
 
 class Credentials(BaseModel):
@@ -82,3 +82,106 @@ class SystemIn(BaseModel):
 
 class SystemOut(SystemIn):
     id: int
+
+
+def _utc(value: datetime | None) -> datetime | None:
+    """SQLite and naive Postgres columns drop the zone; stored times are always UTC."""
+    if value is not None and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+class FoxEssConnectIn(BaseModel):
+    api_key: str = Field(min_length=8, max_length=200)
+    device_sn: str = Field(min_length=4, max_length=64)
+
+    @field_validator("api_key", "device_sn")
+    @classmethod
+    def strip(cls, value: str) -> str:
+        return value.strip()
+
+
+class FoxEssOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    device_sn: str
+    api_key_hint: str
+    last_synced_at: datetime | None
+
+    _as_utc = field_validator("last_synced_at")(_utc)
+
+
+class SyncRequest(BaseModel):
+    """Local days in the system's time zone, inclusive."""
+
+    start_date: date
+    end_date: date
+
+    @model_validator(mode="after")
+    def ordered(self) -> "SyncRequest":
+        if self.end_date < self.start_date:
+            raise ValueError("end date must be on or after start date")
+        return self
+
+
+class ImportJobOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    status: JobStatus
+    start_date: date
+    end_date: date
+    days_total: int
+    days_done: int
+    days_skipped: int
+    intervals_imported: int
+    message: str | None
+    created_at: datetime
+    finished_at: datetime | None
+
+    _as_utc = field_validator("created_at", "finished_at")(_utc)
+
+
+class CsvImportOut(BaseModel):
+    intervals_imported: int
+    weather_hours_added: int
+    message: str | None = None
+
+
+class Coverage(BaseModel):
+    count: int
+    first: datetime | None
+    last: datetime | None
+
+
+class ImportStatus(BaseModel):
+    fox_ess: FoxEssOut | None
+    usage: Coverage
+    weather: Coverage
+    # Half hours that have both usage and weather, i.e. usable for training.
+    matched_intervals: int
+    latest_job: ImportJobOut | None
+
+
+class WeatherOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    temperature_c: float | None
+    cloud_cover_percent: float | None
+    shortwave_radiation_wm2: float | None
+    direct_radiation_wm2: float | None
+    diffuse_radiation_wm2: float | None
+
+
+class MatchedInterval(BaseModel):
+    """One half hour of usage with the weather for the hour it falls in. Times are UTC."""
+
+    start: datetime
+    end: datetime
+    load_kwh: float
+    solar_kwh: float
+    grid_import_kwh: float
+    grid_export_kwh: float
+    battery_soc_percent: float | None
+    source: UsageSource
+    weather: WeatherOut | None

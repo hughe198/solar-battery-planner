@@ -4,14 +4,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import models  # noqa: F401  (registers tables)
-from app.api import auth, system
+from app.api import auth, imports, system
 from app.config import settings
-from app.database import Base, engine
+from app.database import Base, SessionLocal, engine
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     Base.metadata.create_all(engine)
+    with SessionLocal() as db:
+        models.ImportJob.fail_interrupted(db)
     yield
 
 
@@ -24,6 +26,7 @@ app.add_middleware(
 )
 app.include_router(auth.router)
 app.include_router(system.router)
+app.include_router(imports.router)
 
 
 @app.get("/api/health")

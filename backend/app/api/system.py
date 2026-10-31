@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Battery, SolarArray, System, Tariff, User
+from app.models import Battery, SolarArray, System, Tariff, User, WeatherRecord
 from app.schemas import SystemIn, SystemOut
 from app.security import current_user
 
@@ -22,6 +23,12 @@ def save_system(
 ) -> System:
     """Create or replace the signed-in user's system."""
     system = user.system or System(user=user)
+    if system.id is not None and (system.latitude, system.longitude) != (
+        body.latitude,
+        body.longitude,
+    ):
+        # Weather is fetched for the old location; drop it so the next import refetches.
+        db.execute(delete(WeatherRecord).where(WeatherRecord.system_id == system.id))
     for field in ("name", "latitude", "longitude", "timezone", "planning_mode", "data_source"):
         setattr(system, field, getattr(body, field))
 
