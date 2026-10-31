@@ -186,6 +186,156 @@ describe('Plan', () => {
     fixture.detectChanges();
   });
 
+  describe('look back', () => {
+    const day = (date: string, charged: number, lost: number) => ({
+      ...REPLAY.days[0],
+      day: date,
+      soc_after_charge_percent: charged,
+      missed_saving_pence: lost,
+    });
+    const LOOK_BACK: Replay = {
+      ...REPLAY,
+      days: [
+        day('2026-04-30', 40, 0),
+        day('2026-05-01', 60, 0.4),
+        day('2026-05-02', 70, 12),
+        day('2026-05-04', 90, 45),
+      ],
+    };
+    const detailFor = (date: string) => ({
+      day: LOOK_BACK.days.find((d) => d.day === date)!,
+      comments: [`Review of ${date}`],
+      points: [
+        {
+          start: '2026-05-04T00:00:00Z',
+          load_kwh: 0.2,
+          solar_kwh: 0,
+          import_kwh: 0.2,
+          export_kwh: 0,
+          soc_percent: 50,
+          cheap: true,
+          best_soc_percent: null,
+        },
+        {
+          start: '2026-05-04T00:30:00Z',
+          load_kwh: 0.2,
+          solar_kwh: 0,
+          import_kwh: 0,
+          export_kwh: 0,
+          soc_percent: 49,
+          cheap: false,
+          best_soc_percent: 30,
+        },
+        {
+          start: '2026-05-04T01:00:00Z',
+          load_kwh: 0.2,
+          solar_kwh: 0,
+          import_kwh: 0,
+          export_kwh: 0,
+          soc_percent: 48,
+          cheap: false,
+          best_soc_percent: 29,
+        },
+      ],
+    });
+    const answer = (date: string) =>
+      http.expectOne(`/api/plan/replay/${date}`).flush(detailFor(date));
+    const open = () => {
+      const { fixture, el } = render(LOOK_BACK);
+      answer('2026-05-04');
+      fixture.detectChanges();
+      const square = (date: number) =>
+        [...el.querySelectorAll<HTMLButtonElement>('button.calendar-day')].find(
+          (b) => b.querySelector('.calendar-date')?.textContent === String(date),
+        );
+      return { fixture, el, square };
+    };
+
+    it('asks for as much history as it can', () => {
+      const fixture = TestBed.createComponent(Plan);
+      fixture.detectChanges();
+      const req = http.expectOne((r) => r.url === '/api/plan/replay');
+      expect(req.request.params.get('days')).toBe('120');
+    });
+
+    it('opens on the latest month and day, rated by what each charge lost', () => {
+      const { el, square } = open();
+      expect(el.querySelector('.day-stepper-label strong')?.textContent).toBe('May 2026');
+      expect(el.querySelector('.day-stepper-label .muted')?.textContent).toBe(
+        '57p lost, about right on 1 of 3 days',
+      );
+      // May 2026 starts on a Friday, so four blanks after the weekday row.
+      const grid = [...el.querySelector('.calendar')!.children];
+      expect(grid.slice(7, 11).every((c) => !c.textContent?.trim())).toBe(true);
+      expect(grid[11].textContent).toContain('1');
+      expect(el.querySelectorAll('.calendar-day').length).toBe(31);
+      expect(el.querySelectorAll('.calendar-day.empty').length).toBe(28);
+
+      expect(square(1)?.className).toContain('good');
+      expect(square(2)?.className).toContain('fair');
+      expect(square(4)?.className).toContain('poor');
+      expect(square(4)?.textContent).toContain('90%');
+      expect(square(4)?.className).toContain('selected');
+      expect(square(4)?.getAttribute('aria-label')).toBe(
+        'Monday 4 May: charged to 90%, best 52%, lost 45p',
+      );
+    });
+
+    it('shows a picked day with the real and best battery lines and its review', () => {
+      const { fixture, el, square } = open();
+      square(2)!.click();
+      fixture.detectChanges();
+      expect(el.textContent).toContain('Saturday 2 May');
+      expect(el.querySelector('.look-back')?.textContent).toContain('Loading');
+
+      answer('2026-05-02');
+      fixture.detectChanges();
+      const lookBack = el.querySelector('.look-back')!;
+      expect(lookBack.textContent).toContain('Review of 2026-05-02');
+      expect(lookBack.querySelector('path.soc.best')?.getAttribute('d')).toMatch(/^M/);
+      expect(lookBack.querySelector('path.soc:not(.best)')?.getAttribute('d')).toMatch(/^M/);
+      expect(lookBack.textContent).toContain('With the best charge');
+      expect(square(2)?.className).toContain('selected');
+      expect(square(4)?.className).not.toContain('selected');
+    });
+
+    it('moves between months and stops at the ends of the data', () => {
+      const { fixture, el } = open();
+      const previous = () => el.querySelector<HTMLButtonElement>('[aria-label="Previous month"]')!;
+      const next = () => el.querySelector<HTMLButtonElement>('[aria-label="Next month"]')!;
+      expect(next().disabled).toBe(true);
+      previous().click();
+      fixture.detectChanges();
+      expect(el.querySelector('.day-stepper-label strong')?.textContent).toBe('April 2026');
+      expect(previous().disabled).toBe(true);
+      expect(next().disabled).toBe(false);
+    });
+
+    it('keeps the last picked day when an earlier answer arrives last', () => {
+      const { fixture, el, square } = open();
+      square(1)!.click();
+      square(2)!.click();
+      fixture.detectChanges();
+      const first = http.expectOne('/api/plan/replay/2026-05-01');
+      answer('2026-05-02');
+      first.flush(detailFor('2026-05-01'));
+      fixture.detectChanges();
+      expect(el.querySelector('.look-back')?.textContent).toContain('Review of 2026-05-02');
+    });
+
+    it('says so when a day cannot be loaded', () => {
+      const { fixture, el, square } = open();
+      square(2)!.click();
+      http
+        .expectOne('/api/plan/replay/2026-05-02')
+        .flush({ detail: "That day can't be replayed" }, { status: 404, statusText: 'Not Found' });
+      fixture.detectChanges();
+      expect(el.querySelector('.look-back .form-error')?.textContent).toContain(
+        "That day can't be replayed",
+      );
+    });
+  });
+
   it('explains what is needed when there is no battery history', () => {
     const { el } = render({ ...REPLAY, days: [], review: null, missed_saving_pence: 0 });
     expect(el.textContent).toContain("Once you've imported days with battery level");

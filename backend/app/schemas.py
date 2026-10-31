@@ -91,6 +91,17 @@ class TariffIn(BaseModel):
         return self
 
 
+class TariffPeriodOut(BaseModel):
+    """One tariff and the local days it applied; a null end means it's the current tariff, and a
+    null start that it goes back to the start of the data."""
+
+    name: str
+    standing_charge_pence_per_day: float
+    valid_from: date | None
+    valid_until: date | None
+    bands: list[TariffBandIn]
+
+
 class TariffPresetOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -112,6 +123,8 @@ class SystemIn(BaseModel):
     data_source: DataSourceKind = DataSourceKind.none
     battery: BatteryIn
     tariff: TariffIn
+    # The local day changed rates began; today if not given. Ignored when the rates are the same.
+    tariff_effective_from: date | None = None
     arrays: list[SolarArrayIn] = Field(min_length=1, max_length=6)
 
     @field_validator("timezone")
@@ -414,6 +427,29 @@ class ReviewOut(BaseModel):
 
     day: ReplayDayOut
     comments: list[str]
+
+
+class ReplayPointOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    start: datetime
+    load_kwh: float
+    solar_kwh: float
+    import_kwh: float
+    export_kwh: float
+    soc_percent: float | None
+    cheap: bool
+    best_soc_percent: float | None
+
+    _start_utc = field_validator("start", mode="after")(_utc)
+
+
+class ReplayDetailOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    day: ReplayDayOut
+    comments: list[str]
+    points: list[ReplayPointOut]
 
 
 class ReplayOut(BaseModel):

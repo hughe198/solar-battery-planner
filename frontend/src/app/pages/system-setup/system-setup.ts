@@ -2,9 +2,15 @@ import { Component, OnInit, inject, signal } from '@angular/core';
 import { NonNullableFormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { errorMessage } from '../../core/errors';
-import { SolarArray, SystemConfig } from '../../core/models';
+import { SolarArray, SystemConfig, TariffPeriod } from '../../core/models';
 import { SystemService } from '../../core/system.service';
 import { TariffEditor, patchTariff, tariffForm, tariffValue } from './tariff-editor';
+
+function localIsoDate(date: Date): string {
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${month}-${day}`;
+}
 
 const COMPASS = [
   { label: 'North', degrees: 0 },
@@ -32,6 +38,8 @@ export class SystemSetup implements OnInit {
   readonly error = signal<string | null>(null);
   readonly locating = signal(false);
   readonly isNew = signal(true);
+  readonly tariffHistory = signal<TariffPeriod[]>([]);
+  readonly today = localIsoDate(new Date());
 
   readonly form = this.fb.group({
     name: ['My system', Validators.required],
@@ -52,8 +60,24 @@ export class SystemSetup implements OnInit {
       wear_pence_per_cycle: [0, [Validators.required, Validators.min(0), Validators.max(1000)]],
     }),
     tariff: tariffForm(this.fb),
+    tariff_effective_from: [this.today],
     arrays: this.fb.array([this.arrayGroup()]),
   });
+
+  /** "7.5–27.5p" for what a past tariff charged to import. */
+  importRange(period: TariffPeriod): string {
+    const rates = period.bands.filter((b) => b.direction === 'import').map((b) => b.rate);
+    const low = Math.min(...rates);
+    const high = Math.max(...rates);
+    return low === high ? `${low}p` : `${low}–${high}p`;
+  }
+
+  exportRange(period: TariffPeriod): string {
+    const rates = period.bands.filter((b) => b.direction === 'export').map((b) => b.rate);
+    const low = Math.min(...rates);
+    const high = Math.max(...rates);
+    return low === high ? `${low}p` : `${low}–${high}p`;
+  }
 
   ngOnInit(): void {
     this.systems.get().subscribe({
@@ -61,9 +85,15 @@ export class SystemSetup implements OnInit {
         this.isNew.set(false);
         this.form.controls.arrays.clear();
         system.arrays.forEach((a) => this.form.controls.arrays.push(this.arrayGroup(a)));
-        const { tariff, ...rest } = system;
+        // The effective date stays at today: it's for the next change, not stored on the system.
+        const { tariff, tariff_effective_from: _unused, ...rest } = system;
         this.form.patchValue(rest);
         patchTariff(this.fb, this.form.controls.tariff, tariff);
+        this.systems.tariffHistory().subscribe({
+          next: (periods) => this.tariffHistory.set(periods),
+          // The form still works without the list.
+          error: () => undefined,
+        });
       },
       // 404 means no system yet; keep the defaults.
       error: () => undefined,

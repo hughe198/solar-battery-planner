@@ -14,8 +14,17 @@ const PAD = { left: 40, right: 8, top: 10, bottom: 24 };
 const PLOT_HEIGHT = HEIGHT - PAD.top - PAD.bottom;
 const SLOT_MS = 30 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const MAX_DAYS_AHEAD = 7;
+// A tenth of the panels' rating. Checked against real east and west facing panels, where a quarter
+// is hardly ever reached: this one still separates good days from poor ones into October.
+const GOOD_SOLAR_SHARE = 0.1;
 /** Half hours from 21:00 to midnight, for days too far ahead to start the chart at now. */
 const EVENING_SLOTS = 6;
+
+function addDays(day: string, days: number): string {
+  const [year, month, date] = day.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, date + days)).toISOString().slice(0, 10);
+}
 
 export const METHOD_LABELS: Record<ForecastMethod, string> = {
   learned: 'learned from your history',
@@ -61,6 +70,32 @@ export class Forecast implements OnInit {
   readonly methodLabels = METHOD_LABELS;
   readonly width = WIDTH;
   readonly pad = PAD;
+
+  /** Today in the system's time zone to 7 days ahead, as the API allows. */
+  readonly firstDay = computed(() => this.localDate(this.now()));
+  readonly lastDay = computed(() => addDays(this.firstDay(), MAX_DAYS_AHEAD));
+
+  /** The day asked for, which shows straight away while its forecast loads. */
+  private readonly chosenDay = signal<string | null>(null);
+  readonly shownDay = computed(() => this.chosenDay() ?? this.forecast()?.day ?? null);
+
+  /** How long on the selected day the panels are forecast to make a useful amount. */
+  readonly goodSolar = computed(() => {
+    const intervals = this.forecast()?.intervals ?? [];
+    const kwp = (this.system()?.arrays ?? []).reduce((total, a) => total + a.kwp, 0);
+    if (!intervals.length || kwp <= 0) return null;
+    const kw = kwp * GOOD_SOLAR_SHARE;
+    const good = intervals.flatMap((i, index) => (i.solar_kwh * 2 >= kw ? [index] : []));
+    if (!good.length) return { kw, kwp, text: 'No good solar hours' };
+    const first = good[0];
+    const last = good[good.length - 1];
+    const hours = good.length / 2;
+    const from = this.localTime(intervals[first].start);
+    const until = this.localTime(intervals[last].end);
+    const unbroken = last - first + 1 === good.length;
+    const when = unbroken ? `${from}–${until}` : `between ${from} and ${until}`;
+    return { kw, kwp, text: `${hours} good solar ${hours === 1 ? 'hour' : 'hours'}, ${when}` };
+  });
 
   readonly recommendation = computed(() => this.plan()?.recommendations?.[0] ?? null);
 
@@ -338,18 +373,36 @@ export class Forecast implements OnInit {
     this.leadIn.set(null);
     this.hovered.set(null);
     this.now.set(this.clock());
+    this.chosenDay.set(day ?? null);
     this.forecasts.day(day || undefined).subscribe({
       next: (forecast) => {
+        // Stepping quickly can leave an earlier day's answer arriving last.
+        if (day && this.chosenDay() !== day) return;
         this.forecast.set(forecast);
         this.loading.set(false);
         this.loadPlan(forecast.day);
         this.loadLeadIn(forecast);
       },
       error: (err) => {
+        if (day && this.chosenDay() !== day) return;
         this.error.set(errorMessage(err));
         this.loading.set(false);
       },
     });
+  }
+
+  /** Move to the previous or next day, within today to 7 days ahead. */
+  step(days: -1 | 1): void {
+    const current = this.shownDay();
+    if (!current) return;
+    const day = addDays(current, days);
+    if (day >= this.firstDay() && day <= this.lastDay()) this.load(day);
+  }
+
+  relativeDay(day: string): string {
+    if (day === this.firstDay()) return 'Today';
+    if (day === addDays(this.firstDay(), 1)) return 'Tomorrow';
+    return '';
   }
 
   /** The forecast still shows without a plan, e.g. when no battery is set up. */
@@ -380,6 +433,16 @@ export class Forecast implements OnInit {
       },
       error: () => this.leadIn.set(null),
     });
+  }
+
+  /** "YYYY-MM-DD" in the system's time zone. */
+  private localDate(moment: number): string {
+    return new Intl.DateTimeFormat('en-CA', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      timeZone: this.system()?.timezone,
+    }).format(new Date(moment));
   }
 
   /** "Sunday" in the system's time zone. */

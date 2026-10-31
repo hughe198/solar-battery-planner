@@ -216,6 +216,7 @@ describe('Forecast', () => {
       expect(el.querySelectorAll('svg rect.hold').length).toBe(1);
       expect(el.querySelector('svg rect.force')).toBeNull();
       expect(el.textContent).toContain('Battery held, house on the grid');
+      expect(el.textContent).toContain('set a Force Charge period for 23:30–05:30 in the Fox app');
       // Half hour 5 is the window's first (the chart opens at 21:00, the window at 23:30).
       el.querySelectorAll('svg rect.hit')[5].dispatchEvent(new MouseEvent('mouseenter'));
       fixture.detectChanges();
@@ -260,6 +261,128 @@ describe('Forecast', () => {
     fixture.detectChanges();
     expect(readout()).toContain('Hover over the chart');
     expect(el.querySelector('svg line.crosshair')).toBeNull();
+  });
+
+  describe('the day stepper', () => {
+    /** Answers everything outstanding: forecasts for the day asked, plans with an error. */
+    function answerAll() {
+      for (let pending = http.match(() => true); pending.length; pending = http.match(() => true)) {
+        for (const req of pending) {
+          if (req.request.url === '/api/forecast') {
+            const day = req.request.params.get('day') ?? FORECAST.day;
+            req.flush({ ...FORECAST, day });
+          } else if (req.request.url === '/api/system') {
+            req.flush(SYSTEM);
+          } else {
+            req.flush({ detail: 'No plan' }, { status: 422, statusText: 'Unprocessable' });
+          }
+        }
+      }
+    }
+
+    function open() {
+      const fixture = TestBed.createComponent(Forecast);
+      // 23:30 UTC on 31 May is already 1 June in London.
+      fixture.componentInstance.clock = () => Date.UTC(2026, 4, 31, 23, 30);
+      fixture.detectChanges();
+      answerAll();
+      fixture.detectChanges();
+      const el = fixture.nativeElement as HTMLElement;
+      return {
+        fixture,
+        el,
+        label: () =>
+          [...(el.querySelector('.day-stepper-label')?.children ?? [])]
+            .map((c) => c.textContent?.trim())
+            .join(' ')
+            .trim(),
+        previous: () => el.querySelector<HTMLButtonElement>('[aria-label="Previous day"]')!,
+        next: () => el.querySelector<HTMLButtonElement>('[aria-label="Next day"]')!,
+      };
+    }
+
+    it('replaces the date input and shows the day between its arrows', () => {
+      const { el, label } = open();
+      expect(el.querySelector('input[type="date"]')).toBeNull();
+      expect(label()).toBe('Tuesday 2 June Tomorrow');
+    });
+
+    it('stops at today and at 7 days ahead, in the system time zone', () => {
+      const { fixture, label, previous, next } = open();
+      const click = (button: HTMLButtonElement) => {
+        button.click();
+        answerAll();
+        fixture.detectChanges();
+      };
+
+      click(previous());
+      expect(label()).toBe('Monday 1 June Today');
+      expect(previous().disabled).toBe(true);
+      expect(next().disabled).toBe(false);
+
+      for (let i = 0; i < 6; i++) click(next());
+      expect(label()).toBe('Sunday 7 June');
+      expect(next().disabled).toBe(false);
+      click(next());
+      expect(label()).toBe('Monday 8 June');
+      expect(next().disabled).toBe(true);
+    });
+
+    it('keeps the latest day when an earlier answer arrives last', () => {
+      const { fixture, next, label } = open();
+      next().click();
+      fixture.detectChanges();
+      next().click();
+      fixture.detectChanges();
+      expect(label()).toBe('Thursday 4 June');
+
+      const forecastFor = (day: string) =>
+        http.expectOne((r) => r.url === '/api/forecast' && r.params.get('day') === day);
+      const third = forecastFor('2026-06-03');
+      forecastFor('2026-06-04').flush({ ...FORECAST, day: '2026-06-04' });
+      third.flush({ ...FORECAST, day: '2026-06-03' });
+      answerAll();
+      fixture.detectChanges();
+
+      expect(fixture.componentInstance.forecast()?.day).toBe('2026-06-04');
+      expect(label()).toBe('Thursday 4 June');
+    });
+  });
+
+  describe('good solar hours', () => {
+    const withSolar = (solar: (i: number) => number): DayForecast => ({
+      ...FORECAST,
+      intervals: FORECAST.intervals.map((interval, i) => ({
+        ...interval,
+        end: new Date(new Date(interval.start).getTime() + 1_800_000).toISOString(),
+        solar_kwh: solar(i),
+      })),
+    });
+    const goodSolar = (forecast: DayForecast) =>
+      render(forecast).querySelector('.good-solar')?.textContent?.trim();
+
+    // A tenth of the system's 4 kWp is 0.4 kW, or 0.2 kWh per half hour. Half hour 0 is 00:00 BST.
+    it('counts the half hours that reach a tenth of the panels, with when', () => {
+      expect(goodSolar(withSolar((i) => (i >= 20 && i < 27 ? 0.2 : 0.19)))).toBe(
+        '3.5 good solar hours, 10:00–13:30',
+      );
+    });
+
+    it('says between when the good spells are broken up', () => {
+      expect(goodSolar(withSolar((i) => (i === 20 || i === 25 ? 0.5 : 0)))).toBe(
+        '1 good solar hour, between 10:00 and 13:00',
+      );
+    });
+
+    it('says when there are none', () => {
+      expect(goodSolar(withSolar(() => 0.19))).toBe('No good solar hours');
+    });
+
+    it('explains the measure with the panels own numbers', () => {
+      expect(render(withSolar(() => 0)).textContent).toContain(
+        'forecast to make at least 0.4 kW, a tenth of their 4 kWp',
+      );
+    });
   });
 
   it('toggles each line with its checkbox', () => {

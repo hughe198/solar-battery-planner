@@ -4,17 +4,38 @@
   your location and what the model has learned from your history.
 </p>
 
-<label class="day-picker">
-  Day
-  <input #day type="date" [value]="forecast()?.day ?? ''" (change)="load(day.value)" />
-</label>
+@if (shownDay(); as day) {
+  <nav class="day-stepper" aria-label="Choose a day">
+    <button
+      type="button"
+      class="secondary"
+      aria-label="Previous day"
+      [disabled]="day <= firstDay()"
+      (click)="step(-1)"
+    >
+      ‹
+    </button>
+    <div class="day-stepper-label" aria-live="polite">
+      <strong>{{ dayLabel(day) }}</strong>
+      <span class="muted">{{ relativeDay(day) }}</span>
+    </div>
+    <button
+      type="button"
+      class="secondary"
+      aria-label="Next day"
+      [disabled]="day >= lastDay()"
+      (click)="step(1)"
+    >
+      ›
+    </button>
+  </nav>
+}
 
 @if (error()) {
   <p class="form-error" role="alert">{{ error() }}</p>
 }
 
 @if (forecast(); as f) {
-  <h2>{{ dayLabel(f.day) }}</h2>
   <div class="tiles">
     <div class="card tile">
       <span class="muted">Usage</span>
@@ -29,6 +50,9 @@
       <span class="muted"
         >likely {{ f.solar.low | number: '1.1-1' }}–{{ f.solar.high | number: '1.1-1' }} kWh</span
       >
+      @if (goodSolar(); as good) {
+        <span class="muted good-solar">{{ good.text }}</span>
+      }
     </div>
     <div class="card tile">
       <span class="muted">History used</span>
@@ -231,6 +255,14 @@
       </p>
     }
     @if (hasBattery() && recommendation(); as r) {
+      @if (r.hold_start && r.hold_stop) {
+        <p class="legend muted">
+          To hold the battery by hand, set a Force Charge period for
+          {{ localTime(r.hold_start) }}–{{ localTime(r.hold_stop) }} in the Fox app, to the lowest
+          level it accepts. Fox has no grid-only mode, but a forced charge stops at its level and
+          runs the house from the grid for the rest of the period.
+        </p>
+      }
       <ul class="plain">
         @for (reason of r.reasons; track $index) {
           <li>{{ reason }}</li>
@@ -244,6 +276,12 @@
     <ul class="plain">
       <li><strong>Usage:</strong> {{ methodLabels[f.load_method] }}.</li>
       <li><strong>Solar:</strong> {{ methodLabels[f.solar_method] }}.</li>
+      @if (goodSolar(); as good) {
+        <li>
+          <strong>Good solar hours:</strong> the time your panels are forecast to make at least
+          {{ good.kw | number: '1.0-1' }} kW, a tenth of their {{ good.kwp | number: '1.0-1' }} kWp.
+        </li>
+      }
       @if (system(); as s) {
         @for (array of s.arrays; track $index) {
           @if (f.array_performance[$index] !== undefined) {

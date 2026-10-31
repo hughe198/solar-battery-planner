@@ -11,12 +11,12 @@ from app.database import get_db
 from app.forecasting.service import HistoryForecaster
 from app.models import PlanningMode, System, User
 from app.planner import optimiser
-from app.planner.base import ChargePlan, Replay
+from app.planner.base import ChargePlan, Replay, ReplayDetail
 from app.planner.charging import learn_rate_from_history
 from app.planner.lead_in import simulate_lead_in, usable_reading
 from app.planner.replay import DEFAULT_DAYS, MAX_DAYS, Replayer
 from app.planner.simulator import cycle_for
-from app.schemas import ChargePlanOut, ReplayOut
+from app.schemas import ChargePlanOut, ReplayDetailOut, ReplayOut
 from app.security import current_user
 from app.tariffs import TariffSchedule
 from app.weather.open_meteo import OpenMeteoClient, WeatherError
@@ -107,3 +107,19 @@ def replay(
     best charge with hindsight would have saved. Needs imported state of charge."""
     system = _system(user)
     return Replayer(db, system).replay(mode or system.planning_mode, days)
+
+
+@router.get("/replay/{day}", response_model=ReplayDetailOut)
+def replay_day(
+    day: date,
+    mode: PlanningMode | None = Query(default=None),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> ReplayDetail:
+    """One past day in full: its metered half hours, the battery level the best charge would have
+    given, and a review. 404 if the day can't be replayed, for example with missing data."""
+    system = _system(user)
+    detail = Replayer(db, system).detail(day, mode or system.planning_mode)
+    if detail is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "That day can't be replayed")
+    return detail

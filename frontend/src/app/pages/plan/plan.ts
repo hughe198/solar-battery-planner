@@ -3,10 +3,14 @@ import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { RouterLink } from '@angular/router';
 import { errorMessage } from '../../core/errors';
-import { ChargePlan, PlanningMode, Replay } from '../../core/models';
+import { ChargePlan, PlanningMode, Replay, ReplayDetail } from '../../core/models';
 import { PlanService, formatPence } from '../../core/plan.service';
 import { SystemService } from '../../core/system.service';
+import { ChargeCalendar } from '../../shared/charge-calendar';
 import { FlowChart } from '../../shared/flow-chart';
+
+/** As far back as the API replays. */
+const LOOK_BACK_DAYS = 120;
 
 export const MODE_LABELS: Record<PlanningMode, string> = {
   maximise_own_usage: 'Maximise own usage',
@@ -15,7 +19,7 @@ export const MODE_LABELS: Record<PlanningMode, string> = {
 
 @Component({
   selector: 'app-plan',
-  imports: [DecimalPipe, RouterLink, FlowChart],
+  imports: [DecimalPipe, RouterLink, FlowChart, ChargeCalendar],
   templateUrl: './plan.html',
 })
 export class Plan implements OnInit {
@@ -44,9 +48,36 @@ export class Plan implements OnInit {
   readonly review = computed(() => this.replay()?.review ?? null);
   readonly reviewDays = computed(() => [...(this.replay()?.days ?? [])].reverse());
 
+  /** The day picked on the calendar, starting at the latest. */
+  readonly selectedDay = signal<string | null>(null);
+  readonly detail = signal<ReplayDetail | null>(null);
+  readonly detailError = signal<string | null>(null);
+
   ngOnInit(): void {
     this.load();
-    this.plans.replay().subscribe({ next: (r) => this.replay.set(r), error: () => {} });
+    this.plans.replay(LOOK_BACK_DAYS).subscribe({
+      next: (r) => {
+        this.replay.set(r);
+        const latest = r.days[r.days.length - 1];
+        if (latest) this.selectDay(latest.day);
+      },
+      error: () => {},
+    });
+  }
+
+  selectDay(day: string): void {
+    this.selectedDay.set(day);
+    this.detail.set(null);
+    this.detailError.set(null);
+    this.plans.replayDay(day).subscribe({
+      next: (detail) => {
+        // Clicking quickly can leave an earlier day's answer arriving last.
+        if (this.selectedDay() === day) this.detail.set(detail);
+      },
+      error: (err) => {
+        if (this.selectedDay() === day) this.detailError.set(errorMessage(err));
+      },
+    });
   }
 
   load(startSoc?: number): void {

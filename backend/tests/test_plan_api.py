@@ -228,6 +228,34 @@ def test_replay_matches_metered_days_and_reviews_over_charging(client, headers):
     assert body["missed_saving_pence"] > 50
 
 
+def test_replay_of_one_day_has_its_half_hours_and_the_best_charge(client, headers):
+    upload(client, headers, metered_days(charge_to_percent=100))
+    day = FIRST_DAY + timedelta(days=4)
+
+    resp = client.get(f"/api/plan/replay/{day}", headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["day"]["day"] == day.isoformat()
+    assert body["comments"][0].startswith(f"On {day:%A} {day.day} {day:%B}")
+    points = body["points"]
+    assert len(points) == 48
+    assert points[0]["start"].startswith(f"{day - timedelta(days=1)}T23:30")
+    assert points[0]["start"].endswith(("Z", "+00:00"))
+    assert sum(p["cheap"] for p in points) == 12
+    # Metered levels throughout; the best charge's only once the window has closed.
+    assert all(p["soc_percent"] is not None for p in points)
+    assert all((p["best_soc_percent"] is None) == p["cheap"] for p in points)
+    first_after = next(p for p in points if not p["cheap"])
+    assert first_after["best_soc_percent"] < first_after["soc_percent"]
+
+
+def test_replay_of_a_day_without_data_is_not_found(client, headers):
+    upload(client, headers, metered_days(charge_to_percent=100))
+    assert client.get("/api/plan/replay/2020-01-01", headers=headers).status_code == 404
+    assert client.get(f"/api/plan/replay/{FIRST_DAY}", headers=headers).status_code == 404
+
+
 def test_replay_finds_a_good_decision_about_right(client, headers):
     upload(client, headers, metered_days(charge_to_percent=10))
     body = client.get("/api/plan/replay?mode=maximise_own_usage", headers=headers).json()
@@ -264,6 +292,7 @@ def test_history_summarises_the_last_week(client, headers):
 def test_plan_and_replay_on_a_single_rate_tariff(client, headers):
     flat = {
         **UTC_SYSTEM,
+        "tariff_effective_from": "2020-01-01",  # Before the metered days below.
         "tariff": {
             "name": "Flat",
             "bands": [

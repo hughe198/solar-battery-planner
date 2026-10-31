@@ -32,8 +32,8 @@ uvicorn app.main:app --reload
 pytest
 ```
 
-Frontend (Angular 22, Node 22+), on http://localhost:4200. The dev server proxies `/api` to
-the backend:
+Frontend (Angular 22; Node 22.22.3+, 24.15+ or 26+), on http://localhost:4200. The dev server
+proxies `/api` to the backend:
 
 ```bash
 cd frontend
@@ -160,8 +160,8 @@ examples.
    */5 * * * * cd /opt/solar-battery-planner/app/backend && .venv/bin/python -m app.control.nightly
    ```
 
-6. **Frontend.** Build it (Node 22; on another machine is fine) and copy `dist/frontend/browser`
-   to the server:
+6. **Frontend.** Build it (Node 22.22.3+, 24.15+ or 26+; on another machine is fine) and copy
+   `dist/frontend/browser` to the server:
 
    ```bash
    cd frontend && npm ci && npx ng build
@@ -222,6 +222,13 @@ schedule.day_rates(day, "export")            # [(utc_start, p/kWh)] for each hal
 schedule.standing_charge_pence_per_day
 ```
 
+Changing the rates keeps the old tariff in `past_tariffs`, with the day the new rates began (today
+unless given; `GET /api/system/tariff-history` lists them). Plans use the current tariff.
+Anything about past days uses `TariffTimeline`, which has the same `rate_at`, so they're priced at
+what they really cost. Choosing a day before the current tariff began replaces whatever applied
+from then on, which is how to correct a mistake. Past tariffs can't be recovered for changes made
+before this existed, so those days are priced at the tariff that was current when tracking began.
+
 Databases from step 1 (one cheap window) are converted to bands on startup
 (`app/migrations.py`).
 
@@ -242,7 +249,9 @@ The Data page (`/data`) and `/api/import/*` endpoints cover:
 - **Weather** from Open-Meteo at the system's coordinates: the ERA5 archive for older days and
   the historical-forecast API for the last week (the archive lags by several days). Radiation is
   re-keyed to the start of the hour it averages over, so each half hour joins to the hour it
-  sits in. Moving the system clears weather so it is refetched for the new location.
+  sits in. Moving the system replaces its weather with the new location's straight away, in the
+  background (the next import does it if that fails). Fox ESS isn't called: usage was measured at
+  the inverter, so it doesn't change.
 - **Deletion.** `DELETE /api/import/data` removes all imported data and the Fox key;
   `DELETE /api/auth/me` deletes the account and everything with it.
 
@@ -317,9 +326,11 @@ The planner (`backend/app/planner`) picks the overnight charge by simulation, no
   history it uses the battery's charge rate, which is read from the Fox ESS schedule on connect
   when one is set. From the window opening until the charge starts the battery is held, so the
   house runs on the cheap (or free) grid instead of spending stored energy that would only be
-  bought back with losses. With no charge needed, the whole window is a hold. On Fox ESS the hold
-  is written as a forced charge to the lowest level the inverter accepts, which keeps the house
-  on the grid without charging.
+  bought back with losses. With no charge needed, the whole window is a hold. Fox ESS has no
+  grid-only mode, so the hold is written as a forced charge to the lowest level the inverter
+  accepts: a forced charge stops at its level and the rest of the period runs the house from the
+  grid. An owner has seen this on a charge to 90%; a hold from above the level hasn't been watched
+  yet. It can be set by hand in the Fox app, and the Forecast page says how.
 - **Discharge before a free window.** When the charge window is free (import at 0p or less)
   and export pays, whatever is above the battery's reserve is force discharged (exported) in up
   to 90 minutes ending as the window opens, since the window refills it for nothing. The charge
@@ -337,7 +348,8 @@ The planner (`backend/app/planner`) picks the overnight charge by simulation, no
 
 `GET /api/plan?day=&start_soc_percent=` returns a recommendation per mode (the system's mode
 first) with outcomes for each scenario, reasons, the cost of every candidate and the expected
-half-hourly timeline. `GET /api/plan/replay?days=30` returns the replay and review, and
+half-hourly timeline. `GET /api/plan/replay?days=30` returns the replay and review,
+`GET /api/plan/replay/YYYY-MM-DD` one day in full for the calendar, and
 `GET /api/history?days=7` the metered half hours and daily totals for the home page charts.
 The Charge plan page (`/plan`) and home page show them.
 

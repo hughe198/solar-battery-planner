@@ -143,6 +143,30 @@ class ReplayDay:
 
 
 @dataclass(frozen=True)
+class ReplayPoint:
+    """One metered half hour of a replayed cycle, with the battery level the hindsight best charge
+    would have given at the end of it (None during the charge window)."""
+
+    start: datetime
+    load_kwh: float
+    solar_kwh: float
+    import_kwh: float
+    export_kwh: float
+    soc_percent: float | None
+    cheap: bool
+    best_soc_percent: float | None
+
+
+@dataclass(frozen=True)
+class ReplayDetail:
+    """One replayed day in full, for looking back at it."""
+
+    day: ReplayDay
+    comments: list[str]
+    points: list[ReplayPoint]
+
+
+@dataclass(frozen=True)
 class Review:
     """Plain-language look back at the most recent replayed day."""
 
