@@ -189,6 +189,50 @@
 
 @if (replay(); as rp) {
   @if (rp.days.length) {
+    <section class="card look-back">
+      <h2>Look back</h2>
+      <app-charge-calendar [days]="rp.days" [selected]="selectedDay()" (pick)="selectDay($event)" />
+      @if (selectedDay(); as day) {
+        <h3>{{ dayLabel(day) }}</h3>
+        @if (detail(); as d) {
+          <div class="tiles">
+            <div class="tile">
+              <span class="muted">Went in at</span>
+              <strong>{{ d.day.soc_before_percent | number: '1.0-0' }}%</strong>
+            </div>
+            <div class="tile">
+              <span class="muted">Charged to</span>
+              <strong>{{ d.day.soc_after_charge_percent | number: '1.0-0' }}%</strong>
+            </div>
+            <div class="tile">
+              <span class="muted">Best with hindsight</span>
+              <strong>{{ d.day.best_soc_percent | number: '1.0-0' }}%</strong>
+            </div>
+            <div class="tile">
+              <span class="muted">Lost</span>
+              <strong>{{
+                d.day.missed_saving_pence < 1 ? 'Nothing' : pence(d.day.missed_saving_pence)
+              }}</strong>
+            </div>
+          </div>
+          <app-flow-chart
+            [points]="d.points"
+            [timeZone]="system()?.timezone"
+            label="Metered battery level, the level with the best charge, and grid import and export per half hour"
+          />
+          <ul class="plain">
+            @for (c of d.comments; track $index) {
+              <li>{{ c }}</li>
+            }
+          </ul>
+        } @else if (detailError(); as message) {
+          <p class="form-error" role="alert">{{ message }}</p>
+        } @else {
+          <p class="muted">Loading…</p>
+        }
+      }
+    </section>
+
     <section class="card">
       <h2>Recent charges, replayed</h2>
       <p>
@@ -204,38 +248,41 @@
         {{ rp.soc_error_percent ?? 0 | number: '1.0-0' }} points on average. Large gaps usually mean
         the battery settings on the <a routerLink="/setup">System</a> page need adjusting.
       </p>
-      <div class="table-scroll">
-        <table class="plan-table">
-          <thead>
-            <tr>
-              <th>Day</th>
-              <th>Charged to</th>
-              <th>Best</th>
-              <th>Lost</th>
-              <th>Import: metered / simulated</th>
-              <th>Export: metered / simulated</th>
-            </tr>
-          </thead>
-          <tbody>
-            @for (d of reviewDays(); track d.day) {
+      <details>
+        <summary>Every day as a table</summary>
+        <div class="table-scroll">
+          <table class="plan-table">
+            <thead>
               <tr>
-                <td>{{ d.day }}</td>
-                <td>{{ d.soc_after_charge_percent | number: '1.0-0' }}%</td>
-                <td>{{ d.best_soc_percent | number: '1.0-0' }}%</td>
-                <td>{{ d.missed_saving_pence < 1 ? '–' : pence(d.missed_saving_pence) }}</td>
-                <td>
-                  {{ d.actual_import_kwh | number: '1.1-1' }} /
-                  {{ d.simulated_import_kwh | number: '1.1-1' }}
-                </td>
-                <td>
-                  {{ d.actual_export_kwh | number: '1.1-1' }} /
-                  {{ d.simulated_export_kwh | number: '1.1-1' }}
-                </td>
+                <th>Day</th>
+                <th>Charged to</th>
+                <th>Best</th>
+                <th>Lost</th>
+                <th>Import: metered / simulated</th>
+                <th>Export: metered / simulated</th>
               </tr>
-            }
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              @for (d of reviewDays(); track d.day) {
+                <tr>
+                  <td>{{ d.day }}</td>
+                  <td>{{ d.soc_after_charge_percent | number: '1.0-0' }}%</td>
+                  <td>{{ d.best_soc_percent | number: '1.0-0' }}%</td>
+                  <td>{{ d.missed_saving_pence < 1 ? '–' : pence(d.missed_saving_pence) }}</td>
+                  <td>
+                    {{ d.actual_import_kwh | number: '1.1-1' }} /
+                    {{ d.simulated_import_kwh | number: '1.1-1' }}
+                  </td>
+                  <td>
+                    {{ d.actual_export_kwh | number: '1.1-1' }} /
+                    {{ d.simulated_export_kwh | number: '1.1-1' }}
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </details>
     </section>
   }
 }

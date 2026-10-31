@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import numpy as np
 import pytest
@@ -101,6 +101,97 @@ def test_plan_recommends_a_charge_for_each_mode(client, headers):
     assert any(not p["cheap"] for p in body["timeline"])
 
 
+def timeline_for(client, headers, bands=None):
+    if bands:
+        system = {**UTC_SYSTEM, "tariff": {"name": "Test", "bands": bands}}
+        assert client.put("/api/system", json=system, headers=headers).status_code == 200
+    day = tomorrow()
+    resp = client.get(f"/api/plan?day={day}", headers=headers)
+    assert resp.status_code == 200, resp.text
+    points = resp.json()["timeline"]
+    starts = [datetime.fromisoformat(p["start"]).replace(tzinfo=None) for p in points]
+    assert all(b - a == timedelta(minutes=30) for a, b in zip(starts, starts[1:]))
+    midnight = datetime.combine(day, datetime.min.time())
+    return points, starts, midnight
+
+
+def test_plan_includes_the_window_hours_before_midnight(client, headers):
+    points, starts, midnight = timeline_for(client, headers)  # Window 23:30 to 05:30.
+    assert starts[0] == midnight - timedelta(minutes=30)
+    assert starts[-1] == midnight + timedelta(hours=23)
+    assert sum(p["cheap"] for p in points) == 12
+
+
+def test_plan_runs_past_midnight_to_the_next_window(client, headers):
+    points, starts, midnight = timeline_for(
+        client,
+        headers,
+        [
+            {"direction": "import", "start": "02:00", "end": "05:00", "rate": 7.5},
+            {"direction": "import", "start": "05:00", "end": "02:00", "rate": 27.5},
+            {"direction": "export", "start": "00:00", "end": "00:00", "rate": 15},
+        ],
+    )
+    assert starts[0] == midnight + timedelta(hours=2)
+    assert starts[-1] == midnight + timedelta(hours=25, minutes=30)
+    assert points[-1]["load_kwh"] > 0
+
+
+def battery_readings(day: date, first_hour: int, hours: int, soc: float) -> str:
+    rows = []
+    for k in range(hours * 2):
+        moment = datetime.combine(day, datetime.min.time()) + timedelta(
+            hours=first_hour, minutes=30 * k
+        )
+        rows.append(f"{moment:%Y-%m-%dT%H:%M},0.2,0,0.2,0,{soc}\n")
+    return HEADER + "".join(rows)
+
+
+def test_plan_predicts_the_start_from_the_latest_reading(client, headers):
+    today = datetime.now(timezone.utc).date()
+    day = today + timedelta(days=1)
+    upload(client, headers, battery_readings(today, 6, 6, 60))  # Last reading ends at 12:00.
+
+    body = client.get(f"/api/plan?day={day}", headers=headers).json()
+
+    assert body["start_soc_source"] == "measured"
+    assert body["reading_soc_percent"] == 60
+    assert body["reading_at"].startswith(f"{today}T12:00")
+    lead = body["lead_in"]
+    assert lead[0]["start"].startswith(f"{today}T12:00")
+    assert lead[-1]["start"].startswith(f"{today}T23:00")
+    assert not any(p["cheap"] for p in lead)
+    assert body["start_soc_percent"] == lead[-1]["soc_percent"]
+    assert lead[-1]["soc_percent"] != 60
+    assert body["timeline"][0]["start"].startswith(f"{today}T23:30")
+
+
+def test_plan_ignores_a_reading_from_before_the_last_charge_window_closed(client, headers):
+    today = datetime.now(timezone.utc).date()
+    day = today + timedelta(days=1)
+    # Ends at 05:00 today, while the 23:30 to 05:30 window it would have to predict across is open.
+    upload(client, headers, battery_readings(today, 3, 2, 60))
+
+    body = client.get(f"/api/plan?day={day}", headers=headers).json()
+
+    assert body["start_soc_source"] == "assumed"
+    assert body["start_soc_percent"] == 10
+    assert body["reading_at"] is None
+    assert body["lead_in"] == []
+
+
+def test_a_given_start_level_overrides_the_reading(client, headers):
+    today = datetime.now(timezone.utc).date()
+    day = today + timedelta(days=1)
+    upload(client, headers, battery_readings(today, 6, 6, 60))
+
+    body = client.get(f"/api/plan?day={day}&start_soc_percent=25", headers=headers).json()
+
+    assert body["start_soc_source"] == "given"
+    assert body["start_soc_percent"] == 25
+    assert body["lead_in"] == []
+
+
 def test_plan_rejects_far_days(client, headers):
     far = tomorrow() + timedelta(days=9)
     assert client.get(f"/api/plan?day={far}", headers=headers).status_code == 422
@@ -135,6 +226,34 @@ def test_replay_matches_metered_days_and_reviews_over_charging(client, headers):
     assert "more than the day needed" in comments
     assert "would have saved" in comments
     assert body["missed_saving_pence"] > 50
+
+
+def test_replay_of_one_day_has_its_half_hours_and_the_best_charge(client, headers):
+    upload(client, headers, metered_days(charge_to_percent=100))
+    day = FIRST_DAY + timedelta(days=4)
+
+    resp = client.get(f"/api/plan/replay/{day}", headers=headers)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["day"]["day"] == day.isoformat()
+    assert body["comments"][0].startswith(f"On {day:%A} {day.day} {day:%B}")
+    points = body["points"]
+    assert len(points) == 48
+    assert points[0]["start"].startswith(f"{day - timedelta(days=1)}T23:30")
+    assert points[0]["start"].endswith(("Z", "+00:00"))
+    assert sum(p["cheap"] for p in points) == 12
+    # Metered levels throughout; the best charge's only once the window has closed.
+    assert all(p["soc_percent"] is not None for p in points)
+    assert all((p["best_soc_percent"] is None) == p["cheap"] for p in points)
+    first_after = next(p for p in points if not p["cheap"])
+    assert first_after["best_soc_percent"] < first_after["soc_percent"]
+
+
+def test_replay_of_a_day_without_data_is_not_found(client, headers):
+    upload(client, headers, metered_days(charge_to_percent=100))
+    assert client.get("/api/plan/replay/2020-01-01", headers=headers).status_code == 404
+    assert client.get(f"/api/plan/replay/{FIRST_DAY}", headers=headers).status_code == 404
 
 
 def test_replay_finds_a_good_decision_about_right(client, headers):
@@ -173,6 +292,7 @@ def test_history_summarises_the_last_week(client, headers):
 def test_plan_and_replay_on_a_single_rate_tariff(client, headers):
     flat = {
         **UTC_SYSTEM,
+        "tariff_effective_from": "2020-01-01",  # Before the metered days below.
         "tariff": {
             "name": "Flat",
             "bands": [

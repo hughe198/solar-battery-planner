@@ -9,6 +9,10 @@
   --error: #b42318;
   --load: #2563eb;
   --battery: #15803d;
+  --rating-good: #bbe5c8;
+  --rating-fair: #fbdf9d;
+  --rating-poor: #f6b3a8;
+  --rating-text: #1d2420;
   color-scheme: light;
 }
 
@@ -24,6 +28,10 @@
     --error: #f97066;
     --load: #60a5fa;
     --battery: #4ade80;
+    --rating-good: #1f5a38;
+    --rating-fair: #6e5316;
+    --rating-poor: #7c2d24;
+    --rating-text: #f2f5f3;
     color-scheme: dark;
   }
 }
@@ -239,6 +247,46 @@ button.destructive {
   margin-bottom: 1rem;
 }
 
+.day-stepper {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  max-width: 26rem;
+  margin: 0 auto 1rem;
+
+  button {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+    padding: 0;
+    font-size: 1.5rem;
+    line-height: 1;
+  }
+
+  button:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+}
+
+.day-stepper-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+  // Room for the Today or Tomorrow line, so the page doesn't jump between days.
+  min-height: 2.75rem;
+  text-align: center;
+
+  strong {
+    font-size: 1.1rem;
+  }
+
+  span {
+    font-size: 0.85rem;
+  }
+}
+
 .forecast-chart {
   width: 100%;
   height: auto;
@@ -277,11 +325,156 @@ button.destructive {
   .series.solar {
     fill: none;
   }
+
+  .series.battery {
+    stroke: var(--battery);
+  }
+
+  .crosshair {
+    stroke: var(--muted);
+    stroke-dasharray: 2 3;
+  }
+
+  .hit {
+    fill: transparent;
+  }
+
+  .dot {
+    stroke: var(--surface);
+    stroke-width: 2;
+  }
+
+  .dot.battery {
+    fill: var(--battery);
+  }
+
+  .dot.load {
+    fill: var(--load);
+  }
+
+  .dot.solar {
+    fill: var(--accent);
+  }
+
+  .series.battery-assumed {
+    stroke: var(--battery);
+    stroke-dasharray: 2 4;
+  }
+
+  .force {
+    fill: var(--battery);
+    opacity: 0.18;
+  }
+
+  .hold {
+    fill: var(--load);
+    opacity: 0.14;
+  }
+
+  .limit {
+    stroke: var(--muted);
+    stroke-dasharray: 2 3;
+  }
+
+  .limit.target {
+    stroke: var(--battery);
+    stroke-dasharray: 5 3;
+  }
 }
 
 .legend {
   font-size: 0.9rem;
   margin: 0.5rem 0 0;
+}
+
+.good-solar {
+  display: block;
+}
+
+.verdict {
+  font-size: 1.05rem;
+  margin: 0 0 0.75rem;
+}
+
+.calendar {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.25rem;
+}
+
+.calendar-weekday {
+  text-align: center;
+  font-size: 0.8rem;
+}
+
+.calendar-day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 3.25rem;
+  min-width: 0;
+  padding: 0.15rem;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  color: var(--rating-text);
+  font-size: 0.85rem;
+  line-height: 1.2;
+
+  &.good {
+    background: var(--rating-good);
+  }
+
+  &.fair {
+    background: var(--rating-fair);
+  }
+
+  &.poor {
+    background: var(--rating-poor);
+  }
+
+  &.empty {
+    background: var(--border);
+    opacity: 0.45;
+  }
+
+  &.selected {
+    border-color: var(--text);
+  }
+}
+
+.calendar-date {
+  font-size: 0.75rem;
+}
+
+.look-back h3 {
+  margin: 1.25rem 0 0.5rem;
+}
+
+.chart-readout {
+  min-height: 1.5rem;
+  margin: 0.5rem 0 0;
+  font-size: 0.9rem;
+}
+
+.chart-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin-top: 0.5rem;
+
+  label {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.4rem;
+    margin-bottom: 0;
+    cursor: pointer;
+  }
+
+  input {
+    width: auto;
+    margin: 0;
+  }
 }
 
 .key {
@@ -306,6 +499,33 @@ button.destructive {
 
   &.battery {
     background: var(--battery);
+  }
+
+  &.force {
+    background: color-mix(in srgb, var(--battery) 25%, transparent);
+  }
+
+  &.hold {
+    background: color-mix(in srgb, var(--load) 25%, transparent);
+  }
+
+  &.best {
+    background: transparent;
+    border-top: 2px dashed var(--muted);
+    height: 0;
+    vertical-align: 0.2rem;
+  }
+
+  &.rating-good {
+    background: var(--rating-good);
+  }
+
+  &.rating-fair {
+    background: var(--rating-fair);
+  }
+
+  &.rating-poor {
+    background: var(--rating-poor);
   }
 
   &.ss {
@@ -351,6 +571,12 @@ button.destructive {
     fill: none;
     stroke: var(--battery);
     stroke-width: 2;
+  }
+
+  .soc.best {
+    stroke: var(--muted);
+    stroke-dasharray: 4 3;
+    stroke-width: 1.5;
   }
 
   .import {

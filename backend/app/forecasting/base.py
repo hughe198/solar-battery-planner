@@ -80,4 +80,6 @@ class DayForecast:
 
 
 class Forecaster(Protocol):
-    def forecast(self, system: System, day: date) -> DayForecast: ...
+    def forecast(
+        self, system: System, day: date, starts: list[datetime] | None = None
+    ) -> DayForecast: ...

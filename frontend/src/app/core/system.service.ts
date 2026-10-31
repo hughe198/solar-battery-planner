@@ -2,7 +2,7 @@ import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable, tap } from 'rxjs';
 import { AuthService } from './auth.service';
-import { SystemConfig, TariffPreset } from './models';
+import { SystemConfig, TariffPeriod, TariffPreset } from './models';
 
 @Injectable({ providedIn: 'root' })
 export class SystemService {
@@ -15,6 +15,10 @@ export class SystemService {
 
   tariffPresets(): Observable<TariffPreset[]> {
     return this.http.get<TariffPreset[]>('/api/system/tariff-presets');
+  }
+
+  tariffHistory(): Observable<TariffPeriod[]> {
+    return this.http.get<TariffPeriod[]>('/api/system/tariff-history');
   }
 
   save(system: SystemConfig): Observable<SystemConfig> {

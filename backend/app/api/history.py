@@ -13,7 +13,7 @@ from app.database import get_db
 from app.models import UsageRecord, User
 from app.planner.simulator import Cycle, cycle_for
 from app.security import current_user
-from app.tariffs import TariffSchedule
+from app.tariffs import TariffTimeline
 
 router = APIRouter(prefix="/api/history", tags=["history"])
 
@@ -62,7 +62,7 @@ def recent_history(
     """The last `days` local days of imported data, ending on the latest day imported."""
     system = _system(user)
     zone = ZoneInfo(system.timezone)
-    schedule = TariffSchedule.from_system(system)
+    schedule = TariffTimeline.from_system(system)
     cycles: dict[date, Cycle] = {}
 
     def charging(start: datetime, local_day: date) -> bool:
