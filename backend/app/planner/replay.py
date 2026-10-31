@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.importers.base import INTERVAL
 from app.models import PlanningMode, System, UsageRecord
-from app.planner.base import Replay, ReplayDay, Review
+from app.planner.base import Replay, ReplayDay, ReplayDetail, ReplayPoint, Review
 from app.planner.charging import learn_rate_from_history, reachable_kwh
 from app.planner.optimiser import (
     best_index,
@@ -33,7 +33,7 @@ from app.planner.simulator import (
     cycle_for,
     simulate,
 )
-from app.tariffs import TariffSchedule
+from app.tariffs import TariffTimeline
 
 DEFAULT_DAYS = 30
 MAX_DAYS = 120
@@ -57,7 +57,8 @@ class Replayer:
         self.db = db
         self.system = system
         self.battery = BatterySpec.of(system.battery)
-        self.book = TariffSchedule.from_system(system)
+        # Past days cost what the tariff in force then charged.
+        self.book = TariffTimeline.from_system(system)
         self.rate = learn_rate_from_history(db, system)
         self.zone = ZoneInfo(system.timezone)
 
@@ -159,20 +160,70 @@ class Replayer:
             shortfall_import_kwh=round(float(max(day_imports[actual] - day_imports[best], 0.0)), 2),
         )
 
-    def replay(self, mode: PlanningMode, days: int = DEFAULT_DAYS) -> Replay:
-        records = self._records(days)
+    def _replayed(
+        self, records: dict[datetime, UsageRecord], mode: PlanningMode, limit: int
+    ) -> list[ReplayDay]:
+        """The latest `limit` days that can be replayed, oldest first."""
         replayed: list[ReplayDay] = []
         if records:
             latest_day = max(records).astimezone(self.zone).date()
             first_day = min(records).astimezone(self.zone).date()
             day = latest_day
-            while day >= first_day and len(replayed) < days + TYPICAL_DAYS:
+            while day >= first_day and len(replayed) < limit:
                 cycle = cycle_for(day, self.book, self.system.timezone)
                 result = self._replay_day(day, cycle, records, mode)
                 if result is not None:
                     replayed.append(result)
                 day -= timedelta(days=1)
         replayed.reverse()
+        return replayed
+
+    def detail(self, day: date, mode: PlanningMode) -> ReplayDetail | None:
+        """One day's metered half hours and review; None if it can't be replayed."""
+        records = self._records(MAX_DAYS)
+        replayed = self._replayed(records, mode, MAX_DAYS + TYPICAL_DAYS)
+        found = next((d for d in replayed if d.day == day), None)
+        if found is None:
+            return None
+        cycle = cycle_for(day, self.book, self.system.timezone)
+        earlier = [d for d in replayed if d.day < day][-TYPICAL_DAYS:]
+        night, daytime = cycle.night_starts(), cycle.day_starts()
+
+        def series(starts, field):
+            return np.array([getattr(records[s], field) for s in starts], dtype=float)
+
+        b = self.battery
+        best = simulate(
+            b,
+            float(b.kwh(found.soc_before_percent)),
+            np.array([float(b.kwh(found.best_soc_percent))]),
+            series(night, "load_kwh"),
+            series(night, "solar_kwh"),
+            series(daytime, "load_kwh"),
+            series(daytime, "solar_kwh"),
+        )
+        best_soc = {
+            s: round(float(b.percent(best.stored_kwh[0, t + 1])), 1) for t, s in enumerate(daytime)
+        }
+        in_night = set(night)
+        points = [
+            ReplayPoint(
+                start=s,
+                load_kwh=records[s].load_kwh,
+                solar_kwh=records[s].solar_kwh,
+                import_kwh=records[s].grid_import_kwh,
+                export_kwh=records[s].grid_export_kwh,
+                soc_percent=records[s].battery_soc_percent,
+                cheap=s in in_night,
+                best_soc_percent=best_soc.get(s),
+            )
+            for s in night + daytime
+        ]
+        return ReplayDetail(found, self.comments(found, earlier, cycle, records, mode), points)
+
+    def replay(self, mode: PlanningMode, days: int = DEFAULT_DAYS) -> Replay:
+        records = self._records(days)
+        replayed = self._replayed(records, mode, days + TYPICAL_DAYS)
         shown = replayed[-days:]
 
         def total_error(sim_field: str, actual_field: str) -> float | None:
@@ -210,7 +261,7 @@ class Replayer:
     ) -> list[str]:
         """What happened on the latest replayed day and what the charge decision was worth."""
         prices = CyclePrices.of(self.book, cycle.night_starts(), cycle.day_starts())
-        label = d.day.strftime("%A %-d %B")
+        label = f"{d.day:%A} {d.day.day} {d.day:%B}"  # %-d isn't supported on Windows
         usage = (
             f"On {label} your home used {d.load_kwh:.1f} kWh "
             f"and the panels made {d.solar_kwh:.1f} kWh"

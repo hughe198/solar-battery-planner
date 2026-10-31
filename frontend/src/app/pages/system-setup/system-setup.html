@@ -89,6 +89,47 @@
   <fieldset class="card">
     <legend>Tariff</legend>
     <app-tariff-editor [form]="form.controls.tariff" />
+    @if (!isNew()) {
+      <label class="day-picker">
+        If you changed the rates, they apply from
+        <input type="date" formControlName="tariff_effective_from" [max]="today" />
+      </label>
+      <p class="muted">
+        Past days stay priced at the rates in force then. To correct a mistake in the rates, pick a
+        day before they began: this replaces whatever applied from that day on.
+      </p>
+      @if (tariffHistory().length > 1) {
+        <div class="table-scroll">
+          <table class="plan-table tariff-history">
+            <caption class="muted">
+              Your tariffs
+            </caption>
+            <thead>
+              <tr>
+                <th>From</th>
+                <th>Until</th>
+                <th>Tariff</th>
+                <th>Import</th>
+                <th>Export</th>
+                <th>Standing</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (p of tariffHistory(); track p.valid_from) {
+                <tr>
+                  <td>{{ p.valid_from ?? 'The start' }}</td>
+                  <td>{{ p.valid_until ?? 'Now' }}</td>
+                  <td>{{ p.name }}</td>
+                  <td>{{ importRange(p) }}</td>
+                  <td>{{ exportRange(p) }}</td>
+                  <td>{{ p.standing_charge_pence_per_day }}p/day</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    }
   </fieldset>
 
   <fieldset class="card">

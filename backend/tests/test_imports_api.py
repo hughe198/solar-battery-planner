@@ -239,16 +239,68 @@ def test_csv_upload_survives_weather_outage(client, headers):
     assert client.get("/api/import/status", headers=headers).json()["matched_intervals"] == 1
 
 
-def test_moving_the_system_clears_weather(client, headers):
+class RecordingWeather(FakeWeather):
+    """Remembers where it was asked about."""
+
+    def __init__(self, fail=False):
+        super().__init__(fail)
+        self.places = []
+
+    def hourly(self, lat, lon, start, end):
+        self.places.append((lat, lon))
+        return super().hourly(lat, lon, start, end)
+
+
+def test_moving_the_system_refetches_weather_for_the_new_place(client, headers):
     client.post(
         "/api/import/csv",
         files={"file": ("u.csv", CSV_HEADER + "2024-06-01T00:00,1,0,1,0\n")},
         headers=headers,
     )
+    weather = RecordingWeather()
+    app.dependency_overrides[get_weather_client] = lambda: weather
+
     client.put("/api/system", json={**UTC_SYSTEM, "name": "Renamed"}, headers=headers)
+    assert weather.places == []
     assert client.get("/api/import/status", headers=headers).json()["weather"]["count"] == 24
+
+    resp = client.put("/api/system", json={**UTC_SYSTEM, "latitude": 52.0}, headers=headers)
+    assert resp.status_code == 200
+    assert weather.places == [(52.0, UTC_SYSTEM["longitude"])]
+    status = client.get("/api/import/status", headers=headers).json()
+    assert status["weather"]["count"] == 24
+    assert status["usage"]["count"] == 1
+    assert status["matched_intervals"] == 1
+
+
+def test_moving_the_system_doesnt_call_fox_ess(client, headers):
+    client.post(
+        "/api/import/csv",
+        files={"file": ("u.csv", CSV_HEADER + "2024-06-01T00:00,1,0,1,0\n")},
+        headers=headers,
+    )
+    FakeFox.calls.clear()
     client.put("/api/system", json={**UTC_SYSTEM, "latitude": 52.0}, headers=headers)
+    assert FakeFox.calls == []
+
+
+def test_saving_still_works_when_the_weather_cant_be_refetched(client, headers):
+    client.post(
+        "/api/import/csv",
+        files={"file": ("u.csv", CSV_HEADER + "2024-06-01T00:00,1,0,1,0\n")},
+        headers=headers,
+    )
+    app.dependency_overrides[get_weather_client] = lambda: FakeWeather(fail=True)
+
+    resp = client.put("/api/system", json={**UTC_SYSTEM, "latitude": 52.0}, headers=headers)
+
+    assert resp.status_code == 200
+    assert resp.json()["latitude"] == 52.0
     assert client.get("/api/import/status", headers=headers).json()["weather"]["count"] == 0
+
+    # It's picked up the next time weather is fetched.
+    app.dependency_overrides[get_weather_client] = lambda: FakeWeather()
+    assert client.post("/api/import/weather", headers=headers).json()["weather_hours_added"] == 24
 
 
 def test_data_is_per_user(client, headers):

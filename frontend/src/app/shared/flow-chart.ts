@@ -63,6 +63,9 @@ const PLOT_WIDTH = WIDTH - PAD.left - PAD.right;
           {{ pct }}%
         </text>
       }
+      @if (bestLine(); as best) {
+        <path class="soc best" [attr.d]="best" />
+      }
       <path class="soc" [attr.d]="socLine()" />
 
       <line
@@ -127,9 +130,12 @@ const PLOT_WIDTH = WIDTH - PAD.left - PAD.right;
       @if (hovered() !== null) {
         <strong>{{ describe(points()[hovered()!]) }}</strong>
       } @else {
-        <span class="key battery"></span> Battery <span class="key import"></span> Import (up)
-        <span class="key export"></span> Export (down) · kWh per half hour.
-        <span class="key cheap"></span> Cheap window. Hover for values.
+        <span class="key battery"></span> Battery
+        @if (bestLine()) {
+          <span class="key best"></span> With the best charge
+        }
+        <span class="key import"></span> Import (up) <span class="key export"></span> Export (down)
+        · kWh per half hour. <span class="key cheap"></span> Cheap window. Hover for values.
       }
     </p>
   `,
@@ -176,19 +182,23 @@ export class FlowChart {
     }));
   });
 
-  readonly socLine = computed(() => {
+  readonly socLine = computed(() => this.levelLine((p) => p.soc_percent));
+  readonly bestLine = computed(() => this.levelLine((p) => p.best_soc_percent ?? null));
+
+  private levelLine(level: (p: FlowPoint) => number | null): string {
     let path = '';
     let drawing = false;
     this.points().forEach((p, i) => {
-      if (p.soc_percent === null) {
+      const value = level(p);
+      if (value === null) {
         drawing = false;
         return;
       }
-      path += `${drawing ? 'L' : 'M'}${this.centre(i).toFixed(1)},${this.socY(p.soc_percent).toFixed(1)} `;
+      path += `${drawing ? 'L' : 'M'}${this.centre(i).toFixed(1)},${this.socY(value).toFixed(1)} `;
       drawing = true;
     });
     return path.trim();
-  });
+  }
 
   readonly cheapRuns = computed(() => {
     const runs: { x: number; width: number }[] = [];
@@ -247,7 +257,9 @@ export class FlowChart {
       minute: '2-digit',
       hourCycle: 'h23',
     });
-    const soc = p.soc_percent === null ? '' : ` · battery ${Math.round(p.soc_percent)}%`;
+    const best =
+      p.best_soc_percent == null ? '' : ` (best charge ${Math.round(p.best_soc_percent)}%)`;
+    const soc = p.soc_percent === null ? '' : ` · battery ${Math.round(p.soc_percent)}%${best}`;
     return (
       `${when}${soc} · import ${p.import_kwh.toFixed(2)} kWh · export ${p.export_kwh.toFixed(2)} kWh` +
       ` · use ${p.load_kwh.toFixed(2)} · solar ${p.solar_kwh.toFixed(2)}${p.cheap ? ' · cheap rate' : ''}`

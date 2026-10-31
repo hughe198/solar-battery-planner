@@ -68,7 +68,18 @@ export interface SystemConfig {
   data_source: DataSourceKind;
   battery: Battery;
   tariff: Tariff;
+  /** The local day changed rates began; today if left out. */
+  tariff_effective_from?: string | null;
   arrays: SolarArray[];
+}
+
+/** A tariff and the local days it applied: no end is current, no start is from the beginning. */
+export interface TariffPeriod {
+  name: string;
+  standing_charge_pence_per_day: number;
+  valid_from: string | null;
+  valid_until: string | null;
+  bands: TariffBand[];
 }
 
 export interface FoxEssConnection {
@@ -234,6 +245,8 @@ export interface FlowPoint {
   export_kwh: number;
   soc_percent: number | null;
   cheap: boolean;
+  /** Looking back: the level the hindsight best charge would have given. */
+  best_soc_percent?: number | null;
 }
 
 export interface ChargePlan {
@@ -253,6 +266,12 @@ export interface ChargePlan {
   recommendations: Recommendation[];
   candidates: PlanCandidate[];
   timeline: FlowPoint[];
+  /** Where start_soc_percent came from: an imported reading, the user, or the battery's minimum. */
+  start_soc_source: 'measured' | 'given' | 'assumed';
+  reading_at: string | null;
+  reading_soc_percent: number | null;
+  /** Half hours simulated from the reading up to the window opening. */
+  lead_in: FlowPoint[];
   load: EnergyRange;
   solar: EnergyRange;
   load_method: ForecastMethod;
@@ -286,6 +305,12 @@ export interface Replay {
   soc_error_percent: number | null;
   missed_saving_pence: number;
   review: { day: ReplayDay; comments: string[] } | null;
+}
+
+export interface ReplayDetail {
+  day: ReplayDay;
+  comments: string[];
+  points: FlowPoint[];
 }
 
 export interface HistoryDay {

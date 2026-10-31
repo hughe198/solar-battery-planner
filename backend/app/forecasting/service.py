@@ -309,14 +309,18 @@ class HistoryForecaster:
         self.db = db
         self.weather_client = weather_client
 
-    def forecast(self, system: System, day: date) -> DayForecast:
+    def forecast(
+        self, system: System, day: date, starts: list[datetime] | None = None
+    ) -> DayForecast:
+        """The forecast for local `day`, or for the half hours in `starts` if given (the planner
+        needs a whole charge cycle, which crosses midnight). Totals cover the same half hours."""
         history = load_history(self.db, system)
         history_days = len(set(history.calendar.local_day))
         models = fit(system, history)
         checked = backtest(system, history)
         spread = checked[1] if checked else Spread.default()
 
-        starts = day_half_hours(day, system.timezone)
+        starts = starts or day_half_hours(day, system.timezone)
         weather = forecast_weather(system, starts, self.weather_client)
         calendar = Calendar.of(weather.starts, system.timezone)
         load, solar = predict(system, models, weather, calendar)

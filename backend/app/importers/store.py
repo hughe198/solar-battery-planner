@@ -142,6 +142,22 @@ def sync_weather(db: Session, system: System, client: OpenMeteoClient) -> int:
     return len(hours)
 
 
+def refetch_weather(
+    system_id: int, session_factory: sessionmaker[Session], weather_client: OpenMeteoClient
+) -> None:
+    """Fill in weather after the system moves. If it fails the next import fetches it instead."""
+    with session_factory() as db:
+        system = db.get(System, system_id)
+        if system is None:
+            return
+        try:
+            sync_weather(db, system, weather_client)
+            db.commit()
+        except WeatherError as exc:
+            db.rollback()
+            log.warning("Couldn't refetch weather for system %s: %s", system_id, exc)
+
+
 def run_fox_backfill(
     job_id: int,
     session_factory: sessionmaker[Session],

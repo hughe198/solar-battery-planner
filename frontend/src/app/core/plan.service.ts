@@ -1,7 +1,7 @@
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { ChargePlan, History, Replay } from './models';
+import { ChargePlan, History, Replay, ReplayDetail } from './models';
 
 @Injectable({ providedIn: 'root' })
 export class PlanService {
@@ -18,6 +18,11 @@ export class PlanService {
   /** Past days replayed from the charge actually made. */
   replay(days = 30): Observable<Replay> {
     return this.http.get<Replay>('/api/plan/replay', { params: { days } });
+  }
+
+  /** One past day in full, for looking back at it. */
+  replayDay(day: string): Observable<ReplayDetail> {
+    return this.http.get<ReplayDetail>(`/api/plan/replay/${day}`);
   }
 
   /** Metered half hours and daily totals for the last `days` days imported. */

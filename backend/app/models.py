@@ -79,6 +79,9 @@ class System(Base):
     tariff: Mapped["Tariff"] = relationship(
         back_populates="system", cascade="all, delete-orphan", uselist=False
     )
+    tariff_history: Mapped[list["PastTariff"]] = relationship(
+        back_populates="system", cascade="all, delete-orphan", order_by="PastTariff.valid_until"
+    )
     arrays: Mapped[list["SolarArray"]] = relationship(
         back_populates="system", cascade="all, delete-orphan", order_by="SolarArray.id"
     )
@@ -166,6 +169,27 @@ class Tariff(Base):
         cascade="all, delete-orphan",
         order_by="TariffBand.id",
     )
+
+
+class PastTariff(Base):
+    """A tariff the system used to be on, so past days are priced at what they really cost.
+
+    It applied from the previous row's `valid_until` (or from the start of the data, for the
+    first row) up to its own. The current `Tariff` applies from the last row's `valid_until`.
+    """
+
+    __tablename__ = "past_tariffs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    system_id: Mapped[int] = mapped_column(ForeignKey("systems.id"), index=True)
+    # UTC: local midnight at the start of the day the next tariff began.
+    valid_until: Mapped[datetime]
+    name: Mapped[str] = mapped_column(String(100))
+    standing_charge_pence_per_day: Mapped[float] = mapped_column(Float)
+    # [{direction, days, start, end, rate}], as `TariffBand` holds them.
+    bands: Mapped[list] = mapped_column(JSON)
+
+    system: Mapped[System] = relationship(back_populates="tariff_history")
 
 
 class TariffBand(Base):

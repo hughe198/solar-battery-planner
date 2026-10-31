@@ -173,6 +173,52 @@ class TariffSchedule:
         return out
 
 
+def _stored_band(band: dict) -> Band:
+    return Band(
+        RateDirection(band["direction"]),
+        RateDays(band["days"]),
+        time.fromisoformat(band["start"]),
+        time.fromisoformat(band["end"]),
+        band["rate"],
+    )
+
+
+class TariffTimeline:
+    """Prices any moment at the tariff in force then. Use it for past days; plans for the days
+    ahead use the current tariff, `TariffSchedule`."""
+
+    def __init__(self, past: list[tuple[datetime, TariffSchedule]], current: TariffSchedule):
+        self._past = sorted(past, key=lambda entry: entry[0])
+        self.current = current
+
+    @classmethod
+    def from_system(cls, system) -> "TariffTimeline":
+        past = [
+            (
+                row.valid_until.replace(tzinfo=timezone.utc),
+                TariffSchedule.from_bands(
+                    [_stored_band(b) for b in row.bands],
+                    system.timezone,
+                    row.name,
+                    row.standing_charge_pence_per_day,
+                ),
+            )
+            for row in system.tariff_history
+        ]
+        return cls(past, TariffSchedule.from_system(system))
+
+    def schedule_at(self, when: datetime) -> TariffSchedule:
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        for valid_until, schedule in self._past:
+            if when < valid_until:
+                return schedule
+        return self.current
+
+    def rate_at(self, when: datetime, direction: Direction) -> float:
+        return self.schedule_at(when).rate_at(when, direction)
+
+
 # Presets. Rates are typical examples and vary by region and over time; the form tells
 # users to check them against their bill.
 

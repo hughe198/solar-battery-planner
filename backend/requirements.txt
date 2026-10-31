@@ -9,3 +9,4 @@ python-multipart==0.0.32
 httpx==0.28.1
 cryptography==50.0.2
 numpy==2.5.3
+tzdata==2026.6; sys_platform == "win32"
