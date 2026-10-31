@@ -11,7 +11,10 @@ describe('App', () => {
     await TestBed.configureTestingModule({
       imports: [App],
       providers: [
-        provideRouter([{ path: 'forecast', children: [] }]),
+        provideRouter([
+          { path: '', pathMatch: 'full', children: [] },
+          { path: 'history', children: [] },
+        ]),
         provideHttpClient(),
         provideHttpClientTesting(),
       ],
@@ -34,7 +37,7 @@ describe('App', () => {
     http.expectOne('/api/auth/me').flush({ id: 1, email: 'hugh@example.com', has_system: true });
 
     const fixture = TestBed.createComponent(App);
-    await TestBed.inject(Router).navigateByUrl('/forecast');
+    await TestBed.inject(Router).navigateByUrl('/history');
     fixture.detectChanges();
     await fixture.whenStable();
     fixture.detectChanges();
@@ -42,8 +45,8 @@ describe('App', () => {
     const el = fixture.nativeElement as HTMLElement;
     const buttons = [...el.querySelectorAll<HTMLElement>('nav .nav-button')];
     expect(buttons.map((b) => b.textContent?.trim())).toEqual([
-      'Charge plan',
-      'Forecast',
+      'Tonight',
+      'History',
       'Inverter',
       'System',
       'Data',
@@ -51,7 +54,7 @@ describe('App', () => {
     ]);
     const current = el.querySelectorAll('nav .nav-button.active');
     expect(current.length).toBe(1);
-    expect(current[0].textContent?.trim()).toBe('Forecast');
+    expect(current[0].textContent?.trim()).toBe('History');
     expect(current[0].getAttribute('aria-current')).toBe('page');
   });
 

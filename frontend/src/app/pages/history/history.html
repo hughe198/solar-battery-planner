@@ -1,0 +1,264 @@
+<h1>History</h1>
+<p class="muted">
+  How the last week went, how each night's charge worked out against the best one in hindsight, and
+  how close the forecast has been.
+</p>
+
+@if (week(); as w) {
+  <h2>Your last {{ w.days }} days</h2>
+  <div class="tiles">
+    <div class="card tile">
+      <span class="muted">Self-sufficiency</span>
+      <strong>{{
+        w.selfSufficiency === null ? '–' : (w.selfSufficiency | number: '1.0-0') + '%'
+      }}</strong>
+      <span class="muted">of use not from the grid</span>
+    </div>
+    <div class="card tile">
+      <span class="muted">Imports</span>
+      <strong>{{ pence(w.importCost) }}</strong>
+      <span class="muted">{{ w.importKwh | number: '1.0-1' }} kWh</span>
+    </div>
+    <div class="card tile">
+      <span class="muted">Exports</span>
+      <strong>{{ pence(w.exportRevenue) }}</strong>
+      <span class="muted">{{ w.exportKwh | number: '1.0-1' }} kWh</span>
+    </div>
+    <div class="card tile">
+      <span class="muted">Net</span>
+      <strong>{{ pence(w.importCost - w.exportRevenue) }}</strong>
+      <span class="muted">imports less exports</span>
+    </div>
+  </div>
+
+  <section class="card">
+    <h2>Self-sufficiency and battery range</h2>
+    <app-week-chart [history]="history()!.days" />
+  </section>
+
+  <section class="card">
+    <h2>Battery level and grid flow</h2>
+    <p class="muted">
+      Export starting the moment the battery reaches 100% means it was charged more than the day
+      needed; daytime import starting as it reaches its reserve means it was charged too little.
+    </p>
+    <app-flow-chart
+      [points]="history()!.points"
+      [timeZone]="system()?.timezone"
+      label="Battery level and grid import and export per half hour over the last week"
+    />
+  </section>
+} @else if (history()) {
+  <section class="card">
+    <p class="muted">
+      <a routerLink="/data">Import your usage data</a> to see how self-sufficient you've been this
+      week.
+    </p>
+  </section>
+}
+
+<section class="card">
+  <h2>How your last charge worked out</h2>
+  @if (review(); as rv) {
+    <div class="tiles">
+      <div class="tile">
+        <span class="muted">You charged to</span>
+        <strong>{{ rv.day.soc_after_charge_percent | number: '1.0-0' }}%</strong>
+      </div>
+      <div class="tile">
+        <span class="muted">Best with hindsight</span>
+        <strong>{{ rv.day.best_soc_percent | number: '1.0-0' }}%</strong>
+      </div>
+      <div class="tile">
+        <span class="muted">Cost of the decision</span>
+        <strong>{{
+          rv.day.missed_saving_pence < 1 ? 'Nothing' : pence(rv.day.missed_saving_pence)
+        }}</strong>
+        <span class="muted">against the best charge</span>
+      </div>
+    </div>
+    <ul class="plain">
+      @for (c of rv.comments; track $index) {
+        <li>{{ c }}</li>
+      }
+    </ul>
+  } @else {
+    <p class="muted">
+      Once you've imported days with battery level (Fox ESS includes it), this shows how each
+      night's charge worked out and what a better one would have saved.
+      <a routerLink="/data">Import data</a>
+    </p>
+  }
+</section>
+
+@if (replay(); as rp) {
+  @if (rp.days.length) {
+    <section class="card look-back">
+      <h2>Look back</h2>
+      <app-charge-calendar [days]="rp.days" [selected]="selectedDay()" (pick)="selectDay($event)" />
+      @if (selectedDay(); as day) {
+        <h3>{{ dayLabel(day) }}</h3>
+        @if (detail(); as d) {
+          <div class="tiles">
+            <div class="tile">
+              <span class="muted">Went in at</span>
+              <strong>{{ d.day.soc_before_percent | number: '1.0-0' }}%</strong>
+            </div>
+            <div class="tile">
+              <span class="muted">Charged to</span>
+              <strong>{{ d.day.soc_after_charge_percent | number: '1.0-0' }}%</strong>
+            </div>
+            <div class="tile">
+              <span class="muted">Best with hindsight</span>
+              <strong>{{ d.day.best_soc_percent | number: '1.0-0' }}%</strong>
+            </div>
+            <div class="tile">
+              <span class="muted">Lost</span>
+              <strong>{{
+                d.day.missed_saving_pence < 1 ? 'Nothing' : pence(d.day.missed_saving_pence)
+              }}</strong>
+            </div>
+          </div>
+          <app-flow-chart
+            [points]="d.points"
+            [timeZone]="system()?.timezone"
+            label="Metered battery level, the level with the best charge, and grid import and export per half hour"
+          />
+          <ul class="plain">
+            @for (c of d.comments; track $index) {
+              <li>{{ c }}</li>
+            }
+          </ul>
+        } @else if (detailError(); as message) {
+          <p class="form-error" role="alert">{{ message }}</p>
+        } @else {
+          <p class="muted">Loading…</p>
+        }
+      }
+    </section>
+
+    <section class="card">
+      <h2>Recent charges, replayed</h2>
+      <p>
+        Each day is replayed through the planner's battery simulation from the charge you actually
+        made. Over {{ rp.days.length }} days, better charge decisions would have saved
+        <strong>{{ pence(rp.missed_saving_pence) }}</strong
+        >.
+      </p>
+      <p class="muted">
+        Simulation check against your meter: import within
+        {{ rp.import_error_percent ?? 0 | number: '1.0-0' }}%, export within
+        {{ rp.export_error_percent ?? 0 | number: '1.0-0' }}%, battery level within
+        {{ rp.soc_error_percent ?? 0 | number: '1.0-0' }} points on average. Large gaps usually mean
+        the battery settings on the <a routerLink="/setup">System</a> page need adjusting.
+      </p>
+      <details>
+        <summary>Every day as a table</summary>
+        <div class="table-scroll">
+          <table class="plan-table">
+            <thead>
+              <tr>
+                <th>Day</th>
+                <th>Charged to</th>
+                <th>Best</th>
+                <th>Lost</th>
+                <th>Import: metered / simulated</th>
+                <th>Export: metered / simulated</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (d of reviewDays(); track d.day) {
+                <tr>
+                  <td>{{ d.day }}</td>
+                  <td>{{ d.soc_after_charge_percent | number: '1.0-0' }}%</td>
+                  <td>{{ d.best_soc_percent | number: '1.0-0' }}%</td>
+                  <td>{{ d.missed_saving_pence < 1 ? '–' : pence(d.missed_saving_pence) }}</td>
+                  <td>
+                    {{ d.actual_import_kwh | number: '1.1-1' }} /
+                    {{ d.simulated_import_kwh | number: '1.1-1' }}
+                  </td>
+                  <td>
+                    {{ d.actual_export_kwh | number: '1.1-1' }} /
+                    {{ d.simulated_export_kwh | number: '1.1-1' }}
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </section>
+  }
+}
+
+<section class="card">
+  <h2>Recent accuracy</h2>
+  @if (backtest(); as b) {
+    <p>
+      Trained on {{ b.train_days }} days, then asked to predict the {{ b.test_days }} days after
+      them using the weather that actually happened.
+    </p>
+    <div class="tiles">
+      <div class="tile">
+        <span class="muted">Daily usage error</span>
+        <strong>{{ b.load_error_percent | number: '1.0-0' }}%</strong>
+        <span class="muted">±{{ b.load_mae_kwh | number: '1.1-1' }} kWh a day</span>
+      </div>
+      @if (b.solar_error_percent !== null) {
+        <div class="tile">
+          <span class="muted">Daily solar error</span>
+          <strong>{{ b.solar_error_percent | number: '1.0-0' }}%</strong>
+          <span class="muted">
+            ±{{ b.solar_mae_kwh | number: '1.1-1' }} kWh a day
+            @if (b.solar_physics_error_percent !== null) {
+              (panel physics alone: {{ b.solar_physics_error_percent | number: '1.0-0' }}%)
+            }
+          </span>
+        </div>
+      }
+    </div>
+    <table class="backtest">
+      <thead>
+        <tr>
+          <th>Day</th>
+          <th>Usage: actual / predicted</th>
+          <th>Solar: actual / predicted</th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (d of b.days; track d.day) {
+          <tr>
+            <td>{{ d.day }}</td>
+            <td>
+              <span class="bar load" [style.width.%]="barWidth(d.load_actual_kwh)"></span>
+              <span
+                class="bar load predicted"
+                [style.width.%]="barWidth(d.load_predicted_kwh)"
+              ></span>
+              {{ d.load_actual_kwh | number: '1.1-1' }} /
+              {{ d.load_predicted_kwh | number: '1.1-1' }}
+            </td>
+            <td>
+              <span class="bar solar" [style.width.%]="barWidth(d.solar_actual_kwh)"></span>
+              <span
+                class="bar solar predicted"
+                [style.width.%]="barWidth(d.solar_predicted_kwh)"
+              ></span>
+              {{ d.solar_actual_kwh | number: '1.1-1' }} /
+              {{ d.solar_predicted_kwh | number: '1.1-1' }}
+            </td>
+          </tr>
+        }
+      </tbody>
+    </table>
+    <p class="muted">
+      Tomorrow's solar range is wider than these errors suggest, because the weather itself is a
+      forecast.
+    </p>
+  } @else if (backtestLoaded()) {
+    <p class="muted">
+      Accuracy is checked once you have three weeks of usage history matched to weather; until then,
+      treat the forecast's ranges as rough.
+    </p>
+  }
+</section>

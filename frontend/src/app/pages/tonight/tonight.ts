@@ -5,8 +5,9 @@ import { RouterLink } from '@angular/router';
 import { errorMessage } from '../../core/errors';
 import { ForecastService } from '../../core/forecast.service';
 import { ChargePlan, DayForecast, ForecastMethod, IntervalForecast } from '../../core/models';
-import { PlanService } from '../../core/plan.service';
+import { MODE_LABELS, PlanService, formatPence } from '../../core/plan.service';
 import { SystemService } from '../../core/system.service';
+import { cheapestImport, rateRange } from '../../core/tariff';
 
 const WIDTH = 720;
 const HEIGHT = 280;
@@ -45,12 +46,16 @@ interface Slot {
   soc: number | null;
 }
 
+/**
+ * The main page: the next charge for the day picked, with the forecast it was planned from.
+ * Merges what were the home, charge plan and forecast pages.
+ */
 @Component({
-  selector: 'app-forecast',
+  selector: 'app-tonight',
   imports: [DecimalPipe, RouterLink],
-  templateUrl: './forecast.html',
+  templateUrl: './tonight.html',
 })
-export class Forecast implements OnInit {
+export class Tonight implements OnInit {
   private readonly forecasts = inject(ForecastService);
   private readonly plans = inject(PlanService);
   readonly system = toSignal(inject(SystemService).get());
@@ -68,6 +73,8 @@ export class Forecast implements OnInit {
   readonly loading = signal(false);
   readonly error = signal<string | null>(null);
   readonly methodLabels = METHOD_LABELS;
+  readonly modeLabels = MODE_LABELS;
+  readonly pence = formatPence;
   readonly width = WIDTH;
   readonly pad = PAD;
 
@@ -98,6 +105,28 @@ export class Forecast implements OnInit {
   });
 
   readonly recommendation = computed(() => this.plan()?.recommendations?.[0] ?? null);
+
+  /** How the chosen charge plays out if the day is as expected, duller or brighter. */
+  readonly scenarios = computed(() => {
+    const r = this.recommendation();
+    return r
+      ? [
+          { name: 'Expected', outcome: r.expected },
+          { name: 'Dull day', outcome: r.dull },
+          { name: 'Bright day', outcome: r.bright },
+        ]
+      : [];
+  });
+
+  readonly totalKwp = computed(() =>
+    (this.system()?.arrays ?? []).reduce((sum, a) => sum + a.kwp, 0),
+  );
+  readonly cheapest = computed(() => cheapestImport(this.system()?.tariff.bands ?? []));
+  readonly exportRange = computed(() => rateRange(this.system()?.tariff.bands ?? [], 'export'));
+  readonly usableKwh = computed(() => {
+    const battery = this.system()?.battery;
+    return battery ? (battery.capacity_kwh * (100 - battery.min_soc_percent)) / 100 : 0;
+  });
 
   /**
    * With a plan: from the current half hour until the next charge window opens. A day further
@@ -349,19 +378,6 @@ export class Forecast implements OnInit {
     ),
   );
 
-  readonly backtestMax = computed(() => {
-    const days = this.forecast()?.backtest?.days ?? [];
-    return Math.max(
-      1,
-      ...days.flatMap((d) => [
-        d.load_actual_kwh,
-        d.load_predicted_kwh,
-        d.solar_actual_kwh,
-        d.solar_predicted_kwh,
-      ]),
-    );
-  });
-
   ngOnInit(): void {
     this.load();
   }
@@ -405,14 +421,32 @@ export class Forecast implements OnInit {
     return '';
   }
 
+  /** Plan again from a different battery level when the cheap window opens. */
+  recalculate(value: string): void {
+    const soc = Number(value);
+    const day = this.forecast()?.day;
+    if (day && value !== '' && soc >= 0 && soc <= 100) this.loadPlan(day, soc);
+  }
+
   /** The forecast still shows without a plan, e.g. when no battery is set up. */
-  private loadPlan(day: string): void {
-    this.plans.plan({ day }).subscribe({
+  private loadPlan(day: string, startSoc?: number): void {
+    this.plans.plan({ day, startSoc }).subscribe({
       next: (plan) => {
         if (this.forecast()?.day === day) this.plan.set(plan);
       },
       error: () => this.plan.set(null),
     });
+  }
+
+  /** "1 h 50 min" or "35 min". */
+  duration(minutes: number): string {
+    const h = Math.floor(minutes / 60);
+    return h ? `${h} h ${minutes % 60} min` : `${minutes} min`;
+  }
+
+  /** Net cost as words: "costs 37p" or "earns £1.10". */
+  net(pence: number): string {
+    return pence >= 0 ? `costs ${formatPence(pence)}` : `earns ${formatPence(-pence)}`;
   }
 
   /** The chart starts now for today and tomorrow, not for days further ahead. */
@@ -465,7 +499,8 @@ export class Forecast implements OnInit {
   }
 
   /** "HH:MM" in the system's time zone. */
-  localTime(iso: string): string {
+  localTime(iso: string | null): string {
+    if (!iso) return '–';
     return new Intl.DateTimeFormat('en-GB', {
       hour: '2-digit',
       minute: '2-digit',
@@ -481,11 +516,6 @@ export class Forecast implements OnInit {
       month: 'long',
       timeZone: 'UTC',
     }).format(new Date(`${day}T00:00:00Z`));
-  }
-
-  /** Width of a backtest bar as a percentage of the largest value. */
-  barWidth(kwh: number): number {
-    return (kwh / this.backtestMax()) * 100;
   }
 
   private slotWidth(): number {

@@ -1,7 +1,12 @@
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { ChargePlan, History, Replay, ReplayDetail } from './models';
+import { ChargePlan, History, PlanningMode, Replay, ReplayDetail } from './models';
+
+export const MODE_LABELS: Record<PlanningMode, string> = {
+  maximise_own_usage: 'Maximise own usage',
+  maximise_export_revenue: 'Maximise export revenue',
+};
 
 @Injectable({ providedIn: 'root' })
 export class PlanService {
