@@ -76,6 +76,8 @@ export interface FoxEssConnection {
   last_synced_at: string | null;
   /** Set on connect when the battery's minimum charge was read from the inverter. */
   battery_min_soc_percent?: number | null;
+  /** Set on connect when a forced charge power was found in the inverter's schedule. */
+  battery_max_charge_kw?: number | null;
 }
 
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed';
@@ -192,6 +194,11 @@ export interface Recommendation {
   stored_kwh: number;
   charge_kwh: number;
   charge_cost_pence: number;
+  /** When to force charge (UTC); null when no charge is needed. */
+  force_charge_start: string | null;
+  force_charge_stop: string | null;
+  force_charge_minutes: number;
+  force_charge_reaches_target: boolean;
   expected: PlanOutcome;
   dull: PlanOutcome;
   bright: PlanOutcome;
@@ -223,6 +230,12 @@ export interface ChargePlan {
   max_soc_percent: number;
   charge_start: string;
   charge_end: string;
+  /** Power into the cells while force charging, kW, below and above the taper level. */
+  charge_rate_kw: number;
+  taper_rate_kw: number;
+  taper_from_percent: number;
+  /** Half hours of history the rate was learned from; 0 = from the battery settings. */
+  charge_rate_samples: number;
   /** The system's chosen mode first. */
   recommendations: Recommendation[];
   candidates: PlanCandidate[];

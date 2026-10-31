@@ -116,6 +116,23 @@ def test_client_reads_battery_min_soc():
     assert seen[0].url.params["sn"] == "ABC123"
 
 
+def test_client_reads_force_charge_power():
+    seen = []
+    groups = [
+        {"enable": 1, "workMode": "SelfUse", "fdPwr": 0},
+        {"enable": 1, "workMode": "ForceCharge", "fdPwr": 3000},
+        {"enable": 0, "workMode": "ForceCharge", "fdPwr": 6000},
+    ]
+    client = make_client(
+        [{"errno": 0, "result": {"groups": groups}}, {"errno": 0, "result": {"groups": []}}],
+        seen,
+        [],
+    )
+    assert client.force_charge_power_kw("ABC123") == 3.0
+    assert client.force_charge_power_kw("ABC123") is None
+    assert seen[0].url.path == "/op/v1/device/scheduler/get"
+
+
 def test_client_auth_error():
     client = make_client([{"errno": 41808, "msg": "token expired"}], [], [])
     with pytest.raises(FoxEssAuthError):

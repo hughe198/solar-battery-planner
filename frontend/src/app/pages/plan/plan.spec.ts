@@ -34,6 +34,10 @@ function recommendation(mode: Recommendation['mode'], target: number): Recommend
     stored_kwh: 4,
     charge_kwh: 4.4,
     charge_cost_pence: 33,
+    force_charge_start: '2026-06-02T04:20:00Z',
+    force_charge_stop: '2026-06-02T05:30:00Z',
+    force_charge_minutes: 70,
+    force_charge_reaches_target: true,
     expected: OUTCOME,
     dull: { ...OUTCOME, solar_kwh: 6, net_cost_pence: 120 },
     bright: { ...OUTCOME, solar_kwh: 16, net_cost_pence: -20 },
@@ -60,6 +64,10 @@ const PLAN: ChargePlan = {
   max_soc_percent: 100,
   charge_start: '2026-06-01T23:30:00Z',
   charge_end: '2026-06-02T05:30:00Z',
+  charge_rate_kw: 3.6,
+  taper_rate_kw: 1.2,
+  taper_from_percent: 90,
+  charge_rate_samples: 40,
   recommendations: [
     recommendation('maximise_own_usage', 52),
     recommendation('maximise_export_revenue', 95),
@@ -133,6 +141,9 @@ describe('Plan', () => {
     expect(modes[1].textContent).toContain('95%');
     expect(el.textContent).toContain('Why 52%');
     expect(el.textContent).toContain('costing 33p');
+    expect(modes[0].textContent).toMatch(/Force charge 04:20–\s*05:30/);
+    expect(modes[0].textContent).toContain('1 h 10 min');
+    expect(el.textContent).toContain('3.6 kW, 1.2 kW above 90%');
     expect(el.querySelectorAll('table.plan-table')[0].querySelectorAll('tbody tr').length).toBe(3);
     expect(el.querySelector('app-flow-chart path.soc')?.getAttribute('d')).toMatch(/^M/);
   });

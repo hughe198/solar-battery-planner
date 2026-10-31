@@ -56,13 +56,6 @@ class BatterySpec:
         """Grid energy needed to put `stored_kwh` into the cells."""
         return stored_kwh / self.charge_efficiency
 
-    def max_target_kwh(self, start_kwh: float, window: timedelta) -> float:
-        """Highest stored energy reachable by the end of a charging window."""
-        hours = window.total_seconds() / 3600
-        return min(
-            self.capacity_kwh, start_kwh + self.max_charge_kw * hours * self.charge_efficiency
-        )
-
 
 class PriceBook(Protocol):
     """Pence per kWh for the half hour containing a moment; `app.tariffs.TariffSchedule`."""

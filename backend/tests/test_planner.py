@@ -173,6 +173,11 @@ def test_dull_day_charges_to_cover_the_house():
     assert own.charge_kwh == pytest.approx(9.0)
     assert own.expected.reserve_at is not None
     assert own.reasons[0].startswith("Charge to 100%")
+    # 9 kWh at 5 kW: 1 h 50 min (rounded to five minutes), finishing at 05:30.
+    assert own.force_charge_stop == datetime(2026, 6, 2, 5, 30, tzinfo=timezone.utc)
+    assert own.force_charge_minutes == 110
+    assert own.force_charge_reaches_target
+    assert own.reasons[1].startswith("Force charge from 03:40 to 05:30")
 
 
 def test_over_charging_on_a_sunny_day_is_penalised():
@@ -208,9 +213,9 @@ def test_uncertainty_is_explained_and_timeline_follows_the_plan():
     assert any("dull" in r for r in own.reasons)
     cheap = [p for p in result.timeline if p.cheap]
     assert len(cheap) == 11  # 00:00 to 05:30; the 23:30 slot is on the evening before
-    assert cheap[-1].soc_percent == own.target_soc_percent
-    assert cheap[0].soc_percent < cheap[-1].soc_percent
-    assert all(p.import_kwh > 0 for p in cheap)  # house and charge from the grid
+    assert cheap[-1].soc_percent == pytest.approx(own.target_soc_percent, abs=0.5)
+    assert cheap[0].soc_percent <= 10  # self-use until the forced charge starts
+    assert cheap[-1].import_kwh > cheap[-1].load_kwh  # charging from the grid
     assert result.timeline[-1].start.hour == 23 and result.timeline[-1].start.minute == 0
 
 

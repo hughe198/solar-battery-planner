@@ -52,6 +52,17 @@ export class Dashboard {
     };
   });
 
+  /** "HH:MM" in the system's time zone. */
+  localTime(iso: string | null): string {
+    if (!iso) return '–';
+    return new Intl.DateTimeFormat('en-GB', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+      timeZone: this.system()?.timezone,
+    }).format(new Date(iso));
+  }
+
   constructor() {
     this.plans.history().subscribe({ next: (h) => this.history.set(h), error: () => {} });
     this.plans.plan().subscribe({

@@ -11,6 +11,13 @@
         for {{ p.day }} ({{ modeLabels[p.mode].toLowerCase() }}), assuming the battery is at
         {{ p.start_soc_percent | number: '1.0-0' }}% when the cheap window opens.
       </p>
+      @if (p.recommendations[0].force_charge_start; as from) {
+        <p>
+          Force charge from <strong>{{ localTime(from) }}</strong> to
+          <strong>{{ localTime(p.recommendations[0].force_charge_stop) }}</strong
+          >.
+        </p>
+      }
       <p class="muted">{{ p.recommendations[0].reasons[0] }}</p>
       <p><a routerLink="/plan">See why, and set tonight's starting level</a></p>
     } @else if (planError()) {

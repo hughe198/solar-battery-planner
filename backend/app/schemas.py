@@ -147,6 +147,8 @@ class FoxEssOut(BaseModel):
     last_synced_at: datetime | None
     # Set on connect when the battery's minimum charge was read from the inverter.
     battery_min_soc_percent: float | None = None
+    # Set on connect when a forced charge power was found in the inverter's schedule.
+    battery_max_charge_kw: float | None = None
 
     _as_utc = field_validator("last_synced_at")(_utc)
 
@@ -318,6 +320,10 @@ class RecommendationOut(BaseModel):
     stored_kwh: float
     charge_kwh: float
     charge_cost_pence: float
+    force_charge_start: datetime | None
+    force_charge_stop: datetime | None
+    force_charge_minutes: int
+    force_charge_reaches_target: bool
     expected: OutcomeOut
     dull: OutcomeOut
     bright: OutcomeOut
@@ -353,6 +359,10 @@ class ChargePlanOut(BaseModel):
     max_soc_percent: float
     charge_start: datetime
     charge_end: datetime
+    charge_rate_kw: float
+    taper_rate_kw: float
+    taper_from_percent: float
+    charge_rate_samples: int
     recommendations: list[RecommendationOut]
     candidates: list[CandidateOut]
     timeline: list[TimelinePointOut]

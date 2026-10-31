@@ -166,6 +166,12 @@ The planner (`backend/app/planner`) picks the overnight charge by simulation, no
   under when extra charge only pays off on a dull day, and explains its choice in plain words.
 - **Prices** for every half hour come from `TariffSchedule.rate_at`, so any number of import
   and export bands, weekday or weekend, are priced as they are.
+- **Force charge timing.** An inverter in forced charge keeps drawing from the grid until its
+  schedule ends, so each recommendation comes with a start and stop time. The charge is timed to
+  finish as the charge window closes. The time it takes uses the charge rate learned from recent
+  grid-charging half hours, with a slower rate above 90% if history shows one. Without that
+  history it uses the battery's charge rate, which is read from the Fox ESS schedule on connect
+  when one is set. Until the charge starts, the house is assumed to run from the battery.
 - **Replay.** Past days with imported battery level are replayed from the charge that was
   actually made. Simulated import, export and battery level are compared with the meter to check
   the simulator, and every other target is simulated on the same day to find the best charge

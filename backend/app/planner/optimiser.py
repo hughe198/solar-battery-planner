@@ -17,7 +17,7 @@ extra charge only pays off if the day turns out dull.
 """
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -32,7 +32,15 @@ from app.planner.base import (
     Recommendation,
     TimelinePoint,
 )
+from app.planner.charging import (
+    TAPER_FROM_PERCENT,
+    ChargeRate,
+    ChargeSchedule,
+    reachable_kwh,
+)
+from app.planner.charging import schedule as charge_schedule
 from app.planner.simulator import (
+    HOURS_PER_INTERVAL,
     BatterySpec,
     Costs,
     CyclePrices,
@@ -170,6 +178,31 @@ class Explainer:
     def clock(self, moment: datetime) -> str:
         return moment.astimezone(self.zone).strftime("%H:%M")
 
+    def timing(
+        self, timing: ChargeSchedule, rate: ChargeRate, battery: BatterySpec, start_kwh: float
+    ) -> str:
+        hours, minutes = divmod(timing.minutes, 60)
+        length = f"{hours} h {minutes} min" if hours else f"{minutes} min"
+        if rate.samples:
+            source = f"the rate your battery has charged at recently, {rate.bulk_kw:.1f} kW"
+            if rate.taper_kw < rate.bulk_kw - 0.05:
+                source += f" slowing to {rate.taper_kw:.1f} kW above {TAPER_FROM_PERCENT}%"
+        else:
+            source = f"your battery's {battery.max_charge_kw:g} kW charge rate"
+        line = (
+            f"Force charge from {self.clock(timing.start)} to {self.clock(timing.stop)} "
+            f"({length}). That is timed from {source}, so it finishes as the cheap rate ends "
+            "instead of keeping the grid on after reaching the target."
+        )
+        if timing.start_soc_percent < battery.percent(start_kwh) - 0.5:
+            line += (
+                " Until it starts, the house runs from the battery, "
+                f"down to about {timing.start_soc_percent:.0f}%."
+            )
+        if not timing.reaches_target:
+            line += " Even starting at once it may fall a little short by the window's end."
+        return line
+
     def reasons(
         self,
         mode: PlanningMode,
@@ -275,8 +308,14 @@ class Explainer:
         return lines
 
 
-def plan(system: System, forecast: DayForecast, start_soc_percent: float) -> ChargePlan:
+def plan(
+    system: System,
+    forecast: DayForecast,
+    start_soc_percent: float,
+    rate: ChargeRate | None = None,
+) -> ChargePlan:
     battery = BatterySpec.of(system.battery)
+    rate = rate or ChargeRate.rated(battery)
     schedule = TariffSchedule.from_system(system)
     cycle = cycle_for(forecast.day, schedule, system.timezone)
     by_start = {i.start: i for i in forecast.intervals}
@@ -288,7 +327,7 @@ def plan(system: System, forecast: DayForecast, start_soc_percent: float) -> Cha
     prices = CyclePrices.of(schedule, [i.start for i in night], day_starts)
 
     start_kwh = float(np.clip(battery.kwh(start_soc_percent), 0, battery.capacity_kwh))
-    max_kwh = battery.max_target_kwh(start_kwh, cycle.window)
+    max_kwh = reachable_kwh(rate, battery, start_kwh, cycle.window)
     targets = candidate_targets(battery, start_kwh, max_kwh)
 
     runs = {}
@@ -303,6 +342,22 @@ def plan(system: System, forecast: DayForecast, start_soc_percent: float) -> Cha
     }
 
     explainer = Explainer(system, battery, prices)
+    night_starts = [i.start for i in night]
+    night_net = [i.load_kwh - i.solar_kwh for i in night]
+
+    def force_charge(target_kwh: float) -> ChargeSchedule:
+        return charge_schedule(
+            rate,
+            battery,
+            start_kwh,
+            float(target_kwh),
+            cycle.night_start,
+            cycle.night_end,
+            night_starts,
+            night_net,
+        )
+
+    plans: dict[PlanningMode, tuple[int, ChargeSchedule]] = {}
     recommendations = []
     for mode in sorted(MODES, key=lambda m: m is not system.planning_mode):
         chosen = best_index(scores[mode])
@@ -312,6 +367,20 @@ def plan(system: System, forecast: DayForecast, start_soc_percent: float) -> Cha
         }
         added = targets[chosen] - start_kwh
         grid = float(battery.grid_kwh_to_store(max(added, 0.0)))
+        timing = force_charge(targets[chosen])
+        plans[mode] = (chosen, timing)
+        reasons = explainer.reasons(
+            mode,
+            chosen,
+            targets,
+            scores[mode],
+            start_kwh,
+            results,
+            runs["expected"][0],
+            day_starts,
+        )
+        if timing.minutes:
+            reasons.insert(1, explainer.timing(timing, rate, battery, start_kwh))
         recommendations.append(
             Recommendation(
                 mode=mode,
@@ -319,39 +388,54 @@ def plan(system: System, forecast: DayForecast, start_soc_percent: float) -> Cha
                 stored_kwh=round(float(max(added, 0.0)), 2),
                 charge_kwh=round(grid, 2),
                 charge_cost_pence=round(grid * prices.charge, 1),
+                force_charge_start=timing.start if timing.minutes else None,
+                force_charge_stop=timing.stop if timing.minutes else None,
+                force_charge_minutes=timing.minutes,
+                force_charge_reaches_target=timing.reaches_target,
                 expected=results["expected"],
                 dull=results["dull"],
                 bright=results["bright"],
-                reasons=explainer.reasons(
-                    mode,
-                    chosen,
-                    targets,
-                    scores[mode],
-                    start_kwh,
-                    results,
-                    runs["expected"][0],
-                    day_starts,
-                ),
+                reasons=reasons,
             )
         )
 
-    chosen = best_index(scores[system.planning_mode])
+    chosen, timing = plans[system.planning_mode]
     scenario, sim, _ = runs["expected"]
-    # The charge is shown spread evenly across the window, as most inverters schedule it.
-    window = cycle.night_starts()
-    added = targets[chosen] - start_kwh
-    per_slot = float(sim.charge_grid_kwh[chosen]) / max(len(window), 1)
+    target_kwh = float(targets[chosen])
+    charge_kw = {True: rate.bulk_kw, False: rate.taper_kw}
+    knee = battery.capacity_kwh * TAPER_FROM_PERCENT / 100
+    level = start_kwh
 
     def night_point(i: IntervalForecast) -> TimelinePoint:
-        done = (window.index(i.start) + 1) / len(window)
-        net = i.load_kwh - i.solar_kwh + per_slot
+        """Self-use until the forced charge starts, then charging from the grid."""
+        nonlocal level
+        end = i.start + INTERVAL
+        net = i.load_kwh - i.solar_kwh
+        charging = max(timedelta(0), min(end, timing.stop) - max(i.start, timing.start))
+        share = charging / INTERVAL
+        grid = net * share
+        # Before the charge, the battery covers the house down to its reserve.
+        uncovered = net * (1 - share)
+        if uncovered > 0:
+            available = max(level - battery.reserve_kwh, 0.0) * battery.discharge_efficiency
+            from_battery = min(uncovered, available)
+            level -= from_battery / battery.discharge_efficiency
+            grid += uncovered - from_battery
+        else:
+            grid += uncovered
+        if share > 0:
+            stored = min(
+                charge_kw[level < knee] * HOURS_PER_INTERVAL * share, max(target_kwh - level, 0)
+            )
+            level += stored
+            grid += battery.grid_kwh_to_store(stored)
         return TimelinePoint(
             start=i.start,
             load_kwh=i.load_kwh,
             solar_kwh=i.solar_kwh,
-            import_kwh=round(max(net, 0.0), 3),
-            export_kwh=round(max(-net, 0.0), 3),
-            soc_percent=round(float(battery.percent(start_kwh + added * done)), 1),
+            import_kwh=round(max(grid, 0.0), 3),
+            export_kwh=round(max(-grid, 0.0), 3),
+            soc_percent=round(float(battery.percent(level)), 1),
             cheap=True,
         )
 
@@ -374,6 +458,10 @@ def plan(system: System, forecast: DayForecast, start_soc_percent: float) -> Cha
         max_soc_percent=round(float(battery.percent(max_kwh)), 1),
         charge_start=cycle.night_start,
         charge_end=cycle.night_end,
+        charge_rate_kw=round(rate.bulk_kw, 2),
+        taper_rate_kw=round(rate.taper_kw, 2),
+        taper_from_percent=TAPER_FROM_PERCENT,
+        charge_rate_samples=rate.samples,
         recommendations=recommendations,
         candidates=[
             Candidate(

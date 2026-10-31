@@ -27,6 +27,9 @@ class FakeFox:
     def battery_min_soc(self, sn):
         return 5.0
 
+    def force_charge_power_kw(self, sn):
+        return 3.6
+
     def history(self, sn, begin, end):
         FakeFox.calls.append((begin, end))
         points, moment = [], begin
@@ -94,6 +97,8 @@ def test_connect_validates_key_and_serial(client, headers):
     system = client.get("/api/system", headers=headers).json()
     assert system["data_source"] == "fox_ess"
     assert system["battery"]["min_soc_percent"] == 5.0  # read from the inverter
+    assert system["battery"]["max_charge_kw"] == 3.6
+    assert resp.json()["battery_max_charge_kw"] == 3.6
     status = client.get("/api/import/status", headers=headers).json()
     assert status["fox_ess"]["device_sn"] == "inv0001"
 

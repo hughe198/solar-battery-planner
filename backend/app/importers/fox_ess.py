@@ -24,6 +24,7 @@ from app.importers.base import INTERVAL, UsageInterval, interval_start
 HISTORY_PATH = "/op/v0/device/history/query"
 DEVICE_LIST_PATH = "/op/v0/device/list"
 MIN_SOC_PATH = "/op/v0/device/battery/soc/get"
+SCHEDULER_PATH = "/op/v1/device/scheduler/get"
 
 # Fox variable name -> UsageInterval field. All are power in kW except SoC (%).
 POWER_VARIABLES = {
@@ -128,6 +129,18 @@ class FoxEssClient:
             if isinstance(value, (int, float)) and 0 <= value < 100:
                 return float(value)
         return None
+
+    def force_charge_power_kw(self, sn: str) -> float | None:
+        """The power set for forced charging in the inverter's schedule, if it has a forced
+        charge period (the highest, if several). Read-only."""
+        result = self.post(SCHEDULER_PATH, {"deviceSN": sn}) or {}
+        powers = [
+            g.get("fdPwr")
+            for g in result.get("groups") or []
+            if g.get("workMode") == "ForceCharge" and g.get("enable", 1)
+        ]
+        watts = [p for p in powers if isinstance(p, (int, float)) and p > 0]
+        return max(watts) / 1000 if watts else None
 
     def history(self, sn: str, begin: datetime, end: datetime) -> list[dict[str, Any]]:
         """Raw history series for up to 24 hours: [{variable, unit, data: [{time, value}]}]."""

@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.importers.base import INTERVAL
 from app.models import PlanningMode, System, UsageRecord
 from app.planner.base import Replay, ReplayDay, Review
+from app.planner.charging import learn_rate_from_history, reachable_kwh
 from app.planner.optimiser import (
     best_index,
     candidate_targets,
@@ -57,6 +58,7 @@ class Replayer:
         self.system = system
         self.battery = BatterySpec.of(system.battery)
         self.book = TariffSchedule.from_system(system)
+        self.rate = learn_rate_from_history(db, system)
         self.zone = ZoneInfo(system.timezone)
 
     def _records(self, days: int) -> dict[datetime, UsageRecord]:
@@ -90,10 +92,11 @@ class Replayer:
         b = self.battery
         start_kwh = float(b.kwh(before.battery_soc_percent))
         actual_kwh = float(b.kwh(after.battery_soc_percent))
+        reachable = reachable_kwh(self.rate, b, start_kwh, cycle.window)
         targets = np.unique(
             np.concatenate(
                 [
-                    candidate_targets(b, start_kwh, b.max_target_kwh(start_kwh, cycle.window)),
+                    candidate_targets(b, start_kwh, reachable),
                     [actual_kwh],
                 ]
             )
