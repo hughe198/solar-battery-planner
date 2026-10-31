@@ -27,6 +27,7 @@ Backend (FastAPI, Python 3.12+), on http://localhost:8000 with API docs at `/doc
 cd backend
 python -m venv .venv && . .venv/bin/activate
 pip install -r requirements-dev.txt
+python setup_env.py   # writes backend/.env, see Configuration
 uvicorn app.main:app --reload
 pytest
 ```
@@ -44,12 +45,37 @@ npm test
 ## Configuration
 
 Backend settings are read from environment variables (or `backend/.env`) with the `SBP_`
-prefix:
+prefix.
+
+### Generating `backend/.env`
+
+`backend/setup_env.py` walks through every setting below, explains it, suggests a value and
+generates the two secrets with Python's `secrets` module. It uses only the standard library, so
+it runs before `pip install`:
+
+```bash
+cd backend
+python setup_env.py              # ask about each setting (Enter accepts the suggestion)
+python setup_env.py --advanced   # also ask about the token algorithm and API addresses
+python setup_env.py --defaults   # accept every suggestion, just generate fresh secrets
+python setup_env.py --print      # show the result instead of writing it
+```
+
+If `backend/.env` already exists it asks before overwriting (`--force` skips the question) and
+offers the current values as defaults, so re-running keeps your secrets. Typing `new` at a
+secret generates a fresh one; replacing `SBP_CREDENTIALS_SECRET` asks again, because saved
+Fox ESS keys can't be decrypted afterwards. The file is written readable by its owner only.
+The backend refuses to start if `.env` contains keys it doesn't know, so any such lines are
+carried over commented out. `tests/test_setup_env.py` fails if a setting is added to
+`app/config.py` without adding it to the script.
+
+### Settings
 
 | Variable | Default | Notes |
 | --- | --- | --- |
 | `SBP_DATABASE_URL` | `sqlite:///./solar.db` | Any SQLAlchemy URL, e.g. Postgres |
 | `SBP_JWT_SECRET` | dev-only value | **Must** be set to a long random string in production |
+| `SBP_JWT_ALGORITHM` | `HS256` | |
 | `SBP_ACCESS_TOKEN_MINUTES` | `10080` (7 days) | |
 | `SBP_CORS_ORIGINS` | `["http://localhost:4200"]` | JSON list |
 | `SBP_CREDENTIALS_SECRET` | dev-only value | Encrypts stored Fox ESS API keys. **Must** be set in production and kept stable |
