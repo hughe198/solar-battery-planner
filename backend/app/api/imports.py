@@ -176,11 +176,13 @@ def connect_fox_ess(
 def disconnect_fox_ess(
     user: User = Depends(current_user), db: Session = Depends(get_db)
 ) -> Response:
-    """Forget the API key. Imported data is kept."""
+    """Forget the API key and turn inverter control off (it needs the key). Imported data
+    and the control log are kept; the inverter itself is not changed."""
     system = _system(user)
     if _active_job(db, system):
         raise HTTPException(status.HTTP_409_CONFLICT, "Wait for the running import to finish")
     system.fox_ess = None
+    system.inverter_control = None
     if system.data_source == DataSourceKind.fox_ess:
         system.data_source = DataSourceKind.none
     db.commit()

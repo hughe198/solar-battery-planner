@@ -22,9 +22,9 @@ from app.weather.open_meteo import OpenMeteoClient, WeatherError
 router = APIRouter(prefix="/api/plan", tags=["plan"])
 
 
-def next_day(system: System) -> date:
+def next_day(system: System, now: datetime | None = None) -> date:
     """The day the next charge is for: today until this morning's charge window ends."""
-    now = datetime.now(ZoneInfo(system.timezone))
+    now = (now or datetime.now(ZoneInfo(system.timezone))).astimezone(ZoneInfo(system.timezone))
     cycle = cycle_for(now.date(), TariffSchedule.from_system(system), system.timezone)
     return now.date() if now < cycle.night_end else now.date() + timedelta(days=1)
 
@@ -48,17 +48,28 @@ def charge_plan(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             f"Plans are available from today to {MAX_DAYS_AHEAD} days ahead",
         )
-    if start_soc_percent is None:
-        start_soc_percent = system.battery.min_soc_percent
     try:
-        forecast = HistoryForecaster(db, weather_client).forecast(system, day)
+        return make_plan(db, system, weather_client, day, start_soc_percent)
     except WeatherError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
-    try:
-        rate = learn_rate_from_history(db, system)
-        return optimiser.plan(system, forecast, start_soc_percent, rate)
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc))
+
+
+def make_plan(
+    db: Session,
+    system: System,
+    weather_client: OpenMeteoClient,
+    day: date,
+    start_soc_percent: float | None = None,
+) -> ChargePlan:
+    """The plan for `day`, from the battery's minimum charge unless a start level is given.
+    Raises WeatherError when the forecast can't be fetched and ValueError when it can't plan."""
+    if start_soc_percent is None:
+        start_soc_percent = system.battery.min_soc_percent
+    forecast = HistoryForecaster(db, weather_client).forecast(system, day)
+    rate = learn_rate_from_history(db, system)
+    return optimiser.plan(system, forecast, start_soc_percent, rate)
 
 
 @router.get("/replay", response_model=ReplayOut)

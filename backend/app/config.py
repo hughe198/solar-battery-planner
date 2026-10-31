@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     # and keep it stable: changing it makes saved keys unreadable.
     credentials_secret: str = "dev-only-credentials-secret-change-me"
     fox_ess_base_url: str = "https://www.foxesscloud.com"
+    # Run the nightly automatic apply in this server process (see app.control.nightly). Off by
+    # default; turn on for exactly one server process, or run the module from cron instead.
+    auto_apply: bool = False
     # Open-Meteo: reanalysis archive for older days, historical forecasts for the last week
     # (the archive lags real time by several days).
     open_meteo_archive_url: str = "https://archive-api.open-meteo.com/v1/archive"

@@ -292,3 +292,75 @@ export interface History {
   points: FlowPoint[];
   days: HistoryDay[];
 }
+
+/** One period of the inverter's schedule, local time; `end` is exclusive. */
+export interface SchedulePeriod {
+  start: string;
+  end: string;
+  work_mode: string;
+  charge_to_percent: number | null;
+  power_w: number | null;
+  min_soc_percent: number | null;
+}
+
+export type ControlActionKind = 'opt_in' | 'opt_out' | 'apply' | 'clear' | 'restore' | 'test';
+export type ControlStatus = 'ok' | 'mismatch' | 'failed' | 'skipped';
+
+export interface ControlAction {
+  id: number;
+  created_at: string;
+  kind: ControlActionKind;
+  trigger: 'manual' | 'auto';
+  status: ControlStatus;
+  day: string | null;
+  target_soc_percent: number | null;
+  message: string;
+  sent: Record<string, unknown> | null;
+  read_back: Record<string, unknown> | null;
+}
+
+export interface TestStep {
+  step: number;
+  label: string;
+  passed: boolean;
+}
+
+export interface InverterControl {
+  connected: boolean;
+  enabled: boolean;
+  auto_apply: boolean;
+  auto_apply_available: boolean;
+  consented_at: string | null;
+  test_level: number;
+  test_steps: TestStep[];
+  can_apply: boolean;
+  can_auto_apply: boolean;
+  has_original: boolean;
+  original_saved_at: string | null;
+  original: SchedulePeriod[];
+  original_enabled: boolean | null;
+  planner_periods: SchedulePeriod[];
+  test_periods: SchedulePeriod[];
+  actions: ControlAction[];
+}
+
+export interface ControlProposal {
+  day: string;
+  mode: PlanningMode;
+  planned_soc_percent: number;
+  charge_kwh: number;
+  start: string | null;
+  stop: string | null;
+  target_soc_percent: number | null;
+  power_w: number | null;
+  min_soc_on_grid: number | null;
+  schedule_enabled: boolean;
+  max_periods: number;
+  current: SchedulePeriod[];
+  added: SchedulePeriod[];
+  removed: SchedulePeriod[];
+  after: SchedulePeriod[];
+  request: Record<string, unknown>;
+  notes: string[];
+  fingerprint: string;
+}

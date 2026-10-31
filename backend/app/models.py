@@ -10,6 +10,8 @@ import enum
 from datetime import date, datetime, time, timezone
 
 from sqlalchemy import (
+    JSON,
+    Boolean,
     Date,
     Enum,
     Float,
@@ -90,6 +92,12 @@ class System(Base):
         back_populates="system", cascade="all, delete-orphan"
     )
     import_jobs: Mapped[list["ImportJob"]] = relationship(
+        back_populates="system", cascade="all, delete-orphan"
+    )
+    inverter_control: Mapped["InverterControl | None"] = relationship(
+        back_populates="system", cascade="all, delete-orphan", uselist=False
+    )
+    control_actions: Mapped[list["ControlAction"]] = relationship(
         back_populates="system", cascade="all, delete-orphan"
     )
 
@@ -283,3 +291,79 @@ class ImportJob(Base):
             )
         )
         db.commit()
+
+
+class InverterControl(Base):
+    """A user's opt-in to letting the planner write tonight's charge to their inverter.
+
+    No row, or `enabled` false, means the planner never writes to the inverter.
+    """
+
+    __tablename__ = "inverter_controls"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    system_id: Mapped[int] = mapped_column(ForeignKey("systems.id"), unique=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Apply the plan by itself each evening, before the charge window opens.
+    auto_apply: Mapped[bool] = mapped_column(Boolean, default=False)
+    consented_at: Mapped[datetime | None] = mapped_column(default=None)
+    # The inverter's schedule as it was before the planner first wrote to it, for restoring.
+    original_schedule: Mapped[dict | None] = mapped_column(JSON, default=None)
+    original_saved_at: Mapped[datetime | None] = mapped_column(default=None)
+    # The force charge periods the planner last wrote, so they can be taken out again.
+    written_groups: Mapped[list | None] = mapped_column(JSON, default=None)
+    # Highest step of the write test passed (see app.control.testing); applying needs 4.
+    test_level: Mapped[int] = mapped_column(Integer, default=0)
+    # The schedule read at the start of the write test, which the test must end back at.
+    test_baseline: Mapped[dict | None] = mapped_column(JSON, default=None)
+    # Test periods currently on the inverter, so they can always be taken out.
+    test_groups: Mapped[list | None] = mapped_column(JSON, default=None)
+    # The local day the last automatic apply was for, so each night is tried once.
+    last_auto_day: Mapped[date | None] = mapped_column(Date, default=None)
+
+    system: Mapped[System] = relationship(back_populates="inverter_control")
+
+
+class ControlActionKind(str, enum.Enum):
+    opt_in = "opt_in"
+    opt_out = "opt_out"
+    apply = "apply"
+    clear = "clear"
+    restore = "restore"
+    test = "test"
+
+
+class ControlTrigger(str, enum.Enum):
+    manual = "manual"
+    auto = "auto"
+
+
+class ControlStatus(str, enum.Enum):
+    ok = "ok"  # written and read back as written
+    mismatch = "mismatch"  # written, but the read-back differs
+    failed = "failed"  # nothing written, or Fox refused the write
+    skipped = "skipped"  # nothing to do
+
+
+class ControlAction(Base):
+    """Audit log: every opt-in change and every write to the inverter, with what was sent."""
+
+    __tablename__ = "control_actions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    system_id: Mapped[int] = mapped_column(
+        ForeignKey("systems.id", ondelete="CASCADE"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(default=_now)
+    kind: Mapped[ControlActionKind] = mapped_column(Enum(ControlActionKind))
+    trigger: Mapped[ControlTrigger] = mapped_column(Enum(ControlTrigger))
+    status: Mapped[ControlStatus] = mapped_column(Enum(ControlStatus))
+    # The local day the charge was for, and the level written, for applies.
+    day: Mapped[date | None] = mapped_column(Date, default=None)
+    target_soc_percent: Mapped[float | None] = mapped_column(Float, default=None)
+    message: Mapped[str] = mapped_column(String(1000), default="")
+    # Exactly what was sent to Fox and what it reported afterwards.
+    sent: Mapped[dict | None] = mapped_column(JSON, default=None)
+    read_back: Mapped[dict | None] = mapped_column(JSON, default=None)
+
+    system: Mapped[System] = relationship(back_populates="control_actions")

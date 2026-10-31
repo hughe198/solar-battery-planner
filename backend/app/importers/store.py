@@ -11,8 +11,10 @@ from app.crypto import decrypt
 from app.importers.base import UsageInterval
 from app.importers.fox_ess import FoxEssClient, FoxEssError, FoxEssImporter, local_day_bounds
 from app.models import (
+    ControlAction,
     FoxEssConnection,
     ImportJob,
+    InverterControl,
     JobStatus,
     System,
     UsageRecord,
@@ -32,8 +34,16 @@ def _naive_utc(moment: datetime) -> datetime:
 
 
 def delete_imported_data(db: Session, system: System) -> None:
-    """Remove everything imported for the system, including the stored Fox ESS key."""
-    for model in (UsageRecord, WeatherRecord, ImportJob, FoxEssConnection):
+    """Remove everything imported for the system, including the stored Fox ESS key, and the
+    inverter control opt-in and its log (they need the key)."""
+    for model in (
+        UsageRecord,
+        WeatherRecord,
+        ImportJob,
+        FoxEssConnection,
+        InverterControl,
+        ControlAction,
+    ):
         db.execute(delete(model).where(model.system_id == system.id))
     db.expire(system)
 

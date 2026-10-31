@@ -58,6 +58,11 @@
   </div>
 
   @if (chosen(); as r) {
+    <p class="muted">
+      Want the planner to set this on your Fox ESS inverter?
+      <a routerLink="/inverter">Inverter control</a> (off unless you turn it on).
+    </p>
+
     <section class="card">
       <h2>Why {{ r.target_soc_percent | number: '1.0-0' }}%</h2>
       <ul class="plain">

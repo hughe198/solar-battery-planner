@@ -4,6 +4,9 @@ from zoneinfo import available_timezones
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 from app.models import (
+    ControlActionKind,
+    ControlStatus,
+    ControlTrigger,
     DataSourceKind,
     JobStatus,
     PlanningMode,
@@ -410,3 +413,98 @@ class ReplayOut(BaseModel):
     soc_error_percent: float | None
     missed_saving_pence: float
     review: ReviewOut | None
+
+
+class PeriodOut(BaseModel):
+    """One period of the inverter's schedule, in local wall-clock time; `end` is exclusive."""
+
+    start: str
+    end: str
+    work_mode: str
+    charge_to_percent: float | None
+    power_w: float | None
+    min_soc_percent: float | None
+
+
+class ControlActionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    created_at: datetime
+    kind: ControlActionKind
+    trigger: ControlTrigger
+    status: ControlStatus
+    day: date | None
+    target_soc_percent: float | None
+    message: str
+    sent: dict | None
+    read_back: dict | None
+
+    _as_utc = field_validator("created_at")(_utc)
+
+
+class TestStepOut(BaseModel):
+    step: int
+    label: str
+    passed: bool
+
+
+class ControlStatusOut(BaseModel):
+    connected: bool
+    enabled: bool
+    auto_apply: bool
+    # Whether this server runs the nightly automatic apply at all.
+    auto_apply_available: bool
+    consented_at: datetime | None
+    test_level: int
+    test_steps: list[TestStepOut]
+    can_apply: bool
+    can_auto_apply: bool
+    has_original: bool
+    original_saved_at: datetime | None
+    original: list[PeriodOut]
+    original_enabled: bool | None
+    planner_periods: list[PeriodOut]
+    test_periods: list[PeriodOut]
+    actions: list[ControlActionOut]
+
+    _as_utc = field_validator("consented_at", "original_saved_at")(_utc)
+
+
+class ControlSettingsIn(BaseModel):
+    enabled: bool
+    auto_apply: bool = False
+    # Must be true to turn control on: the user has read what it does.
+    accept: bool = False
+
+
+class ProposalOut(BaseModel):
+    day: date
+    mode: PlanningMode
+    planned_soc_percent: float
+    charge_kwh: float
+    start: datetime | None
+    stop: datetime | None
+    target_soc_percent: float | None
+    power_w: float | None
+    min_soc_on_grid: float | None
+    schedule_enabled: bool
+    max_periods: int
+    current: list[PeriodOut]
+    added: list[PeriodOut]
+    removed: list[PeriodOut]
+    after: list[PeriodOut]
+    # Exactly what would be sent to Fox ESS.
+    request: dict
+    notes: list[str]
+    fingerprint: str
+
+
+class ApplyIn(BaseModel):
+    # From the preview, so what is written is what was shown.
+    fingerprint: str
+    start_soc_percent: float | None = Field(default=None, ge=0, le=100)
+
+
+class TestStepIn(BaseModel):
+    step: int = Field(ge=1, le=6)

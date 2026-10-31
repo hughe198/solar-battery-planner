@@ -54,6 +54,7 @@ prefix:
 | `SBP_CORS_ORIGINS` | `["http://localhost:4200"]` | JSON list |
 | `SBP_CREDENTIALS_SECRET` | dev-only value | Encrypts stored Fox ESS API keys. **Must** be set in production and kept stable |
 | `SBP_FOX_ESS_BASE_URL` | `https://www.foxesscloud.com` | |
+| `SBP_AUTO_APPLY` | `false` | Run the nightly automatic apply of inverter control in this process. Set on one process only, or run `python -m app.control.nightly` from cron instead |
 | `SBP_OPEN_METEO_ARCHIVE_URL` / `SBP_OPEN_METEO_RECENT_URL` / `SBP_OPEN_METEO_FORECAST_URL` | Open-Meteo public APIs | Point at a paid/self-hosted instance for commercial use |
 
 SQLite is the default and is fine for development or a single small server. For a multi-user
@@ -183,3 +184,23 @@ first) with outcomes for each scenario, reasons, the cost of every candidate and
 half-hourly timeline. `GET /api/plan/replay?days=30` returns the replay and review, and
 `GET /api/history?days=7` the metered half hours and daily totals for the home page charts.
 The Charge plan page (`/plan`) and home page show them.
+
+## Inverter control (opt-in)
+
+Users can let the planner write the next overnight charge to their Fox ESS inverter. It is off
+by default and needs explicit consent on the **Inverter** page (`/inverter`, API `/api/control`).
+
+- Writes go to the inverter's mode schedule (Open API v1 scheduler: `/op/v1/device/scheduler/get`,
+  `/enable` and `/set/flag`) as a `ForceCharge` period from the recommendation's force charge
+  start to stop, with `fdSoc` = target %, `fdPwr` = the battery's charge power and
+  `minSocOnGrid` = its minimum charge, clamped to the ranges the inverter reports. Periods that
+  cross midnight are split; the user's other periods are kept as Fox returned them.
+- Preview shows exactly what would be sent. Apply recomputes it and refuses if it differs from
+  the preview. Every write is read back and compared, the schedule from before the first write is
+  saved for **Restore**, and every action (with what was sent and read back) goes in an audit log.
+- A six-step write test must reach step 4 before Apply unlocks, and auto-apply also needs one good
+  manual apply. See [the test protocol](docs/inverter-control-test-protocol.md).
+- Auto-apply (`app/control/nightly.py`) runs each system once a night, from two hours before the
+  charge window opens.
+
+None of this has been tested against a live inverter yet.
