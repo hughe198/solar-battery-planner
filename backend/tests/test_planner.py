@@ -281,3 +281,34 @@ def test_single_rate_tariff_has_no_charge_window():
     cycle = cycle_for(DAY, flat, "UTC")
     assert cycle.window == timedelta(0)
     assert len(cycle.day_starts()) == 48
+
+
+def free_window_system(export_rate=15.0):
+    system = make_system(export_rate=export_rate)
+    system.tariff.bands[0] = band("import", "23:30", "05:30", 0.0)
+    return system
+
+
+def test_battery_is_sold_before_a_free_window():
+    result = plan(free_window_system(), make_forecast(evening_peak, bright), start_soc_percent=60)
+    own = result.recommendations[0]
+    # 5 kWh above the 10% reserve at 5 kW: an hour, ending as the free window opens.
+    assert own.discharge_start == datetime(2026, 6, 1, 22, 30, tzinfo=timezone.utc)
+    assert own.discharge_stop == datetime(2026, 6, 1, 23, 30, tzinfo=timezone.utc)
+    assert own.discharge_kwh == pytest.approx(5.0)
+    assert own.discharge_revenue_pence == pytest.approx(75.0)
+    assert own.discharge_to_percent == pytest.approx(10.0)
+    assert own.reasons[0].startswith("Before the free window, force discharge from 22:30")
+    # The user's level is kept; the charge is planned from the drained battery.
+    assert result.start_soc_percent == 60
+    assert own.stored_kwh == pytest.approx(own.target_soc_percent / 10 - 1.0, abs=0.01)
+    assert result.timeline[0].soc_percent <= 10.1
+
+
+def test_no_discharge_when_the_window_costs_or_export_pays_nothing():
+    forecast = make_forecast(evening_peak, bright)
+    paid = plan(make_system(export_rate=15), forecast, start_soc_percent=60)
+    unpaid = plan(free_window_system(export_rate=0), forecast, start_soc_percent=60)
+    for result in (paid, unpaid):
+        assert all(r.discharge_start is None for r in result.recommendations)
+        assert result.recommendations[0].discharge_kwh == 0

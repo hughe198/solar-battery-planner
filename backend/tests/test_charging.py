@@ -6,6 +6,7 @@ from app.models import Battery, UsageRecord, UsageSource
 from app.planner.charging import (
     ChargeRate,
     charge_hours,
+    discharge,
     learn_rate,
     reachable_kwh,
     schedule,
@@ -103,3 +104,25 @@ def test_no_charge_holds_the_whole_window():
 def test_no_window_no_schedule():
     plan = schedule(ChargeRate(4, 4, 0), BATTERY, 5.0, 9.0, UTC_START, UTC_START)
     assert plan.minutes == 0 and plan.hold_minutes == 0
+
+
+class FlatExport:
+    def __init__(self, pence):
+        self.pence = pence
+
+    def rate_at(self, when, direction):
+        return self.pence if direction == "export" else 0.0
+
+
+def test_discharge_is_capped_and_ends_as_the_window_opens():
+    # 9 kWh above the reserve at 5 kW would take 1 h 48 min; capped at 90 minutes.
+    drain = discharge(BATTERY, 10.0, UTC_START, FlatExport(10))
+    assert drain.stop == UTC_START
+    assert drain.minutes == 90
+    assert drain.export_kwh == pytest.approx(7.5)
+    assert drain.revenue_pence == pytest.approx(75.0)
+
+
+def test_no_discharge_when_export_pays_nothing_or_battery_is_low():
+    assert discharge(BATTERY, 10.0, UTC_START, FlatExport(0)) is None
+    assert discharge(BATTERY, 1.05, UTC_START, FlatExport(10)) is None

@@ -36,6 +36,8 @@ from app.planner.charging import (
     TAPER_FROM_PERCENT,
     ChargeRate,
     ChargeSchedule,
+    Discharge,
+    discharge,
     reachable_kwh,
 )
 from app.planner.charging import schedule as charge_schedule
@@ -206,6 +208,15 @@ class Explainer:
             "would only have to be bought back."
         )
 
+    def discharge(self, drain: Discharge, before_kwh: float, after_kwh: float) -> str:
+        b = self.battery
+        return (
+            f"Before the free window, force discharge from {self.clock(drain.start)} to "
+            f"{self.clock(drain.stop)}, taking the battery from {b.percent(before_kwh):.0f}% to "
+            f"{b.percent(after_kwh):.0f}%: about {drain.export_kwh:.1f} kWh exported earns "
+            f"{pence(drain.revenue_pence)}, and the free window refills it for nothing."
+        )
+
     def reasons(
         self,
         mode: PlanningMode,
@@ -329,7 +340,13 @@ def plan(
     day_starts = [i.start for i in day]
     prices = CyclePrices.of(schedule, [i.start for i in night], day_starts)
 
-    start_kwh = float(np.clip(battery.kwh(start_soc_percent), 0, battery.capacity_kwh))
+    before_kwh = float(np.clip(battery.kwh(start_soc_percent), 0, battery.capacity_kwh))
+    # Before a free (or paid-to-use) window, sell what's in the battery: the window refills it
+    # for nothing.
+    drain = None
+    if len(prices.night_import) and prices.night_import.max() <= 0:
+        drain = discharge(battery, before_kwh, cycle.night_start, schedule)
+    start_kwh = before_kwh - (drain.stored_kwh if drain else 0.0)
     max_kwh = reachable_kwh(rate, battery, start_kwh, cycle.window)
     targets = candidate_targets(battery, start_kwh, max_kwh)
 
@@ -382,6 +399,8 @@ def plan(
             reasons.insert(1, explainer.timing(timing, rate, battery))
         elif timing.hold_minutes:
             reasons.insert(1, explainer.hold(timing))
+        if drain:
+            reasons.insert(0, explainer.discharge(drain, before_kwh, start_kwh))
         recommendations.append(
             Recommendation(
                 mode=mode,
@@ -395,6 +414,13 @@ def plan(
                 force_charge_reaches_target=timing.reaches_target,
                 hold_start=timing.hold_start if timing.hold_minutes else None,
                 hold_stop=timing.hold_stop if timing.hold_minutes else None,
+                discharge_start=drain.start if drain else None,
+                discharge_stop=drain.stop if drain else None,
+                discharge_kwh=round(drain.export_kwh, 2) if drain else 0.0,
+                discharge_revenue_pence=round(drain.revenue_pence, 1) if drain else 0.0,
+                discharge_to_percent=(
+                    round(float(battery.percent(start_kwh)), 1) if drain else None
+                ),
                 expected=results["expected"],
                 dull=results["dull"],
                 bright=results["bright"],
@@ -447,7 +473,7 @@ def plan(
     return ChargePlan(
         day=forecast.day,
         mode=system.planning_mode,
-        start_soc_percent=round(float(battery.percent(start_kwh)), 1),
+        start_soc_percent=round(float(battery.percent(before_kwh)), 1),
         max_soc_percent=round(float(battery.percent(max_kwh)), 1),
         charge_start=cycle.night_start,
         charge_end=cycle.night_end,

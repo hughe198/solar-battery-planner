@@ -120,8 +120,11 @@ def test_matches_reports_differences():
     assert "missing" in matches(written, [])[0]
 
 
-def plan_for(start, stop, target=80.0, charge_kwh=4.0, hold=None):
+def plan_for(start, stop, target=80.0, charge_kwh=4.0, hold=None, drain=None):
     rec = SimpleNamespace(
+        discharge_start=drain[0] if drain else None,
+        discharge_stop=drain[1] if drain else None,
+        discharge_to_percent=5.0 if drain else None,
         hold_start=hold[0] if hold else None,
         hold_stop=hold[1] if hold else None,
         mode=PlanningMode.maximise_own_usage,
@@ -204,6 +207,29 @@ def test_no_charge_still_holds_the_battery_through_the_window():
     )
     assert [(p.label(), p.fd_soc) for p in proposal.after] == [("00:30–05:30", 10)]
     assert proposal.start is None and proposal.target_soc_percent is None
+
+
+def test_discharge_before_a_free_window_is_a_forced_discharge():
+    schedule = Schedule.from_fox(FakeInverter().scheduler("x"))
+    proposal = service.propose(
+        system_with(min_soc=5),
+        InverterControl(),
+        plan_for(
+            utc(2026, 1, 11, 3, 0),
+            utc(2026, 1, 11, 4, 0),
+            hold=(utc(2026, 1, 11, 0, 0), utc(2026, 1, 11, 3, 0)),
+            drain=(utc(2026, 1, 10, 23, 0), utc(2026, 1, 11, 0, 0)),
+        ),
+        schedule,
+    )
+    modes = [(p.label(), p.work_mode, p.fd_soc, p.fd_pwr) for p in proposal.after]
+    assert modes == [
+        ("00:00–03:00", "ForceCharge", 10, 3600),
+        ("03:00–04:00", "ForceCharge", 80, 3600),
+        ("23:00–00:00", "ForceDischarge", 10, 3600),
+    ]
+    assert proposal.discharge_soc_percent == 10
+    assert any("stops at 10% rather than 5%" in n for n in proposal.notes)
 
 
 def test_full_schedule_is_refused():

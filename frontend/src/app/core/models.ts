@@ -202,6 +202,12 @@ export interface Recommendation {
   /** The battery is held (the house on the grid) until the forced charge, or all window. */
   hold_start: string | null;
   hold_stop: string | null;
+  /** Before a free window the battery is exported down to discharge_to_percent. */
+  discharge_start: string | null;
+  discharge_stop: string | null;
+  discharge_kwh: number;
+  discharge_revenue_pence: number;
+  discharge_to_percent: number | null;
   expected: PlanOutcome;
   dull: PlanOutcome;
   bright: PlanOutcome;
@@ -356,6 +362,10 @@ export interface ControlProposal {
   stop: string | null;
   hold_start: string | null;
   hold_stop: string | null;
+  discharge_start: string | null;
+  discharge_stop: string | null;
+  discharge_soc_percent: number | null;
+  discharge_power_w: number | null;
   target_soc_percent: number | null;
   power_w: number | null;
   min_soc_on_grid: number | null;

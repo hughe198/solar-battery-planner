@@ -42,6 +42,13 @@ class Recommendation:
     # forced charge starts, or for the whole window when no charge is needed.
     hold_start: datetime | None
     hold_stop: datetime | None
+    # Before a free window the battery is force discharged (exported) down to this level,
+    # ending as the window opens; it then refills for nothing. None when it isn't worth it.
+    discharge_start: datetime | None
+    discharge_stop: datetime | None
+    discharge_kwh: float
+    discharge_revenue_pence: float
+    discharge_to_percent: float | None
     expected: Outcome
     # Usage at the top of its likely range with solar at the bottom, and the reverse.
     dull: Outcome

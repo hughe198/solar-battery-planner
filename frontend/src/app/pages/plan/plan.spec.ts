@@ -40,6 +40,11 @@ function recommendation(mode: Recommendation['mode'], target: number): Recommend
     force_charge_reaches_target: true,
     hold_start: '2026-06-01T23:30:00Z',
     hold_stop: '2026-06-02T04:20:00Z',
+    discharge_start: '2026-06-01T22:30:00Z',
+    discharge_stop: '2026-06-01T23:30:00Z',
+    discharge_kwh: 3.2,
+    discharge_revenue_pence: 48,
+    discharge_to_percent: 10,
     expected: OUTCOME,
     dull: { ...OUTCOME, solar_kwh: 6, net_cost_pence: 120 },
     bright: { ...OUTCOME, solar_kwh: 16, net_cost_pence: -20 },
@@ -146,6 +151,8 @@ describe('Plan', () => {
     expect(modes[0].textContent).toMatch(/Force charge 04:20–\s*05:30/);
     expect(modes[0].textContent).toContain('1 h 10 min');
     expect(modes[0].textContent).toMatch(/Hold the battery 23:30–\s*04:20/);
+    expect(modes[0].textContent).toMatch(/Force discharge 22:30–\s*23:30/);
+    expect(modes[0].textContent).toContain('earning 48p');
     expect(el.textContent).toContain('3.6 kW, 1.2 kW above 90%');
     expect(el.querySelectorAll('table.plan-table')[0].querySelectorAll('tbody tr').length).toBe(3);
     expect(el.querySelector('app-flow-chart path.soc')?.getAttribute('d')).toMatch(/^M/);

@@ -177,6 +177,11 @@ The planner (`backend/app/planner`) picks the overnight charge by simulation, no
   bought back with losses. With no charge needed, the whole window is a hold. On Fox ESS the hold
   is written as a forced charge to the lowest level the inverter accepts, which keeps the house
   on the grid without charging.
+- **Discharge before a free window.** When the charge window is free (import at 0p or less)
+  and export pays, whatever is above the battery's reserve is force discharged (exported) in up
+  to 90 minutes ending as the window opens, since the window refills it for nothing. The charge
+  is then planned from the reserve. On Fox ESS this is a ForceDischarge period stopping at the
+  minimum charge, or the lowest level the inverter accepts.
 - **Replay.** Past days with imported battery level are replayed from the charge that was
   actually made. Simulated import, export and battery level are compared with the meter to check
   the simulator, and every other target is simulated on the same day to find the best charge

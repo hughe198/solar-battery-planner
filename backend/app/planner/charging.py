@@ -14,6 +14,7 @@ the battery, split at the level where batteries usually slow down near full.
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from math import ceil
+from typing import Protocol
 
 import numpy as np
 from sqlalchemy import func, select
@@ -168,3 +169,69 @@ def schedule(
     finish = begin + timedelta(hours=hours)
     stop = min(window_end, begin + ceil((finish - begin) / SCHEDULE_STEP) * SCHEDULE_STEP)
     return ChargeSchedule(window_start, begin, begin, stop, finish <= window_end)
+
+
+# The longest forced discharge before a free window. Nightly control writes the plan from two
+# hours before the window opens, so a discharge must start inside that.
+DISCHARGE_MAX = timedelta(minutes=90)
+# Don't bother draining less than this, kWh stored.
+DISCHARGE_MIN_KWH = 0.1
+
+
+class ExportRates(Protocol):
+    def rate_at(self, when: datetime, direction: str) -> float: ...
+
+
+@dataclass(frozen=True)
+class Discharge:
+    """A forced discharge (export) that ends as a free window opens, in UTC.
+
+    Energy left in the battery when power turns free is worth only what it saves later, and
+    the free window refills it for nothing, so it is better sold first. `stored_kwh` leaves the
+    cells; `export_kwh` reaches the grid after losses (less whatever the house uses meanwhile,
+    which the battery would have supplied anyway).
+    """
+
+    start: datetime
+    stop: datetime
+    stored_kwh: float
+    export_kwh: float
+    revenue_pence: float
+
+    @property
+    def minutes(self) -> int:
+        return int((self.stop - self.start).total_seconds() // 60)
+
+
+def discharge(
+    battery: BatterySpec, start_kwh: float, window_start: datetime, book: ExportRates
+) -> Discharge | None:
+    """Export down to the reserve just before the window, if any of it pays. Starts are rounded
+    to five minutes earlier and the discharge is capped at `DISCHARGE_MAX`."""
+    stored = start_kwh - battery.reserve_kwh
+    if stored < DISCHARGE_MIN_KWH or battery.max_discharge_kw <= 0:
+        return None
+    hours = stored * battery.discharge_efficiency / battery.max_discharge_kw
+    length = min(DISCHARGE_MAX, ceil(timedelta(hours=hours) / SCHEDULE_STEP) * SCHEDULE_STEP)
+    begin = _floor(window_start - length, SCHEDULE_STEP)
+    exported = min(
+        stored * battery.discharge_efficiency,
+        battery.max_discharge_kw * (window_start - begin).total_seconds() / 3600,
+    )
+    # Price each five minutes of the discharge at the export rate, the earliest first.
+    revenue, left, moment = 0.0, exported, begin
+    step_kwh = battery.max_discharge_kw * SCHEDULE_STEP.total_seconds() / 3600
+    while left > 1e-9 and moment < window_start:
+        part = min(step_kwh, left)
+        revenue += part * book.rate_at(moment, "export")
+        left -= part
+        moment += SCHEDULE_STEP
+    if revenue <= 0:
+        return None
+    return Discharge(
+        start=begin,
+        stop=window_start,
+        stored_kwh=exported / battery.discharge_efficiency,
+        export_kwh=exported,
+        revenue_pence=revenue,
+    )

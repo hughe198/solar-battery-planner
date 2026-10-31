@@ -329,6 +329,11 @@ class RecommendationOut(BaseModel):
     force_charge_reaches_target: bool
     hold_start: datetime | None
     hold_stop: datetime | None
+    discharge_start: datetime | None
+    discharge_stop: datetime | None
+    discharge_kwh: float
+    discharge_revenue_pence: float
+    discharge_to_percent: float | None
     expected: OutcomeOut
     dull: OutcomeOut
     bright: OutcomeOut
@@ -489,6 +494,10 @@ class ProposalOut(BaseModel):
     stop: datetime | None
     hold_start: datetime | None
     hold_stop: datetime | None
+    discharge_start: datetime | None
+    discharge_stop: datetime | None
+    discharge_soc_percent: float | None
+    discharge_power_w: float | None
     target_soc_percent: float | None
     power_w: float | None
     min_soc_on_grid: float | None
