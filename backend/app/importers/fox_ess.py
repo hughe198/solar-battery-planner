@@ -23,6 +23,7 @@ from app.importers.base import INTERVAL, UsageInterval, interval_start
 
 HISTORY_PATH = "/op/v0/device/history/query"
 DEVICE_LIST_PATH = "/op/v0/device/list"
+MIN_SOC_PATH = "/op/v0/device/battery/soc/get"
 
 # Fox variable name -> UsageInterval field. All are power in kW except SoC (%).
 POWER_VARIABLES = {
@@ -88,10 +89,16 @@ class FoxEssClient:
         self._last_call = self.clock()
 
     def post(self, path: str, body: dict[str, Any]) -> Any:
+        return self._call("POST", path, json=body)
+
+    def get(self, path: str, params: dict[str, Any]) -> Any:
+        return self._call("GET", path, params=params)
+
+    def _call(self, method: str, path: str, **kwargs: Any) -> Any:
         for attempt in range(self.max_retries + 1):
             self._pace()
             try:
-                resp = self.http.post(path, json=body, headers=self._headers(path))
+                resp = self.http.request(method, path, headers=self._headers(path), **kwargs)
                 resp.raise_for_status()
                 payload = resp.json()
             except (httpx.HTTPError, ValueError) as exc:
@@ -111,6 +118,16 @@ class FoxEssClient:
     def device_serials(self) -> list[str]:
         result = self.post(DEVICE_LIST_PATH, {"currentPage": 1, "pageSize": 100})
         return [d["deviceSN"] for d in (result or {}).get("data", [])]
+
+    def battery_min_soc(self, sn: str) -> float | None:
+        """The inverter's minimum state of charge while on grid (the floor it discharges to in
+        everyday use), falling back to the off-grid minimum. Read-only."""
+        result = self.get(MIN_SOC_PATH, {"sn": sn}) or {}
+        for key in ("minSocOnGrid", "minSoc"):
+            value = result.get(key)
+            if isinstance(value, (int, float)) and 0 <= value < 100:
+                return float(value)
+        return None
 
     def history(self, sn: str, begin: datetime, end: datetime) -> list[dict[str, Any]]:
         """Raw history series for up to 24 hours: [{variable, unit, data: [{time, value}]}]."""

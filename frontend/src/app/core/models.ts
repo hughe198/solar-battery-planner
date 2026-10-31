@@ -50,6 +50,8 @@ export interface FoxEssConnection {
   /** Last four characters of the stored API key. */
   api_key_hint: string;
   last_synced_at: string | null;
+  /** Set on connect when the battery's minimum charge was read from the inverter. */
+  battery_min_soc_percent?: number | null;
 }
 
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed';

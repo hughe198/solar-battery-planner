@@ -107,6 +107,8 @@ class FoxEssOut(BaseModel):
     device_sn: str
     api_key_hint: str
     last_synced_at: datetime | None
+    # Set on connect when the battery's minimum charge was read from the inverter.
+    battery_min_soc_percent: float | None = None
 
     _as_utc = field_validator("last_synced_at")(_utc)
 
