@@ -155,3 +155,19 @@ def test_importer_chunks_by_24_hours():
         (utc(2024, 6, 3), utc(2024, 6, 3, 12)),
     ]
     assert [i.start for i in intervals] == [utc(2024, 6, 1), utc(2024, 6, 2), utc(2024, 6, 3)]
+
+
+def test_scheduler_writes_use_the_v1_paths_and_bodies():
+    import json
+
+    seen, sleeps = [], []
+    client = make_client([{"errno": 0, "result": None}] * 2, seen, sleeps)
+    groups = [{"startHour": 1, "startMinute": 0, "endHour": 4, "endMinute": 59}]
+    client.set_scheduler_groups("ABC123", groups)
+    client.set_scheduler_enabled("ABC123", False)
+    assert [r.url.path for r in seen] == [
+        "/op/v1/device/scheduler/enable",
+        "/op/v1/device/scheduler/set/flag",
+    ]
+    assert json.loads(seen[0].content) == {"deviceSN": "ABC123", "groups": groups}
+    assert json.loads(seen[1].content) == {"deviceSN": "ABC123", "enable": 0}

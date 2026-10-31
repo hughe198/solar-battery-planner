@@ -25,6 +25,10 @@ HISTORY_PATH = "/op/v0/device/history/query"
 DEVICE_LIST_PATH = "/op/v0/device/list"
 MIN_SOC_PATH = "/op/v0/device/battery/soc/get"
 SCHEDULER_PATH = "/op/v1/device/scheduler/get"
+# Writes (opt-in inverter control only). Fox allows one call every 2 seconds per write endpoint.
+SCHEDULER_SET_PATH = "/op/v1/device/scheduler/enable"
+SCHEDULER_FLAG_PATH = "/op/v1/device/scheduler/set/flag"
+WRITE_GAP_SECONDS = 2.1
 
 # Fox variable name -> UsageInterval field. All are power in kW except SoC (%).
 POWER_VARIABLES = {
@@ -133,7 +137,7 @@ class FoxEssClient:
     def force_charge_power_kw(self, sn: str) -> float | None:
         """The power set for forced charging in the inverter's schedule, if it has a forced
         charge period (the highest, if several). Read-only."""
-        result = self.post(SCHEDULER_PATH, {"deviceSN": sn}) or {}
+        result = self.scheduler(sn)
         powers = [
             g.get("fdPwr")
             for g in result.get("groups") or []
@@ -141,6 +145,19 @@ class FoxEssClient:
         ]
         watts = [p for p in powers if isinstance(p, (int, float)) and p > 0]
         return max(watts) / 1000 if watts else None
+
+    def scheduler(self, sn: str) -> dict[str, Any]:
+        """The inverter's mode schedule: {enable, maxGroupCount, groups, properties}. Read-only."""
+        return self.post(SCHEDULER_PATH, {"deviceSN": sn}) or {}
+
+    def set_scheduler_groups(self, sn: str, groups: list[dict[str, Any]]) -> None:
+        """Replace every period in the inverter's mode schedule. Writes to the inverter."""
+        self.post(SCHEDULER_SET_PATH, {"deviceSN": sn, "groups": groups})
+
+    def set_scheduler_enabled(self, sn: str, enabled: bool) -> None:
+        """Turn the mode schedule on or off; off returns the inverter to its own work mode.
+        Writes to the inverter."""
+        self.post(SCHEDULER_FLAG_PATH, {"deviceSN": sn, "enable": 1 if enabled else 0})
 
     def history(self, sn: str, begin: datetime, end: datetime) -> list[dict[str, Any]]:
         """Raw history series for up to 24 hours: [{variable, unit, data: [{time, value}]}]."""
