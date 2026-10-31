@@ -1,0 +1,218 @@
+from datetime import date, datetime, time, timezone
+
+import numpy as np
+import pytest
+
+from app.forecasting.base import DayForecast, IntervalForecast, Range
+from app.forecasting.service import day_half_hours
+from app.importers.base import INTERVAL
+from app.models import Battery, PlanningMode, System, Tariff
+from app.planner.optimiser import best_index, candidate_targets, plan
+from app.planner.simulator import BatterySpec, CyclePrices, costs, cycle_for, simulate
+
+DAY = date(2026, 6, 2)
+
+
+def make_system(export_rate=4.0, mode=PlanningMode.maximise_own_usage, tz="UTC") -> System:
+    return System(
+        name="Test",
+        latitude=51.5,
+        longitude=0,
+        timezone=tz,
+        planning_mode=mode,
+        battery=Battery(
+            capacity_kwh=10,
+            min_soc_percent=10,
+            max_charge_kw=5,
+            max_discharge_kw=5,
+            round_trip_efficiency_percent=100,
+        ),
+        tariff=Tariff(
+            day_import_rate=30,
+            cheap_import_rate=7.5,
+            export_rate=export_rate,
+            cheap_start=time(23, 30),
+            cheap_end=time(5, 30),
+        ),
+        arrays=[],
+    )
+
+
+def make_forecast(load, solar, tz="UTC", spread=0.0) -> DayForecast:
+    """`load` and `solar` give kWh for a half-hour slot number (0 = local midnight)."""
+    intervals = [
+        IntervalForecast(start=s, end=s + INTERVAL, load_kwh=load(k), solar_kwh=solar(k))
+        for k, s in enumerate(day_half_hours(DAY, tz))
+    ]
+    total_load = sum(i.load_kwh for i in intervals)
+    total_solar = sum(i.solar_kwh for i in intervals)
+    return DayForecast(
+        day=DAY,
+        intervals=intervals,
+        load=Range(total_load, total_load * (1 - spread), total_load * (1 + spread)),
+        solar=Range(total_solar, total_solar * (1 - spread), total_solar * (1 + spread)),
+        load_method="learned",
+        solar_method="learned",
+        history_days=60,
+        array_performance=[],
+        backtest=None,
+    )
+
+
+def evening_peak(k):
+    return 0.6 if 34 <= k < 44 else 0.25
+
+
+def no_sun(k):
+    return 0.0
+
+
+def bright(k):
+    return 1.5 if 16 <= k < 36 else 0.0  # 15 kWh, 08:00 to 18:00
+
+
+def test_cycle_crossing_midnight_handles_clock_change():
+    tariff = Tariff(cheap_start=time(23, 30), cheap_end=time(5, 30))
+    cycle = cycle_for(date(2026, 3, 29), tariff, "Europe/London")  # clocks go forward at 01:00
+    assert cycle.night_start == datetime(2026, 3, 28, 23, 30, tzinfo=timezone.utc)
+    assert cycle.night_end == datetime(2026, 3, 29, 4, 30, tzinfo=timezone.utc)
+    assert len(cycle.night_starts()) == 10  # five hours, not six
+    assert cycle.day_end == datetime(2026, 3, 29, 22, 30, tzinfo=timezone.utc)
+
+
+def test_cycle_after_midnight():
+    tariff = Tariff(cheap_start=time(0, 30), cheap_end=time(4, 30))
+    cycle = cycle_for(DAY, tariff, "UTC")
+    assert cycle.night_start == datetime(2026, 6, 2, 0, 30, tzinfo=timezone.utc)
+    assert cycle.day_end == datetime(2026, 6, 3, 0, 30, tzinfo=timezone.utc)
+
+
+def test_simulation_conserves_energy_with_losses():
+    battery = BatterySpec.of(
+        Battery(
+            capacity_kwh=10,
+            min_soc_percent=10,
+            max_charge_kw=3,
+            max_discharge_kw=3,
+            round_trip_efficiency_percent=81,
+        )
+    )
+    load = np.array([0.5] * 10 + [0.2] * 10)
+    solar = np.array([0.0] * 10 + [2.0] * 10)
+    sim = simulate(battery, 1.0, np.array([1.0, 5.0, 10.0]), np.zeros(4), np.zeros(4), load, solar)
+    imported = sim.day_import_kwh.sum(axis=1)
+    exported = sim.day_export_kwh.sum(axis=1)
+    discharged = np.clip(-np.diff(sim.stored_kwh), 0, None).sum(axis=1) * 0.9
+    charged = np.clip(np.diff(sim.stored_kwh), 0, None).sum(axis=1) / 0.9
+    # Supply equals demand every interval, so it does over the day.
+    np.testing.assert_allclose(solar.sum() + imported + discharged, load.sum() + exported + charged)
+    assert imported[0] == pytest.approx(5.0)  # empty to start: the morning comes from the grid
+    assert imported[2] == 0
+    # The full battery can't take the solar surplus, so more of it is exported.
+    assert exported[2] > exported[0]
+    assert sim.stored_kwh.max() <= 10 + 1e-9
+    assert sim.stored_kwh.min() >= 1 - 1e-9
+    # 3 kW for half an hour, at most.
+    assert np.diff(sim.stored_kwh).max() <= 1.5 * 0.9 + 1e-9
+
+
+def test_candidates_run_from_start_to_what_the_window_can_reach():
+    battery = BatterySpec.of(make_system().battery)
+    targets = candidate_targets(battery, 1.25, 7.0)
+    assert targets[0] == pytest.approx(1.25)
+    assert targets[-1] == pytest.approx(7.0)
+    assert np.all(np.diff(targets) > 0)
+
+
+def test_lean_under_picks_lowest_within_tolerance():
+    assert best_index(np.array([10.0, 5.0, 4.0, 3.5, 3.6])) == 1
+    assert best_index(np.array([10.0, 5.0, 4.0, 3.5, 3.6]), tolerance=0) == 3
+
+
+def test_dull_day_charges_to_cover_the_house():
+    result = plan(make_system(), make_forecast(evening_peak, no_sun), start_soc_percent=10)
+    own = result.recommendations[0]
+    assert own.mode is PlanningMode.maximise_own_usage
+    # Six hours of charging at 5 kW fills the battery; with no sun it should be used in full.
+    assert result.max_soc_percent == 100
+    assert own.target_soc_percent == 100
+    assert own.charge_kwh == pytest.approx(9.0)
+    assert own.expected.reserve_at is not None
+    assert own.reasons[0].startswith("Charge to 100%")
+
+
+def test_over_charging_on_a_sunny_day_is_penalised():
+    """Low export rate: charging fills the battery that solar would have filled for free."""
+    result = plan(make_system(export_rate=4), make_forecast(evening_peak, bright), 10)
+    own, export = result.recommendations
+    # 05:30 to 08:00 at 0.25 kWh a half hour is 1.25 kWh to cover before the sun is up.
+    assert 20 <= own.target_soc_percent <= 30
+    assert export.target_soc_percent == own.target_soc_percent
+    assert own.expected.full_at is not None
+    assert any("solar takes over" in r for r in own.reasons)
+    full = next(c for c in result.candidates if c.target_soc_percent == 100)
+    best = next(c for c in result.candidates if c.target_soc_percent == own.target_soc_percent)
+    assert full.own_usage_pence > best.own_usage_pence + 20
+
+
+def test_export_mode_fills_up_when_export_pays_more_than_charging():
+    system = make_system(export_rate=15, mode=PlanningMode.maximise_export_revenue)
+    result = plan(system, make_forecast(evening_peak, bright), 10)
+    export, own = result.recommendations
+    assert export.mode is PlanningMode.maximise_export_revenue
+    assert export.target_soc_percent >= 95
+    assert own.target_soc_percent < 40
+    assert export.expected.export_revenue_pence > own.expected.export_revenue_pence
+    assert any("Export pays 15p" in r for r in export.reasons)
+
+
+def test_uncertainty_is_explained_and_timeline_follows_the_plan():
+    result = plan(make_system(), make_forecast(evening_peak, bright, spread=0.4), 10)
+    own = result.recommendations[0]
+    assert own.dull.solar_kwh < own.expected.solar_kwh < own.bright.solar_kwh
+    assert own.dull.net_cost_pence > own.bright.net_cost_pence
+    assert any("dull" in r for r in own.reasons)
+    cheap = [p for p in result.timeline if p.cheap]
+    assert len(cheap) == 11  # 00:00 to 05:30; the 23:30 slot is on the evening before
+    assert cheap[-1].soc_percent == own.target_soc_percent
+    assert cheap[0].soc_percent < cheap[-1].soc_percent
+    assert all(p.import_kwh > 0 for p in cheap)  # house and charge from the grid
+    assert result.timeline[-1].start.hour == 23 and result.timeline[-1].start.minute == 0
+
+
+def test_already_charged_battery_needs_nothing():
+    result = plan(make_system(), make_forecast(evening_peak, bright), start_soc_percent=60)
+    own = result.recommendations[0]
+    assert own.target_soc_percent == 60
+    assert own.charge_kwh == 0
+    assert own.reasons[0].startswith("No overnight charge")
+
+
+class PeakPrices:
+    """Four import rates and two export rates through the day, as on many time-of-use tariffs."""
+
+    def import_rate(self, start):
+        hour = start.hour
+        if hour < 5 or hour == 23:
+            return 7.0
+        if 16 <= hour < 19:
+            return 40.0
+        return 25.0 if hour < 12 else 22.0
+
+    def export_rate(self, start):
+        return 25.0 if 16 <= start.hour < 19 else 5.0
+
+
+def test_costs_follow_a_multi_rate_price_book():
+    cycle = cycle_for(DAY, Tariff(cheap_start=time(23, 0), cheap_end=time(5, 0)), "UTC")
+    prices = CyclePrices.of(PeakPrices(), cycle.night_starts(), cycle.day_starts())
+    assert prices.charge == 7.0
+    battery = BatterySpec.of(make_system().battery)
+    day = len(cycle.day_starts())
+    load = np.full(day, 0.5)
+    sim = simulate(
+        battery, 1.0, np.array([1.0]), np.full(12, 0.2), np.zeros(12), load, np.zeros(day)
+    )
+    c = costs(sim, battery, prices, 1.0)
+    expected_day = sum(0.5 * PeakPrices().import_rate(s) for s in cycle.day_starts())
+    assert c.import_cost[0] == pytest.approx(12 * 0.2 * 7.0 + expected_day)
