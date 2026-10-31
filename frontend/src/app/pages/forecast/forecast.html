@@ -38,16 +38,76 @@
   </div>
 
   <section class="card">
-    <h2>Half-hourly forecast</h2>
+    @if (hasBattery() && recommendation(); as r) {
+      <h2>
+        @if (r.force_charge_start) {
+          Why charge to {{ r.target_soc_percent | number: '1.0-0' }}%
+        } @else {
+          Why no charge
+        }
+      </h2>
+      @if (verdict(); as v) {
+        <p class="verdict">{{ v }}</p>
+      }
+    } @else {
+      <h2>Half-hourly forecast</h2>
+    }
     <svg
       class="forecast-chart"
+      (mouseleave)="hovered.set(null)"
       [attr.viewBox]="'0 0 ' + width + ' ' + height"
       role="img"
       [attr.aria-label]="
-        'Predicted usage and solar generation per half hour for ' + dayLabel(f.day)
+        (hasBattery()
+          ? 'Planned battery level, and predicted usage and solar generation per half hour for '
+          : 'Predicted usage and solar generation per half hour for ') + dayLabel(f.day)
       "
     >
-      @for (tick of yTicks(); track tick.kwh) {
+      @if (hasBattery() && showBattery()) {
+        @if (holdBlock(); as b) {
+          <rect
+            class="hold"
+            [attr.x]="b.x"
+            [attr.y]="pad.top"
+            [attr.width]="b.width"
+            [attr.height]="b.height"
+          />
+        }
+        @if (forceCharge(); as c) {
+          <rect
+            class="force"
+            [attr.x]="c.x"
+            [attr.y]="pad.top"
+            [attr.width]="c.width"
+            [attr.height]="c.height"
+          />
+        }
+        @if (minimumLine(); as m) {
+          <line
+            class="limit"
+            [attr.x1]="pad.left"
+            [attr.x2]="width - pad.right"
+            [attr.y1]="m.y"
+            [attr.y2]="m.y"
+          />
+          <text class="axis" [attr.x]="width - pad.right - 2" [attr.y]="m.y - 3" text-anchor="end">
+            Minimum {{ m.percent | number: '1.0-0' }}%
+          </text>
+        }
+        @if (targetLine(); as t) {
+          <line
+            class="limit target"
+            [attr.x1]="pad.left"
+            [attr.x2]="width - pad.right"
+            [attr.y1]="t.y"
+            [attr.y2]="t.y"
+          />
+          <text class="axis" [attr.x]="width - pad.right - 2" [attr.y]="t.y - 3" text-anchor="end">
+            Target {{ t.percent | number: '1.0-0' }}%
+          </text>
+        }
+      }
+      @for (tick of yTicks(); track tick.y) {
         <line
           class="grid"
           [attr.x1]="pad.left"
@@ -56,7 +116,7 @@
           [attr.y2]="tick.y"
         />
         <text class="axis" [attr.x]="pad.left - 6" [attr.y]="tick.y + 4" text-anchor="end">
-          {{ tick.kwh | number: '1.0-1' }}
+          {{ tick.label }}
         </text>
       }
       @for (tick of xTicks(); track tick.x) {
@@ -64,15 +124,119 @@
           {{ tick.label }}
         </text>
       }
-      <path class="band solar" [attr.d]="solarBand()" />
-      <path class="band load" [attr.d]="loadBand()" />
-      <path class="series solar" [attr.d]="solarLine()" />
-      <path class="series load" [attr.d]="loadLine()" />
+      @if (showSolar()) {
+        <path class="band solar" [attr.d]="solarBand()" />
+        <path class="series solar" [attr.d]="solarLine()" />
+      }
+      @if (showUsage()) {
+        <path class="band load" [attr.d]="loadBand()" />
+        <path class="series load" [attr.d]="loadLine()" />
+      }
+      @if (hasBattery() && showBattery()) {
+        @if (assumedBatteryLine(); as assumed) {
+          <path class="series battery-assumed" [attr.d]="assumed" />
+        }
+        <path class="series battery" [attr.d]="batteryLine()" />
+      }
+      @if (hover(); as h) {
+        <line
+          class="crosshair"
+          [attr.x1]="h.x"
+          [attr.x2]="h.x"
+          [attr.y1]="pad.top"
+          [attr.y2]="height - pad.bottom"
+        />
+        @for (dot of h.dots; track dot.kind) {
+          <circle [class]="'dot ' + dot.kind" [attr.cx]="h.x" [attr.cy]="dot.y" r="4" />
+        }
+      }
+      @for (area of hitAreas(); track area.x; let i = $index) {
+        <rect
+          class="hit"
+          [attr.x]="area.x"
+          [attr.y]="pad.top"
+          [attr.width]="area.width"
+          [attr.height]="height - pad.top - pad.bottom"
+          (mouseenter)="hovered.set(i)"
+        />
+      }
     </svg>
-    <p class="legend muted">
-      <span class="key load"></span> Usage <span class="key solar"></span> Solar · kWh per half
-      hour, local time. Shaded areas show the likely range (10th–90th percentile).
+    <p class="chart-readout" aria-live="polite">
+      @if (hover(); as h) {
+        <strong>{{ h.text }}</strong>
+      } @else {
+        <span class="muted">Hover over the chart to read the values.</span>
+      }
     </p>
+    <div class="chart-toggles">
+      @if (hasBattery()) {
+        <label>
+          <input
+            type="checkbox"
+            name="show-battery"
+            [checked]="showBattery()"
+            (change)="showBattery.set(battery.checked)"
+            #battery
+          />
+          <span class="key battery"></span> Battery %
+        </label>
+      }
+      <label>
+        <input
+          type="checkbox"
+          name="show-usage"
+          [checked]="showUsage()"
+          (change)="showUsage.set(usage.checked)"
+          #usage
+        />
+        <span class="key load"></span> Usage
+      </label>
+      <label>
+        <input
+          type="checkbox"
+          name="show-solar"
+          [checked]="showSolar()"
+          (change)="showSolar.set(solar.checked)"
+          #solar
+        />
+        <span class="key solar"></span> Solar
+      </label>
+    </div>
+    <p class="legend muted">
+      @if (hasBattery() && holdBlock() && showBattery()) {
+        <span class="key hold"></span> Battery held, house on the grid ·
+      }
+      @if (hasBattery() && forceCharge() && showBattery()) {
+        <span class="key force"></span> Force charge, house on the grid ·
+      }
+      Times are local. Pale bands show the likely range of usage and solar (10th–90th percentile).
+      @if (batteryShown()) {
+        The axis shows battery charge. Usage and solar are drawn to their own kWh scale, so read
+        their values by hovering.
+      }
+    </p>
+    @if (hasBattery() && plan(); as p) {
+      <p class="legend muted">
+        @if (p.start_soc_source === 'measured' && p.reading_at) {
+          The battery line starts from your last imported reading,
+          {{ p.reading_soc_percent | number: '1.0-0' }}% at {{ readingTime(p.reading_at) }}, and
+          predicts {{ p.start_soc_percent | number: '1.0-0' }}% when the cheap window opens, then
+          follows the recommended charge. Import again for a fresher start.
+        } @else {
+          No imported reading since the last cheap window closed, so the battery line assumes
+          {{ p.start_soc_percent | number: '1.0-0' }}% when the cheap window opens. The dotted part
+          before that isn't a prediction. <a routerLink="/data">Import today's data</a> to start
+          from your real level.
+        }
+      </p>
+    }
+    @if (hasBattery() && recommendation(); as r) {
+      <ul class="plain">
+        @for (reason of r.reasons; track $index) {
+          <li>{{ reason }}</li>
+        }
+      </ul>
+    }
   </section>
 
   <section class="card">

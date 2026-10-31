@@ -378,6 +378,10 @@ class ChargePlanOut(BaseModel):
     recommendations: list[RecommendationOut]
     candidates: list[CandidateOut]
     timeline: list[TimelinePointOut]
+    start_soc_source: str
+    reading_at: datetime | None
+    reading_soc_percent: float | None
+    lead_in: list[TimelinePointOut]
     load: RangeOut
     solar: RangeOut
     load_method: str

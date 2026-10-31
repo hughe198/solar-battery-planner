@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import numpy as np
 import pytest
@@ -99,6 +99,97 @@ def test_plan_recommends_a_charge_for_each_mode(client, headers):
     assert body["candidates"][0]["target_soc_percent"] == 20
     assert body["timeline"][0]["cheap"] is True
     assert any(not p["cheap"] for p in body["timeline"])
+
+
+def timeline_for(client, headers, bands=None):
+    if bands:
+        system = {**UTC_SYSTEM, "tariff": {"name": "Test", "bands": bands}}
+        assert client.put("/api/system", json=system, headers=headers).status_code == 200
+    day = tomorrow()
+    resp = client.get(f"/api/plan?day={day}", headers=headers)
+    assert resp.status_code == 200, resp.text
+    points = resp.json()["timeline"]
+    starts = [datetime.fromisoformat(p["start"]).replace(tzinfo=None) for p in points]
+    assert all(b - a == timedelta(minutes=30) for a, b in zip(starts, starts[1:]))
+    midnight = datetime.combine(day, datetime.min.time())
+    return points, starts, midnight
+
+
+def test_plan_includes_the_window_hours_before_midnight(client, headers):
+    points, starts, midnight = timeline_for(client, headers)  # Window 23:30 to 05:30.
+    assert starts[0] == midnight - timedelta(minutes=30)
+    assert starts[-1] == midnight + timedelta(hours=23)
+    assert sum(p["cheap"] for p in points) == 12
+
+
+def test_plan_runs_past_midnight_to_the_next_window(client, headers):
+    points, starts, midnight = timeline_for(
+        client,
+        headers,
+        [
+            {"direction": "import", "start": "02:00", "end": "05:00", "rate": 7.5},
+            {"direction": "import", "start": "05:00", "end": "02:00", "rate": 27.5},
+            {"direction": "export", "start": "00:00", "end": "00:00", "rate": 15},
+        ],
+    )
+    assert starts[0] == midnight + timedelta(hours=2)
+    assert starts[-1] == midnight + timedelta(hours=25, minutes=30)
+    assert points[-1]["load_kwh"] > 0
+
+
+def battery_readings(day: date, first_hour: int, hours: int, soc: float) -> str:
+    rows = []
+    for k in range(hours * 2):
+        moment = datetime.combine(day, datetime.min.time()) + timedelta(
+            hours=first_hour, minutes=30 * k
+        )
+        rows.append(f"{moment:%Y-%m-%dT%H:%M},0.2,0,0.2,0,{soc}\n")
+    return HEADER + "".join(rows)
+
+
+def test_plan_predicts_the_start_from_the_latest_reading(client, headers):
+    today = datetime.now(timezone.utc).date()
+    day = today + timedelta(days=1)
+    upload(client, headers, battery_readings(today, 6, 6, 60))  # Last reading ends at 12:00.
+
+    body = client.get(f"/api/plan?day={day}", headers=headers).json()
+
+    assert body["start_soc_source"] == "measured"
+    assert body["reading_soc_percent"] == 60
+    assert body["reading_at"].startswith(f"{today}T12:00")
+    lead = body["lead_in"]
+    assert lead[0]["start"].startswith(f"{today}T12:00")
+    assert lead[-1]["start"].startswith(f"{today}T23:00")
+    assert not any(p["cheap"] for p in lead)
+    assert body["start_soc_percent"] == lead[-1]["soc_percent"]
+    assert lead[-1]["soc_percent"] != 60
+    assert body["timeline"][0]["start"].startswith(f"{today}T23:30")
+
+
+def test_plan_ignores_a_reading_from_before_the_last_charge_window_closed(client, headers):
+    today = datetime.now(timezone.utc).date()
+    day = today + timedelta(days=1)
+    # Ends at 05:00 today, while the 23:30 to 05:30 window it would have to predict across is open.
+    upload(client, headers, battery_readings(today, 3, 2, 60))
+
+    body = client.get(f"/api/plan?day={day}", headers=headers).json()
+
+    assert body["start_soc_source"] == "assumed"
+    assert body["start_soc_percent"] == 10
+    assert body["reading_at"] is None
+    assert body["lead_in"] == []
+
+
+def test_a_given_start_level_overrides_the_reading(client, headers):
+    today = datetime.now(timezone.utc).date()
+    day = today + timedelta(days=1)
+    upload(client, headers, battery_readings(today, 6, 6, 60))
+
+    body = client.get(f"/api/plan?day={day}&start_soc_percent=25", headers=headers).json()
+
+    assert body["start_soc_source"] == "given"
+    assert body["start_soc_percent"] == 25
+    assert body["lead_in"] == []
 
 
 def test_plan_rejects_far_days(client, headers):

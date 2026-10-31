@@ -253,6 +253,12 @@ export interface ChargePlan {
   recommendations: Recommendation[];
   candidates: PlanCandidate[];
   timeline: FlowPoint[];
+  /** Where start_soc_percent came from: an imported reading, the user, or the battery's minimum. */
+  start_soc_source: 'measured' | 'given' | 'assumed';
+  reading_at: string | null;
+  reading_soc_percent: number | null;
+  /** Half hours simulated from the reading up to the window opening. */
+  lead_in: FlowPoint[];
   load: EnergyRange;
   solar: EnergyRange;
   load_method: ForecastMethod;

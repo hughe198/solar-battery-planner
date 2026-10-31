@@ -1,11 +1,14 @@
 """Charge planner (step 4): turn a day's forecast, the battery and the tariff into an overnight
 charge target for each planning mode, and look back at how past charge decisions worked out."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
+from typing import Literal
 
 from app.forecasting.base import Method, Range
 from app.models import PlanningMode
+
+StartSocSource = Literal["measured", "given", "assumed"]
 
 
 @dataclass(frozen=True)
@@ -103,6 +106,13 @@ class ChargePlan:
     load_method: Method
     solar_method: Method
     history_days: int
+    # Where start_soc_percent came from: predicted from an imported reading, entered by the user
+    # or assumed to be the battery's minimum. A prediction has the reading and the half hours
+    # simulated from it up to the window opening.
+    start_soc_source: StartSocSource = "assumed"
+    reading_at: datetime | None = None
+    reading_soc_percent: float | None = None
+    lead_in: list[TimelinePoint] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

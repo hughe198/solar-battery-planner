@@ -290,6 +290,13 @@ The planner (`backend/app/planner`) picks the overnight charge by simulation, no
   grid power; by day the inverter is in self-use (solar feeds the house, surplus fills the
   battery then exports, shortfalls come from the battery down to its minimum charge, then the
   grid). Charge and discharge rates, minimum charge and round-trip losses come from the system.
+- **Forecast span.** The forecast behind a plan covers the whole cycle, including window hours
+  before midnight and usage after the next midnight, so a 02:00 window plans through to 02:00.
+- **Starting level.** Unless one is entered, the plan starts from the latest imported battery
+  level, simulated in self-use up to the window opening (`app/planner/lead_in.py`). A reading from
+  before the previous charge window closed, or after this one opened, isn't used, and the plan
+  then assumes the battery's minimum charge. The response says which (`start_soc_source`), and
+  nightly auto-apply uses the same rule, so import recent data for it to apply.
 - **Candidates and scenarios.** Every whole-percent target from tonight's starting level to the
   most the window can reach is simulated half-hourly, all at once as one numpy array, on the
   expected forecast, a dull day (usage high, solar low, from the forecast ranges) and a bright

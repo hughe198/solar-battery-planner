@@ -51,7 +51,8 @@ export class DataImport implements OnInit {
 
   readonly syncForm = this.fb.group({
     start_date: [daysAgo(90), Validators.required],
-    end_date: [daysAgo(1), Validators.required],
+    // Today too: the plan starts from the latest battery reading. A part day is fetched again.
+    end_date: [daysAgo(0), Validators.required],
   });
 
   private readonly syncRange = signal(this.syncForm.getRawValue());

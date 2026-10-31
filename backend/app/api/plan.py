@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -12,6 +13,7 @@ from app.models import PlanningMode, System, User
 from app.planner import optimiser
 from app.planner.base import ChargePlan, Replay
 from app.planner.charging import learn_rate_from_history
+from app.planner.lead_in import simulate_lead_in, usable_reading
 from app.planner.replay import DEFAULT_DAYS, MAX_DAYS, Replayer
 from app.planner.simulator import cycle_for
 from app.schemas import ChargePlanOut, ReplayOut
@@ -63,13 +65,35 @@ def make_plan(
     day: date,
     start_soc_percent: float | None = None,
 ) -> ChargePlan:
-    """The plan for `day`, from the battery's minimum charge unless a start level is given.
+    """The plan for `day`, starting from the given level, or else the level predicted from the
+    latest imported reading, or else the battery's minimum charge.
     Raises WeatherError when the forecast can't be fetched and ValueError when it can't plan."""
-    if start_soc_percent is None:
-        start_soc_percent = system.battery.min_soc_percent
-    forecast = HistoryForecaster(db, weather_client).forecast(system, day)
+    # The whole cycle, not the calendar day: a window can open before midnight, and the day runs
+    # on until the next window opens, which can be after the following midnight.
+    cycle = cycle_for(day, TariffSchedule.from_system(system), system.timezone)
+    reading = None
+    if start_soc_percent is None and system.battery is not None:
+        reading = usable_reading(db, system, day, cycle)
+    lead_starts = reading.half_hours_until(cycle.night_start) if reading else []
+    starts = lead_starts + cycle.night_starts() + cycle.day_starts()
+    forecast = HistoryForecaster(db, weather_client).forecast(system, day, starts)
     rate = learn_rate_from_history(db, system)
-    return optimiser.plan(system, forecast, start_soc_percent, rate)
+    if start_soc_percent is not None:
+        plan = optimiser.plan(system, forecast, start_soc_percent, rate)
+        return replace(plan, start_soc_source="given")
+    if reading is None:
+        return optimiser.plan(system, forecast, system.battery.min_soc_percent, rate)
+    wanted = set(lead_starts)
+    lead_in = simulate_lead_in(system, reading, [i for i in forecast.intervals if i.start in wanted])
+    opening = lead_in[-1].soc_percent if lead_in else reading.soc_percent
+    plan = optimiser.plan(system, forecast, opening, rate)
+    return replace(
+        plan,
+        start_soc_source="measured",
+        reading_at=reading.at,
+        reading_soc_percent=reading.soc_percent,
+        lead_in=lead_in,
+    )
 
 
 @router.get("/replay", response_model=ReplayOut)
