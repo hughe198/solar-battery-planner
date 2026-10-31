@@ -12,17 +12,20 @@ from app.models import PlanningMode, System, User
 from app.planner import optimiser
 from app.planner.base import ChargePlan, Replay
 from app.planner.replay import DEFAULT_DAYS, MAX_DAYS, Replayer
+from app.planner.simulator import cycle_for
 from app.schemas import ChargePlanOut, ReplayOut
 from app.security import current_user
+from app.tariffs import TariffSchedule
 from app.weather.open_meteo import OpenMeteoClient, WeatherError
 
 router = APIRouter(prefix="/api/plan", tags=["plan"])
 
 
 def next_day(system: System) -> date:
-    """The day the next charge is for: today until this morning's cheap window ends."""
+    """The day the next charge is for: today until this morning's charge window ends."""
     now = datetime.now(ZoneInfo(system.timezone))
-    return now.date() if now.time() < system.tariff.cheap_end else now.date() + timedelta(days=1)
+    cycle = cycle_for(now.date(), TariffSchedule.from_system(system), system.timezone)
+    return now.date() if now < cycle.night_end else now.date() + timedelta(days=1)
 
 
 @router.get("", response_model=ChargePlanOut)

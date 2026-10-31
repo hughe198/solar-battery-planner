@@ -11,8 +11,9 @@ from sqlalchemy.orm import Session
 from app.api.forecast import _system
 from app.database import get_db
 from app.models import UsageRecord, User
-from app.planner.simulator import TariffPrices, in_cheap_window
+from app.planner.simulator import Cycle, cycle_for
 from app.security import current_user
+from app.tariffs import TariffSchedule
 
 router = APIRouter(prefix="/api/history", tags=["history"])
 
@@ -61,8 +62,18 @@ def recent_history(
     """The last `days` local days of imported data, ending on the latest day imported."""
     system = _system(user)
     zone = ZoneInfo(system.timezone)
-    tariff = system.tariff
-    prices = TariffPrices(tariff, system.timezone)
+    schedule = TariffSchedule.from_system(system)
+    cycles: dict[date, Cycle] = {}
+
+    def charging(start: datetime, local_day: date) -> bool:
+        # A window that crosses midnight belongs to the next day's cycle.
+        for d in (local_day, local_day + timedelta(days=1)):
+            if d not in cycles:
+                cycles[d] = cycle_for(d, schedule, system.timezone)
+            if cycles[d].night_start <= start < cycles[d].night_end:
+                return True
+        return False
+
     latest = db.scalar(
         select(func.max(UsageRecord.start)).where(UsageRecord.system_id == system.id)
     )
@@ -92,7 +103,7 @@ def recent_history(
             import_kwh=r.grid_import_kwh,
             export_kwh=r.grid_export_kwh,
             soc_percent=r.battery_soc_percent,
-            cheap=in_cheap_window(local.time(), tariff),
+            cheap=charging(start, local.date()),
         )
         points.append(point)
         by_day.setdefault(local.date(), []).append(point)
@@ -112,10 +123,10 @@ def recent_history(
                 export_kwh=round(exported, 2),
                 self_sufficiency_percent=self_sufficiency(load, imported),
                 import_cost_pence=round(
-                    sum(p.import_kwh * prices.import_rate(p.start) for p in items), 1
+                    sum(p.import_kwh * schedule.rate_at(p.start, "import") for p in items), 1
                 ),
                 export_revenue_pence=round(
-                    sum(p.export_kwh * prices.export_rate(p.start) for p in items), 1
+                    sum(p.export_kwh * schedule.rate_at(p.start, "export") for p in items), 1
                 ),
                 min_soc_percent=min(socs) if socs else None,
                 max_soc_percent=max(socs) if socs else None,

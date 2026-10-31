@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 import numpy as np
 
 from app.importers.base import INTERVAL
-from app.models import Battery, Tariff
+from app.models import Battery
 
 HOURS_PER_INTERVAL = INTERVAL.total_seconds() / 3600
 
@@ -65,39 +65,9 @@ class BatterySpec:
 
 
 class PriceBook(Protocol):
-    """Import and export price, in pence per kWh, for the half hour starting at a UTC moment.
+    """Pence per kWh for the half hour containing a moment; `app.tariffs.TariffSchedule`."""
 
-    All pricing goes through this, so tariffs with several rates through the day plug in by
-    providing another implementation.
-    """
-
-    def import_rate(self, start: datetime) -> float: ...
-
-    def export_rate(self, start: datetime) -> float: ...
-
-
-def in_cheap_window(moment: time, tariff: Tariff) -> bool:
-    start, end = tariff.cheap_start, tariff.cheap_end
-    if start < end:
-        return start <= moment < end
-    return moment >= start or moment < end
-
-
-class TariffPrices:
-    """A day rate with one cheap import window, and a flat export rate."""
-
-    def __init__(self, tariff: Tariff, tz: str) -> None:
-        self.tariff = tariff
-        self.zone = ZoneInfo(tz)
-
-    def import_rate(self, start: datetime) -> float:
-        local = start.astimezone(self.zone).time()
-        if in_cheap_window(local, self.tariff):
-            return self.tariff.cheap_import_rate
-        return self.tariff.day_import_rate
-
-    def export_rate(self, start: datetime) -> float:
-        return self.tariff.export_rate
+    def rate_at(self, when: datetime, direction: str) -> float: ...
 
 
 @dataclass(frozen=True)
@@ -111,14 +81,14 @@ class CyclePrices:
 
     @classmethod
     def of(cls, book: PriceBook, night: list[datetime], day: list[datetime]) -> "CyclePrices":
-        def rates(starts, fn):
-            return np.array([fn(s) for s in starts], dtype=float)
+        def rates(starts, direction):
+            return np.array([book.rate_at(s, direction) for s in starts], dtype=float)
 
         return cls(
-            night_import=rates(night, book.import_rate),
-            night_export=rates(night, book.export_rate),
-            day_import=rates(day, book.import_rate),
-            day_export=rates(day, book.export_rate),
+            night_import=rates(night, "import"),
+            night_export=rates(night, "export"),
+            day_import=rates(day, "import"),
+            day_export=rates(day, "export"),
         )
 
     @property
@@ -158,25 +128,61 @@ def _half_hours(start: datetime, end: datetime) -> list[datetime]:
     return [start + INTERVAL * i for i in range(int((end - start) / INTERVAL))]
 
 
-def _floor_half_hour(moment: time) -> time:
-    return moment.replace(minute=moment.minute - moment.minute % 30, second=0, microsecond=0)
+# The charge window is looked for between these local times, overnight into the day.
+SEARCH_FROM = time(18, 0)
+SEARCH_TO = time(12, 0)
+# Rates within this of the cheapest count as the same rate.
+RATE_TOLERANCE = 0.01
 
 
-def cycle_for(day: date, tariff: Tariff, tz: str) -> Cycle:
-    """The cheap window that ends on local `day`, and the day until the next window opens.
+def charge_window(day: date, book: PriceBook, tz: str) -> tuple[datetime, datetime] | None:
+    """The overnight charge window ending on local `day`, from the import rates.
 
-    A window crossing midnight (23:30 to 05:30) opens the evening before; one after midnight
-    (00:30 to 04:30) opens on the day, and the next one the night after.
+    It is the longest unbroken run of the cheapest import rate between 18:00 the evening
+    before and noon (the later one on a tie, as charging closer to morning loses less while
+    the battery waits). None when nothing overnight is cheaper than the rest of the day, as
+    on a single-rate tariff, so charging from the grid never pays.
     """
     zone = ZoneInfo(tz)
-    start, end = _floor_half_hour(tariff.cheap_start), _floor_half_hour(tariff.cheap_end)
+    start = datetime.combine(day - timedelta(days=1), SEARCH_FROM, zone).astimezone(timezone.utc)
+    end = datetime.combine(day, SEARCH_TO, zone).astimezone(timezone.utc)
+    starts = _half_hours(start, end)
+    rates = np.array([book.rate_at(s, "import") for s in starts])
+    day_end = datetime.combine(day + timedelta(days=1), time(), zone).astimezone(timezone.utc)
+    later = [book.rate_at(s, "import") for s in _half_hours(end, day_end)]
+    cheapest = rates.min()
+    if cheapest >= max(rates.max(), *later) - RATE_TOLERANCE:
+        return None
+    best: tuple[int, int] | None = None
+    run_start = None
+    for i, cheap in enumerate(list(rates <= cheapest + RATE_TOLERANCE) + [False]):
+        if cheap and run_start is None:
+            run_start = i
+        elif not cheap and run_start is not None:
+            if best is None or i - run_start >= best[1] - best[0]:
+                best = (run_start, i)
+            run_start = None
+    assert best is not None
+    return starts[best[0]], starts[best[1] - 1] + INTERVAL
 
-    def at(d: date, t: time) -> datetime:
-        return datetime.combine(d, t, zone).astimezone(timezone.utc)
 
-    if start > end:
-        return Cycle(at(day - timedelta(days=1), start), at(day, end), at(day, start))
-    return Cycle(at(day, start), at(day, end), at(day + timedelta(days=1), start))
+def cycle_for(day: date, book: PriceBook, tz: str) -> Cycle:
+    """The charge window that ends on local `day`, and the day until the next one opens.
+
+    Without a cheaper overnight rate, the cycle is the local day itself with no charge
+    window.
+    """
+    zone = ZoneInfo(tz)
+    window = charge_window(day, book, tz)
+    following = charge_window(day + timedelta(days=1), book, tz)
+    if window is None:
+        midnight = datetime.combine(day, time(), zone).astimezone(timezone.utc)
+        window = (midnight, midnight)
+    if following is None or following[0] <= window[1]:
+        day_end = datetime.combine(day + timedelta(days=1), time(), zone).astimezone(timezone.utc)
+    else:
+        day_end = following[0]
+    return Cycle(window[0], window[1], day_end)
 
 
 @dataclass(frozen=True)

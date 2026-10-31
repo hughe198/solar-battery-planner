@@ -7,11 +7,12 @@ SYSTEM = {
     "timezone": "Europe/London",
     "battery": {"capacity_kwh": 10.4, "max_charge_kw": 5, "max_discharge_kw": 5},
     "tariff": {
-        "day_import_rate": 27.5,
-        "cheap_import_rate": 7.5,
-        "export_rate": 15,
-        "cheap_start": "23:30",
-        "cheap_end": "05:30",
+        "name": "Octopus Go",
+        "bands": [
+            {"direction": "import", "start": "23:30", "end": "05:30", "rate": 7.5},
+            {"direction": "import", "start": "05:30", "end": "23:30", "rate": 27.5},
+            {"direction": "export", "start": "00:00", "end": "00:00", "rate": 15},
+        ],
     },
     "arrays": [
         {"name": "East", "kwp": 2.4, "tilt_degrees": 35, "azimuth_degrees": 90},
@@ -55,5 +56,5 @@ def test_validation(client):
     assert client.put("/api/system", json=bad, headers=headers).status_code == 422
     bad = {**SYSTEM, "timezone": "Mars/Olympus"}
     assert client.put("/api/system", json=bad, headers=headers).status_code == 422
-    bad = {**SYSTEM, "tariff": {**SYSTEM["tariff"], "cheap_end": "23:30"}}
+    bad = {**SYSTEM, "tariff": {"bands": SYSTEM["tariff"]["bands"][1:]}}
     assert client.put("/api/system", json=bad, headers=headers).status_code == 422

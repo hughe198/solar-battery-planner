@@ -3,7 +3,15 @@ from zoneinfo import available_timezones
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
-from app.models import DataSourceKind, JobStatus, PlanningMode, UsageSource
+from app.models import (
+    DataSourceKind,
+    JobStatus,
+    PlanningMode,
+    RateDays,
+    RateDirection,
+    UsageSource,
+)
+from app.tariffs import coverage_problems
 
 
 class Credentials(BaseModel):
@@ -43,20 +51,50 @@ class SolarArrayIn(BaseModel):
     azimuth_degrees: float = Field(ge=0, lt=360)
 
 
+class TariffBandIn(BaseModel):
+    """A rate for a window of the day, in local time on half-hour boundaries. The window
+    may cross midnight; end 00:00 means midnight and start == end means all day."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    direction: RateDirection
+    days: RateDays = RateDays.all
+    start: time
+    end: time
+    rate: float = Field(ge=-100, le=200, description="Pence per kWh")
+
+    @field_validator("start", "end")
+    @classmethod
+    def on_half_hour(cls, value: time) -> time:
+        if value.minute % 30 or value.second or value.microsecond:
+            raise ValueError("times must be on the hour or half hour")
+        return value.replace(tzinfo=None)
+
+
 class TariffIn(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    day_import_rate: float = Field(ge=0, le=200)
-    cheap_import_rate: float = Field(ge=0, le=200)
-    export_rate: float = Field(ge=0, le=200)
-    cheap_start: time
-    cheap_end: time
+    name: str = Field(default="My tariff", max_length=100)
+    preset: str | None = Field(default=None, max_length=40)
+    standing_charge_pence_per_day: float = Field(default=0, ge=0, le=500)
+    bands: list[TariffBandIn] = Field(min_length=2, max_length=96)
 
     @model_validator(mode="after")
-    def window_not_empty(self) -> "TariffIn":
-        if self.cheap_start == self.cheap_end:
-            raise ValueError("cheap window start and end must differ")
+    def complete(self) -> "TariffIn":
+        problems = coverage_problems(self.bands)
+        if problems:
+            raise ValueError("; ".join(problems))
         return self
+
+
+class TariffPresetOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    description: str
+    standing_charge_pence_per_day: float
+    bands: list[TariffBandIn]
 
 
 class SystemIn(BaseModel):

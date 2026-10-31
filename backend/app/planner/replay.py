@@ -17,16 +17,22 @@ from sqlalchemy.orm import Session
 from app.importers.base import INTERVAL
 from app.models import PlanningMode, System, UsageRecord
 from app.planner.base import Replay, ReplayDay, Review
-from app.planner.optimiser import best_index, candidate_targets, effective_cost, pence, rate
+from app.planner.optimiser import (
+    best_index,
+    candidate_targets,
+    effective_cost,
+    pence,
+    rate,
+)
 from app.planner.simulator import (
     BatterySpec,
     Cycle,
     CyclePrices,
-    TariffPrices,
     costs,
     cycle_for,
     simulate,
 )
+from app.tariffs import TariffSchedule
 
 DEFAULT_DAYS = 30
 MAX_DAYS = 120
@@ -50,7 +56,7 @@ class Replayer:
         self.db = db
         self.system = system
         self.battery = BatterySpec.of(system.battery)
-        self.book = TariffPrices(system.tariff, system.timezone)
+        self.book = TariffSchedule.from_system(system)
         self.zone = ZoneInfo(system.timezone)
 
     def _records(self, days: int) -> dict[datetime, UsageRecord]:
@@ -71,13 +77,14 @@ class Replayer:
         self, day: date, cycle: Cycle, records: dict[datetime, UsageRecord], mode: PlanningMode
     ) -> ReplayDay | None:
         night, daytime = cycle.night_starts(), cycle.day_starts()
-        if not night or not daytime or any(s not in records for s in night + daytime):
+        if not daytime or any(s not in records for s in night + daytime):
             return None
         before = records.get(cycle.night_start - INTERVAL)
-        after = records[night[-1]]
+        # With no charge window (a single-rate tariff) the day starts where the night left it.
+        after = records[night[-1]] if night else before
         if before is None or before.battery_soc_percent is None:
             return None
-        if after.battery_soc_percent is None:
+        if after is None or after.battery_soc_percent is None:
             return None
 
         b = self.battery
@@ -157,7 +164,7 @@ class Replayer:
             first_day = min(records).astimezone(self.zone).date()
             day = latest_day
             while day >= first_day and len(replayed) < days + TYPICAL_DAYS:
-                cycle = cycle_for(day, self.system.tariff, self.system.timezone)
+                cycle = cycle_for(day, self.book, self.system.timezone)
                 result = self._replay_day(day, cycle, records, mode)
                 if result is not None:
                     replayed.append(result)
@@ -178,7 +185,7 @@ class Replayer:
         if shown:
             latest = shown[-1]
             earlier = [d for d in replayed if d.day < latest.day][-TYPICAL_DAYS:]
-            cycle = cycle_for(latest.day, self.system.tariff, self.system.timezone)
+            cycle = cycle_for(latest.day, self.book, self.system.timezone)
             review = Review(latest, self.comments(latest, earlier, cycle, records, mode))
         return Replay(
             mode=mode,
@@ -214,11 +221,17 @@ class Replayer:
         lines = [usage + "."]
 
         added = d.soc_after_charge_percent - d.soc_before_percent
+        night_slots = cycle.night_starts()
         window = (
             f"{cycle.night_start.astimezone(self.zone):%H:%M}–"
             f"{cycle.night_end.astimezone(self.zone):%H:%M}"
         )
-        if added > 0.5:
+        if not night_slots:
+            lines.append(
+                "Your tariff has no cheaper overnight rate, so there was no grid charge to judge; "
+                f"the battery started the day at {d.soc_after_charge_percent:.0f}%."
+            )
+        elif added > 0.5:
             lines.append(
                 f"The battery went into the cheap window ({window}) at "
                 f"{d.soc_before_percent:.0f}% and was charged to {d.soc_after_charge_percent:.0f}%."

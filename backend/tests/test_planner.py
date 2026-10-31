@@ -1,4 +1,4 @@
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
 import numpy as np
 import pytest
@@ -6,11 +6,34 @@ import pytest
 from app.forecasting.base import DayForecast, IntervalForecast, Range
 from app.forecasting.service import day_half_hours
 from app.importers.base import INTERVAL
-from app.models import Battery, PlanningMode, System, Tariff
+from app.models import (
+    Battery,
+    PlanningMode,
+    RateDays,
+    RateDirection,
+    System,
+    Tariff,
+    TariffBand,
+)
 from app.planner.optimiser import best_index, candidate_targets, plan
 from app.planner.simulator import BatterySpec, CyclePrices, costs, cycle_for, simulate
+from app.tariffs import TariffSchedule
 
 DAY = date(2026, 6, 2)
+
+
+def band(direction, start, end, rate):
+    return TariffBand(
+        direction=RateDirection(direction),
+        days=RateDays.all,
+        start=time.fromisoformat(start),
+        end=time.fromisoformat(end),
+        rate=rate,
+    )
+
+
+def schedule(*bands, tz="UTC"):
+    return TariffSchedule.from_bands(bands, tz)
 
 
 def make_system(export_rate=4.0, mode=PlanningMode.maximise_own_usage, tz="UTC") -> System:
@@ -28,11 +51,13 @@ def make_system(export_rate=4.0, mode=PlanningMode.maximise_own_usage, tz="UTC")
             round_trip_efficiency_percent=100,
         ),
         tariff=Tariff(
-            day_import_rate=30,
-            cheap_import_rate=7.5,
-            export_rate=export_rate,
-            cheap_start=time(23, 30),
-            cheap_end=time(5, 30),
+            name="Test",
+            standing_charge_pence_per_day=0,
+            bands=[
+                band("import", "23:30", "05:30", 7.5),
+                band("import", "05:30", "23:30", 30),
+                band("export", "00:00", "00:00", export_rate),
+            ],
         ),
         arrays=[],
     )
@@ -72,7 +97,12 @@ def bright(k):
 
 
 def test_cycle_crossing_midnight_handles_clock_change():
-    tariff = Tariff(cheap_start=time(23, 30), cheap_end=time(5, 30))
+    tariff = schedule(
+        band("import", "23:30", "05:30", 7.5),
+        band("import", "05:30", "23:30", 30),
+        band("export", "00:00", "00:00", 4),
+        tz="Europe/London",
+    )
     cycle = cycle_for(date(2026, 3, 29), tariff, "Europe/London")  # clocks go forward at 01:00
     assert cycle.night_start == datetime(2026, 3, 28, 23, 30, tzinfo=timezone.utc)
     assert cycle.night_end == datetime(2026, 3, 29, 4, 30, tzinfo=timezone.utc)
@@ -81,7 +111,11 @@ def test_cycle_crossing_midnight_handles_clock_change():
 
 
 def test_cycle_after_midnight():
-    tariff = Tariff(cheap_start=time(0, 30), cheap_end=time(4, 30))
+    tariff = schedule(
+        band("import", "00:30", "04:30", 8.5),
+        band("import", "04:30", "00:30", 26),
+        band("export", "00:00", "00:00", 4),
+    )
     cycle = cycle_for(DAY, tariff, "UTC")
     assert cycle.night_start == datetime(2026, 6, 2, 0, 30, tzinfo=timezone.utc)
     assert cycle.day_end == datetime(2026, 6, 3, 0, 30, tzinfo=timezone.utc)
@@ -188,24 +222,21 @@ def test_already_charged_battery_needs_nothing():
     assert own.reasons[0].startswith("No overnight charge")
 
 
-class PeakPrices:
-    """Four import rates and two export rates through the day, as on many time-of-use tariffs."""
-
-    def import_rate(self, start):
-        hour = start.hour
-        if hour < 5 or hour == 23:
-            return 7.0
-        if 16 <= hour < 19:
-            return 40.0
-        return 25.0 if hour < 12 else 22.0
-
-    def export_rate(self, start):
-        return 25.0 if 16 <= start.hour < 19 else 5.0
+PEAK = schedule(
+    band("import", "23:00", "05:00", 7.0),
+    band("import", "05:00", "12:00", 25.0),
+    band("import", "12:00", "16:00", 22.0),
+    band("import", "16:00", "19:00", 40.0),
+    band("import", "19:00", "23:00", 22.0),
+    band("export", "16:00", "19:00", 25.0),
+    band("export", "19:00", "16:00", 5.0),
+)
 
 
 def test_costs_follow_a_multi_rate_price_book():
-    cycle = cycle_for(DAY, Tariff(cheap_start=time(23, 0), cheap_end=time(5, 0)), "UTC")
-    prices = CyclePrices.of(PeakPrices(), cycle.night_starts(), cycle.day_starts())
+    cycle = cycle_for(DAY, PEAK, "UTC")
+    assert cycle.night_start == datetime(2026, 6, 1, 23, 0, tzinfo=timezone.utc)
+    prices = CyclePrices.of(PEAK, cycle.night_starts(), cycle.day_starts())
     assert prices.charge == 7.0
     battery = BatterySpec.of(make_system().battery)
     day = len(cycle.day_starts())
@@ -214,5 +245,30 @@ def test_costs_follow_a_multi_rate_price_book():
         battery, 1.0, np.array([1.0]), np.full(12, 0.2), np.zeros(12), load, np.zeros(day)
     )
     c = costs(sim, battery, prices, 1.0)
-    expected_day = sum(0.5 * PeakPrices().import_rate(s) for s in cycle.day_starts())
+    expected_day = sum(0.5 * PEAK.rate_at(s, "import") for s in cycle.day_starts())
     assert c.import_cost[0] == pytest.approx(12 * 0.2 * 7.0 + expected_day)
+
+
+def test_charge_window_follows_the_rates():
+    # Cosy-style: two cheap overnight runs; the longer one, nearer morning, is used.
+    cosy = schedule(
+        band("import", "04:00", "07:00", 13.5),
+        band("import", "07:00", "13:00", 27),
+        band("import", "13:00", "16:00", 13.5),
+        band("import", "16:00", "19:00", 40),
+        band("import", "19:00", "22:00", 27),
+        band("import", "22:00", "00:00", 13.5),
+        band("import", "00:00", "04:00", 27),
+        band("export", "00:00", "00:00", 15),
+    )
+    cycle = cycle_for(DAY, cosy, "UTC")
+    assert cycle.night_start == datetime(2026, 6, 2, 4, 0, tzinfo=timezone.utc)
+    assert cycle.night_end == datetime(2026, 6, 2, 7, 0, tzinfo=timezone.utc)
+    assert cycle.day_end == datetime(2026, 6, 3, 4, 0, tzinfo=timezone.utc)
+
+
+def test_single_rate_tariff_has_no_charge_window():
+    flat = schedule(band("import", "00:00", "00:00", 25), band("export", "00:00", "00:00", 15))
+    cycle = cycle_for(DAY, flat, "UTC")
+    assert cycle.window == timedelta(0)
+    assert len(cycle.day_starts()) == 48

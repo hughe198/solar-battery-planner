@@ -168,3 +168,26 @@ def test_history_summarises_the_last_week(client, headers):
     assert cheap and all(p["start"][11:16] >= "23:30" or p["start"][11:16] < "05:30" for p in cheap)
     # Overnight charging is bought at the cheap rate.
     assert last["import_cost_pence"] < last["import_kwh"] * 27.5
+
+
+def test_plan_and_replay_on_a_single_rate_tariff(client, headers):
+    flat = {
+        **UTC_SYSTEM,
+        "tariff": {
+            "name": "Flat",
+            "bands": [
+                {"direction": "import", "start": "00:00", "end": "00:00", "rate": 25},
+                {"direction": "export", "start": "00:00", "end": "00:00", "rate": 15},
+            ],
+        },
+    }
+    assert client.put("/api/system", json=flat, headers=headers).status_code == 200
+    plan = client.get("/api/plan?start_soc_percent=30", headers=headers).json()
+    own = plan["recommendations"][0]
+    assert own["target_soc_percent"] == 30
+    assert own["charge_kwh"] == 0
+    assert not any(p["cheap"] for p in plan["timeline"])
+    upload(client, headers, metered_days(charge_to_percent=10))
+    body = client.get("/api/plan/replay", headers=headers).json()
+    assert body["days"]
+    assert "no cheaper overnight rate" in " ".join(body["review"]["comments"])

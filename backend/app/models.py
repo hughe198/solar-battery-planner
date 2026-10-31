@@ -123,20 +123,60 @@ class SolarArray(Base):
     system: Mapped[System] = relationship(back_populates="arrays")
 
 
+class RateDays(str, enum.Enum):
+    all = "all"
+    weekdays = "weekdays"  # Monday to Friday
+    weekends = "weekends"  # Saturday and Sunday
+
+
+class RateDirection(str, enum.Enum):
+    import_ = "import"
+    export = "export"
+
+
 class Tariff(Base):
+    """An import and export tariff described as time-of-day rate bands.
+
+    Use `app.tariffs.TariffSchedule` to price a moment or a half hour rather than reading
+    the bands directly.
+    """
+
     __tablename__ = "tariffs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     system_id: Mapped[int] = mapped_column(ForeignKey("systems.id"), unique=True)
-    # All rates in pence per kWh.
-    day_import_rate: Mapped[float] = mapped_column(Float)
-    cheap_import_rate: Mapped[float] = mapped_column(Float)
-    export_rate: Mapped[float] = mapped_column(Float)
-    # Local time; the window may cross midnight (e.g. 23:30 to 05:30).
-    cheap_start: Mapped[time] = mapped_column(Time)
-    cheap_end: Mapped[time] = mapped_column(Time)
+    name: Mapped[str] = mapped_column(String(100), default="My tariff")
+    # The preset the user started from, if any (see app.tariffs.PRESETS).
+    preset: Mapped[str | None] = mapped_column(String(40), default=None)
+    standing_charge_pence_per_day: Mapped[float] = mapped_column(Float, default=0)
 
     system: Mapped[System] = relationship(back_populates="tariff")
+    bands: Mapped[list["TariffBand"]] = relationship(
+        back_populates="tariff",
+        cascade="all, delete-orphan",
+        order_by="TariffBand.id",
+    )
+
+
+class TariffBand(Base):
+    """One rate for a window of the day. Times are local wall-clock time in the system's
+    zone, on half-hour boundaries; the window may cross midnight and end 00:00 means
+    midnight. For each direction, the bands for any day cover all 24 hours exactly once."""
+
+    __tablename__ = "tariff_bands"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tariff_id: Mapped[int] = mapped_column(
+        ForeignKey("tariffs.id", ondelete="CASCADE"), index=True
+    )
+    direction: Mapped[RateDirection] = mapped_column(Enum(RateDirection))
+    days: Mapped[RateDays] = mapped_column(Enum(RateDays), default=RateDays.all)
+    start: Mapped[time] = mapped_column(Time)
+    end: Mapped[time] = mapped_column(Time)
+    # Pence per kWh.
+    rate: Mapped[float] = mapped_column(Float)
+
+    tariff: Mapped[Tariff] = relationship(back_populates="bands")
 
 
 class FoxEssConnection(Base):

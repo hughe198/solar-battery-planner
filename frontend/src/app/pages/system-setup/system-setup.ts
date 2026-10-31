@@ -4,6 +4,7 @@ import { Router, RouterLink } from '@angular/router';
 import { errorMessage } from '../../core/errors';
 import { SolarArray, SystemConfig } from '../../core/models';
 import { SystemService } from '../../core/system.service';
+import { TariffEditor, patchTariff, tariffForm, tariffValue } from './tariff-editor';
 
 const COMPASS = [
   { label: 'North', degrees: 0 },
@@ -18,7 +19,7 @@ const COMPASS = [
 
 @Component({
   selector: 'app-system-setup',
-  imports: [ReactiveFormsModule, RouterLink],
+  imports: [ReactiveFormsModule, RouterLink, TariffEditor],
   templateUrl: './system-setup.html',
 })
 export class SystemSetup implements OnInit {
@@ -49,13 +50,7 @@ export class SystemSetup implements OnInit {
         [Validators.required, Validators.min(51), Validators.max(100)],
       ],
     }),
-    tariff: this.fb.group({
-      day_import_rate: [27, [Validators.required, Validators.min(0)]],
-      cheap_import_rate: [7.5, [Validators.required, Validators.min(0)]],
-      export_rate: [15, [Validators.required, Validators.min(0)]],
-      cheap_start: ['23:30', Validators.required],
-      cheap_end: ['05:30', Validators.required],
-    }),
+    tariff: tariffForm(this.fb),
     arrays: this.fb.array([this.arrayGroup()]),
   });
 
@@ -65,14 +60,9 @@ export class SystemSetup implements OnInit {
         this.isNew.set(false);
         this.form.controls.arrays.clear();
         system.arrays.forEach((a) => this.form.controls.arrays.push(this.arrayGroup(a)));
-        this.form.patchValue({
-          ...system,
-          tariff: {
-            ...system.tariff,
-            cheap_start: system.tariff.cheap_start.slice(0, 5),
-            cheap_end: system.tariff.cheap_end.slice(0, 5),
-          },
-        });
+        const { tariff, ...rest } = system;
+        this.form.patchValue(rest);
+        patchTariff(this.fb, this.form.controls.tariff, tariff);
       },
       // 404 means no system yet; keep the defaults.
       error: () => undefined,
@@ -118,7 +108,8 @@ export class SystemSetup implements OnInit {
     }
     this.busy.set(true);
     this.error.set(null);
-    this.systems.save(this.form.getRawValue()).subscribe({
+    const system = { ...this.form.getRawValue(), tariff: tariffValue(this.form.controls.tariff) };
+    this.systems.save(system).subscribe({
       next: () => this.router.navigateByUrl('/'),
       error: (err) => {
         this.error.set(errorMessage(err));

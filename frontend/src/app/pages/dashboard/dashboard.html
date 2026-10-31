@@ -84,18 +84,24 @@
       <strong>{{ totalKwp() | number: '1.0-2' }} kWp</strong>
       <span class="muted">{{ s.arrays.length }} array{{ s.arrays.length === 1 ? '' : 's' }}</span>
     </div>
-    <div class="card tile">
-      <span class="muted">Cheap import</span>
-      <strong>{{ s.tariff.cheap_import_rate | number: '1.0-2' }}p</strong>
-      <span class="muted"
-        >{{ s.tariff.cheap_start.slice(0, 5) }}–{{ s.tariff.cheap_end.slice(0, 5) }}</span
-      >
-    </div>
-    <div class="card tile">
-      <span class="muted">Export</span>
-      <strong>{{ s.tariff.export_rate | number: '1.0-2' }}p</strong>
-      <span class="muted">day import {{ s.tariff.day_import_rate | number: '1.0-2' }}p</span>
-    </div>
+    @if (cheapest(); as c) {
+      <div class="card tile">
+        <span class="muted">Cheapest import</span>
+        <strong>{{ c.rate | number: '1.0-2' }}p</strong>
+        <span class="muted">{{ c.start.slice(0, 5) }}–{{ c.end.slice(0, 5) }}</span>
+      </div>
+    }
+    @if (exportRange(); as e) {
+      <div class="card tile">
+        <span class="muted">Export</span>
+        <strong
+          >{{ e.min | number: '1.0-2' }}p{{
+            e.max > e.min ? '–' + (e.max | number: '1.0-2') + 'p' : ''
+          }}</strong
+        >
+        <span class="muted">{{ s.tariff.name }}</span>
+      </div>
+    }
   </div>
   <p><a routerLink="/data">Your data</a> · <a routerLink="/setup">Edit system</a></p>
 } @else {

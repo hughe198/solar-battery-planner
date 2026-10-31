@@ -6,6 +6,7 @@ import { errorMessage } from '../../core/errors';
 import { ChargePlan, History } from '../../core/models';
 import { PlanService, formatPence } from '../../core/plan.service';
 import { SystemService } from '../../core/system.service';
+import { cheapestImport, rateRange } from '../../core/tariff';
 import { FlowChart } from '../../shared/flow-chart';
 import { WeekChart } from '../../shared/week-chart';
 import { MODE_LABELS } from '../plan/plan';
@@ -27,6 +28,8 @@ export class Dashboard {
   readonly totalKwp = computed(() =>
     (this.system()?.arrays ?? []).reduce((sum, a) => sum + a.kwp, 0),
   );
+  readonly cheapest = computed(() => cheapestImport(this.system()?.tariff.bands ?? []));
+  readonly exportRange = computed(() => rateRange(this.system()?.tariff.bands ?? [], 'export'));
   readonly usableKwh = computed(() => {
     const battery = this.system()?.battery;
     return battery ? (battery.capacity_kwh * (100 - battery.min_soc_percent)) / 100 : 0;

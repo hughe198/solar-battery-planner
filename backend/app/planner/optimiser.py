@@ -25,17 +25,23 @@ import numpy as np
 from app.forecasting.base import DayForecast, IntervalForecast
 from app.importers.base import INTERVAL
 from app.models import PlanningMode, System
-from app.planner.base import Candidate, ChargePlan, Outcome, Recommendation, TimelinePoint
+from app.planner.base import (
+    Candidate,
+    ChargePlan,
+    Outcome,
+    Recommendation,
+    TimelinePoint,
+)
 from app.planner.simulator import (
     BatterySpec,
     Costs,
     CyclePrices,
     Simulation,
-    TariffPrices,
     costs,
     cycle_for,
     simulate,
 )
+from app.tariffs import TariffSchedule
 
 SCENARIO_WEIGHTS = {"expected": 0.5, "dull": 0.25, "bright": 0.25}
 # Don't pay for charge that saves less than this on average.
@@ -271,16 +277,15 @@ class Explainer:
 
 def plan(system: System, forecast: DayForecast, start_soc_percent: float) -> ChargePlan:
     battery = BatterySpec.of(system.battery)
-    cycle = cycle_for(forecast.day, system.tariff, system.timezone)
+    schedule = TariffSchedule.from_system(system)
+    cycle = cycle_for(forecast.day, schedule, system.timezone)
     by_start = {i.start: i for i in forecast.intervals}
     night = [by_start[s] for s in cycle.night_starts() if s in by_start]
     day = [by_start[s] for s in cycle.day_starts() if s in by_start]
     if not day:
         raise ValueError("The forecast doesn't cover the day after the cheap window")
     day_starts = [i.start for i in day]
-    prices = CyclePrices.of(
-        TariffPrices(system.tariff, system.timezone), [i.start for i in night], day_starts
-    )
+    prices = CyclePrices.of(schedule, [i.start for i in night], day_starts)
 
     start_kwh = float(np.clip(battery.kwh(start_soc_percent), 0, battery.capacity_kwh))
     max_kwh = battery.max_target_kwh(start_kwh, cycle.window)
@@ -335,7 +340,7 @@ def plan(system: System, forecast: DayForecast, start_soc_percent: float) -> Cha
     # The charge is shown spread evenly across the window, as most inverters schedule it.
     window = cycle.night_starts()
     added = targets[chosen] - start_kwh
-    per_slot = float(sim.charge_grid_kwh[chosen]) / len(window)
+    per_slot = float(sim.charge_grid_kwh[chosen]) / max(len(window), 1)
 
     def night_point(i: IntervalForecast) -> TimelinePoint:
         done = (window.index(i.start) + 1) / len(window)

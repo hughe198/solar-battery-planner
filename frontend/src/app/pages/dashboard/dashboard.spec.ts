@@ -20,11 +20,14 @@ const SYSTEM: SystemConfig = {
     round_trip_efficiency_percent: 90,
   },
   tariff: {
-    day_import_rate: 27.5,
-    cheap_import_rate: 7.5,
-    export_rate: 15,
-    cheap_start: '23:30',
-    cheap_end: '05:30',
+    name: 'Octopus Go',
+    preset: null,
+    standing_charge_pence_per_day: 53,
+    bands: [
+      { direction: 'import', days: 'all', start: '23:30', end: '05:30', rate: 7.5 },
+      { direction: 'import', days: 'all', start: '05:30', end: '23:30', rate: 27.5 },
+      { direction: 'export', days: 'all', start: '00:00', end: '00:00', rate: 15 },
+    ],
   },
   arrays: [{ name: 'South', kwp: 4, tilt_degrees: 35, azimuth_degrees: 180 }],
 };
