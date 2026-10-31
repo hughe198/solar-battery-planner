@@ -89,9 +89,64 @@ deployment use Postgres (`SBP_DATABASE_URL=postgresql+psycopg://…` and `pip in
 Tables are created on startup. Migrations (Alembic) will be added once the schema starts
 changing with real data in it.
 
+## Deploying from Windows
+
+`deploy\deploy.ps1` deploys from a Windows PC to an Ubuntu 24.04 server over SSH. It needs only
+what Windows ships (OpenSSH `ssh`/`scp`, `tar`) plus Git and Node 22, and does the manual steps
+below for you apart from nginx.
+
+1. Copy `deploy\deploy.config.example.psd1` to `deploy\deploy.config.psd1` (git ignores it) and
+   set `SshTarget` (`user@host` or an alias from `~\.ssh\config`) and `PublicUrl`.
+2. If Windows refuses to run scripts: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+3. Run it from the repo root:
+
+   ```powershell
+   .\deploy\deploy.ps1 -Status     # what's set up on the server, which release is live
+   .\deploy\deploy.ps1 -Setup      # first time: packages, user, Postgres, settings, service, then deploy
+   .\deploy\deploy.ps1             # test, build, upload, switch, health-check
+   .\deploy\deploy.ps1 -SkipTests
+   .\deploy\deploy.ps1 -Rollback   # back to the previous release (-Release <name> for another)
+   ```
+
+Each run asks for your SSH key passphrase twice (upload, then commands) and your sudo password
+once. To type the passphrase once per login, start the "OpenSSH Authentication Agent" Windows
+service and run `ssh-add`.
+
+**What it does.** Locally: refuses uncommitted changes (`-AllowDirty` deploys the last commit
+anyway), runs the backend and frontend tests, builds the frontend, and packages the committed
+`backend/` with the built site. On the server (`deploy/remote.sh`, run with sudo), each release
+gets its own folder and a `current` link is switched to it:
+
+```
+/opt/solar-battery-planner/
+  releases/<date>-<time>-<commit>/   backend/ frontend/ VERSION   (root-owned, read-only to the app)
+  current -> releases/...            what systemd, cron and nginx use
+  venvs/<hash>/                      reused while requirements.txt is unchanged
+  shared/.env                        settings: written once by setup_env.py, never by a deploy
+  shared/backups/                    a pg_dump before every deploy (last 10 kept)
+  deploys.log
+```
+
+Before switching, the new release must load `.env` (unknown keys fail here, while the old
+release is still serving) and reach the database. After the restart it must answer
+`/api/health`, which also queries the database, within 40 seconds; otherwise `current` goes back
+to the previous release and the last log lines are shown. The database isn't rolled back
+automatically: the app updates tables on startup, so the script prints the restore command for
+the backup it just took. The last five releases are kept.
+
+**`-Setup`** checks each of steps 1 to 5 below and does only what's missing: installs
+`python3-venv` and `postgresql`, creates the `solar` user, folders, Postgres role and database,
+writes `shared/.env` by running `setup_env.py` (database URL and origins filled in; it copies the
+`.env` from an older manual install at `/opt/solar-battery-planner/app` instead, if there is
+one), writes the systemd unit and adds the cron line if `NightlyCron` is on. Then it deploys. It
+is safe to run again.
+
+**nginx** is yours to set up as in step 7, with `root /opt/solar-battery-planner/current/frontend;`.
+After each deploy the script checks `PublicUrl/api/health` through it and warns if that fails.
+
 ## Deploying on Ubuntu
 
-A single-server setup: uvicorn behind nginx under systemd, Postgres for the database, and nginx
+The manual steps, which `deploy.ps1 -Setup` follows. A single-server setup: uvicorn behind nginx under systemd, Postgres for the database, and nginx
 serving the built frontend with `/api` passed to the backend, so browser and API share one
 origin. Ubuntu 24.04 ships Python 3.12, which is enough; the paths and the `solar` user below are
 examples.

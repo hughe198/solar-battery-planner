@@ -1,13 +1,16 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
 from app import migrations, models  # noqa: F401  (registers tables)
 from app.api import auth, control, forecast, history, imports, plan, system
 from app.config import settings
 from app.control import nightly
-from app.database import Base, SessionLocal, engine
+from app.database import Base, SessionLocal, engine, get_db
 
 
 @asynccontextmanager
@@ -39,5 +42,10 @@ app.include_router(control.router)
 
 
 @app.get("/api/health")
-def health() -> dict[str, str]:
+def health(db: Session = Depends(get_db)) -> dict[str, str]:
+    """Up and able to reach the database. deploy/remote.sh rolls back a release that fails this."""
+    try:
+        db.execute(text("SELECT 1"))
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
     return {"status": "ok"}

@@ -15,3 +15,6 @@ dist/
 .vscode/
 .idea/
 .DS_Store
+
+# Deploy settings (server address, paths)
+deploy/deploy.config.psd1
