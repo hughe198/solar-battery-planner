@@ -336,3 +336,74 @@ table.backtest {
     }
   }
 }
+
+.tariff {
+  h3 {
+    font-size: 1rem;
+    margin: 0.5rem 0;
+  }
+
+  .hint {
+    font-size: 0.85rem;
+    margin: 0 0 0.5rem;
+  }
+
+  .band > label {
+    flex: 1 1 6rem;
+  }
+
+  .band > button.link {
+    margin-bottom: 1rem;
+  }
+}
+
+.rate-section {
+  border-bottom: 1px dashed var(--border);
+  padding-bottom: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.timeline {
+  margin-top: 0.75rem;
+  font-size: 0.8rem;
+}
+
+.timeline-row {
+  display: grid;
+  grid-template-columns: 5rem 1fr;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 2px;
+}
+
+.timeline .cells {
+  display: grid;
+  grid-template-columns: repeat(48, 1fr);
+  height: 1.1rem;
+  border-radius: 3px;
+  overflow: hidden;
+
+  span {
+    background: var(--accent);
+  }
+
+  &.export span {
+    background: var(--load);
+  }
+
+  span.gap {
+    background: repeating-linear-gradient(
+      45deg,
+      var(--error),
+      var(--error) 2px,
+      transparent 2px,
+      transparent 4px
+    );
+  }
+}
+
+.timeline-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-left: 5.5rem;
+}

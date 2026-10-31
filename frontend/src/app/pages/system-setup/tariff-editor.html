@@ -1,0 +1,93 @@
+<div class="tariff" [formGroup]="form()">
+  @if (presets().length) {
+    <div class="row">
+      <label>
+        Start from a common tariff
+        <select [value]="chosenPreset()" (change)="chosenPreset.set($any($event.target).value)">
+          <option value="">Choose…</option>
+          @for (p of presets(); track p.id) {
+            <option [value]="p.id">{{ p.name }}</option>
+          }
+        </select>
+      </label>
+      <button type="button" class="secondary" (click)="applyPreset()" [disabled]="!chosenPreset()">
+        Use this tariff
+      </button>
+    </div>
+    @if (presetDescription()) {
+      <p class="muted hint">
+        {{ presetDescription() }} Prices are examples and vary by region, so replace them with the
+        rates on your bill.
+      </p>
+    }
+  }
+
+  <div class="row">
+    <label>Tariff name <input formControlName="name" /></label>
+    <label>
+      Standing charge (p/day)
+      <input type="number" step="0.01" formControlName="standing_charge_pence_per_day" />
+    </label>
+  </div>
+
+  @for (d of directions; track d.key) {
+    <div class="rate-section" [formArrayName]="d.key">
+      <h3>{{ d.label }}</h3>
+      @for (band of bands(d.key).controls; track band; let i = $index) {
+        <div class="band row" [formGroupName]="i">
+          <label>From <input type="time" step="1800" formControlName="start" /></label>
+          <label>To <input type="time" step="1800" formControlName="end" /></label>
+          <label>p/kWh <input type="number" step="0.01" formControlName="rate" /></label>
+          <label>
+            Applies
+            <select formControlName="days">
+              <option value="all">Every day</option>
+              <option value="weekdays">Mon–Fri</option>
+              <option value="weekends">Sat–Sun</option>
+            </select>
+          </label>
+          <button
+            type="button"
+            class="link"
+            (click)="removeBand(d.key, i)"
+            [attr.aria-label]="'Remove ' + d.key + ' rate ' + (i + 1)"
+          >
+            Remove
+          </button>
+        </div>
+      }
+      <button type="button" class="secondary" (click)="addBand(d.key)">Add a rate</button>
+
+      <div class="timeline" [attr.aria-label]="d.key + ' rates through the day'">
+        @for (row of timelines()[d.key]; track row.label) {
+          <div class="timeline-row">
+            <span class="muted">{{ row.label }}</span>
+            <div class="cells" [class.export]="d.key === 'export'">
+              @for (cell of row.cells; track $index) {
+                <span
+                  [class.gap]="cell.shade === null"
+                  [style.opacity]="cell.shade ?? 1"
+                  [title]="cell.title"
+                ></span>
+              }
+            </div>
+          </div>
+        }
+        <div class="timeline-axis muted">
+          @for (h of hours; track h) {
+            <span>{{ h | number: '2.0-0' }}:00</span>
+          }
+        </div>
+      </div>
+    </div>
+  }
+
+  <p class="muted hint">
+    Use your local clock times, on the hour or half hour. A rate can run past midnight (for example
+    23:30 to 05:30), and From and To both 00:00 means all day. Darker means dearer; hover a slot to
+    see its rate.
+  </p>
+  @for (p of problems(); track p) {
+    <p class="field-error">{{ p }}</p>
+  }
+</div>

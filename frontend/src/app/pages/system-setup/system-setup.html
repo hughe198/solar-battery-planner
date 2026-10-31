@@ -75,24 +75,9 @@
     <button type="button" class="secondary" (click)="addArray()">Add another array</button>
   </fieldset>
 
-  <fieldset class="card" formGroupName="tariff">
+  <fieldset class="card">
     <legend>Tariff</legend>
-    <div class="row">
-      <label
-        >Day import (p/kWh) <input type="number" step="0.01" formControlName="day_import_rate"
-      /></label>
-      <label>
-        Cheap import (p/kWh)
-        <input type="number" step="0.01" formControlName="cheap_import_rate" />
-      </label>
-      <label
-        >Export (p/kWh) <input type="number" step="0.01" formControlName="export_rate"
-      /></label>
-    </div>
-    <div class="row">
-      <label>Cheap window starts <input type="time" formControlName="cheap_start" /></label>
-      <label>Cheap window ends <input type="time" formControlName="cheap_end" /></label>
-    </div>
+    <app-tariff-editor [form]="form.controls.tariff" />
   </fieldset>
 
   <fieldset class="card">
