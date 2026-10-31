@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     # (the archive lags real time by several days).
     open_meteo_archive_url: str = "https://archive-api.open-meteo.com/v1/archive"
     open_meteo_recent_url: str = "https://historical-forecast-api.open-meteo.com/v1/forecast"
+    open_meteo_forecast_url: str = "https://api.open-meteo.com/v1/forecast"
 
 
 settings = Settings()

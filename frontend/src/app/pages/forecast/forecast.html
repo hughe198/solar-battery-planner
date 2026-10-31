@@ -1,0 +1,169 @@
+<h1>Forecast</h1>
+<p class="muted">
+  Predicted household usage and solar generation for each half hour, from the weather forecast for
+  your location and what the model has learned from your history.
+</p>
+
+<label class="day-picker">
+  Day
+  <input #day type="date" [value]="forecast()?.day ?? ''" (change)="load(day.value)" />
+</label>
+
+@if (error()) {
+  <p class="form-error" role="alert">{{ error() }}</p>
+}
+
+@if (forecast(); as f) {
+  <h2>{{ dayLabel(f.day) }}</h2>
+  <div class="tiles">
+    <div class="card tile">
+      <span class="muted">Usage</span>
+      <strong>{{ f.load.expected | number: '1.1-1' }} kWh</strong>
+      <span class="muted"
+        >likely {{ f.load.low | number: '1.1-1' }}–{{ f.load.high | number: '1.1-1' }} kWh</span
+      >
+    </div>
+    <div class="card tile">
+      <span class="muted">Solar</span>
+      <strong>{{ f.solar.expected | number: '1.1-1' }} kWh</strong>
+      <span class="muted"
+        >likely {{ f.solar.low | number: '1.1-1' }}–{{ f.solar.high | number: '1.1-1' }} kWh</span
+      >
+    </div>
+    <div class="card tile">
+      <span class="muted">History used</span>
+      <strong>{{ f.history_days }} days</strong>
+      <span class="muted"><a routerLink="/data">Import more</a></span>
+    </div>
+  </div>
+
+  <section class="card">
+    <h2>Half-hourly forecast</h2>
+    <svg
+      class="forecast-chart"
+      [attr.viewBox]="'0 0 ' + width + ' ' + height"
+      role="img"
+      [attr.aria-label]="
+        'Predicted usage and solar generation per half hour for ' + dayLabel(f.day)
+      "
+    >
+      @for (tick of yTicks(); track tick.kwh) {
+        <line
+          class="grid"
+          [attr.x1]="pad.left"
+          [attr.x2]="width - pad.right"
+          [attr.y1]="tick.y"
+          [attr.y2]="tick.y"
+        />
+        <text class="axis" [attr.x]="pad.left - 6" [attr.y]="tick.y + 4" text-anchor="end">
+          {{ tick.kwh | number: '1.0-1' }}
+        </text>
+      }
+      @for (tick of xTicks(); track tick.x) {
+        <text class="axis" [attr.x]="tick.x" [attr.y]="height - 6" text-anchor="middle">
+          {{ tick.label }}
+        </text>
+      }
+      <path class="band solar" [attr.d]="solarBand()" />
+      <path class="band load" [attr.d]="loadBand()" />
+      <path class="series solar" [attr.d]="solarLine()" />
+      <path class="series load" [attr.d]="loadLine()" />
+    </svg>
+    <p class="legend muted">
+      <span class="key load"></span> Usage <span class="key solar"></span> Solar · kWh per half
+      hour, local time. Shaded areas show the likely range (10th–90th percentile).
+    </p>
+  </section>
+
+  <section class="card">
+    <h2>How this was predicted</h2>
+    <ul class="plain">
+      <li><strong>Usage:</strong> {{ methodLabels[f.load_method] }}.</li>
+      <li><strong>Solar:</strong> {{ methodLabels[f.solar_method] }}.</li>
+      @if (system(); as s) {
+        @for (array of s.arrays; track $index) {
+          @if (f.array_performance[$index] !== undefined) {
+            <li class="muted">
+              {{ array.name }} ({{ array.kwp }} kWp) delivers about
+              {{ f.array_performance[$index] * 100 | number: '1.0-0' }}% of its ideal output.
+            </li>
+          }
+        }
+      }
+    </ul>
+  </section>
+
+  <section class="card">
+    <h2>Recent accuracy</h2>
+    @if (f.backtest; as b) {
+      <p>
+        Trained on {{ b.train_days }} days, then asked to predict the {{ b.test_days }} days after
+        them using the weather that actually happened.
+      </p>
+      <div class="tiles">
+        <div class="tile">
+          <span class="muted">Daily usage error</span>
+          <strong>{{ b.load_error_percent | number: '1.0-0' }}%</strong>
+          <span class="muted">±{{ b.load_mae_kwh | number: '1.1-1' }} kWh a day</span>
+        </div>
+        @if (b.solar_error_percent !== null) {
+          <div class="tile">
+            <span class="muted">Daily solar error</span>
+            <strong>{{ b.solar_error_percent | number: '1.0-0' }}%</strong>
+            <span class="muted">
+              ±{{ b.solar_mae_kwh | number: '1.1-1' }} kWh a day
+              @if (b.solar_physics_error_percent !== null) {
+                (panel physics alone: {{ b.solar_physics_error_percent | number: '1.0-0' }}%)
+              }
+            </span>
+          </div>
+        }
+      </div>
+      <table class="backtest">
+        <thead>
+          <tr>
+            <th>Day</th>
+            <th>Usage: actual / predicted</th>
+            <th>Solar: actual / predicted</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (d of b.days; track d.day) {
+            <tr>
+              <td>{{ d.day }}</td>
+              <td>
+                <span class="bar load" [style.width.%]="barWidth(d.load_actual_kwh)"></span>
+                <span
+                  class="bar load predicted"
+                  [style.width.%]="barWidth(d.load_predicted_kwh)"
+                ></span>
+                {{ d.load_actual_kwh | number: '1.1-1' }} /
+                {{ d.load_predicted_kwh | number: '1.1-1' }}
+              </td>
+              <td>
+                <span class="bar solar" [style.width.%]="barWidth(d.solar_actual_kwh)"></span>
+                <span
+                  class="bar solar predicted"
+                  [style.width.%]="barWidth(d.solar_predicted_kwh)"
+                ></span>
+                {{ d.solar_actual_kwh | number: '1.1-1' }} /
+                {{ d.solar_predicted_kwh | number: '1.1-1' }}
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+      <p class="muted">
+        Tomorrow's solar range is wider than these errors suggest, because the weather itself is a
+        forecast.
+      </p>
+    } @else {
+      <p class="muted">
+        Accuracy is checked once you have three weeks of usage history matched to weather; until
+        then, treat the ranges above as rough.
+      </p>
+    }
+  </section>
+} @else if (loading()) {
+  <p class="muted">Loading forecast…</p>
+}

@@ -1,7 +1,8 @@
-"""Hourly historical weather from Open-Meteo (https://open-meteo.com).
+"""Hourly historical and forecast weather from Open-Meteo (https://open-meteo.com).
 
 The reanalysis archive lags real time by several days, so the last week comes from the
-historical forecast API instead. No API key is needed; the free tier is for non-commercial use.
+historical forecast API instead. Forecasts for the coming days come from the forecast API.
+No API key is needed; the free tier is for non-commercial use.
 """
 
 from collections.abc import Callable
@@ -109,6 +110,12 @@ class OpenMeteoClient:
                 end,
             )
         return rows
+
+    def forecast(self, lat: float, lon: float, start: date, end: date) -> list[HourlyWeather]:
+        """Forecast hours whose UTC date is within [start, end] inclusive (up to ~2 weeks ahead)."""
+        return self._in_range(
+            self._get(settings.open_meteo_forecast_url, lat, lon, start, end), start, end
+        )
 
     @staticmethod
     def _in_range(rows: list[HourlyWeather], start: date, end: date) -> list[HourlyWeather]:

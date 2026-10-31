@@ -87,3 +87,60 @@ export interface CsvImportResult {
   weather_hours_added: number;
   message: string | null;
 }
+
+/** How a forecast was made: from the user's history, a generic prior, or a mix of both. */
+export type ForecastMethod = 'learned' | 'blended' | 'typical' | 'physics';
+
+/** Predicted kWh for one half hour (UTC times), with a 10th–90th percentile range. */
+export interface IntervalForecast {
+  start: string;
+  end: string;
+  load_kwh: number;
+  load_low_kwh: number;
+  load_high_kwh: number;
+  solar_kwh: number;
+  solar_low_kwh: number;
+  solar_high_kwh: number;
+  temperature_c: number | null;
+  cloud_cover_percent: number | null;
+}
+
+export interface EnergyRange {
+  expected: number;
+  low: number;
+  high: number;
+}
+
+export interface BacktestDay {
+  day: string;
+  load_actual_kwh: number;
+  load_predicted_kwh: number;
+  solar_actual_kwh: number;
+  solar_predicted_kwh: number;
+  solar_physics_kwh: number;
+}
+
+/** Accuracy on the latest days, predicted by a model trained only on the days before them. */
+export interface Backtest {
+  train_days: number;
+  test_days: number;
+  load_mae_kwh: number;
+  load_error_percent: number;
+  solar_mae_kwh: number;
+  solar_error_percent: number | null;
+  solar_physics_error_percent: number | null;
+  days: BacktestDay[];
+}
+
+export interface DayForecast {
+  day: string;
+  intervals: IntervalForecast[];
+  load: EnergyRange;
+  solar: EnergyRange;
+  load_method: ForecastMethod;
+  solar_method: ForecastMethod;
+  history_days: number;
+  /** Learned multiplier on each array's physics estimate, in array order. */
+  array_performance: number[];
+  backtest: Backtest | null;
+}
