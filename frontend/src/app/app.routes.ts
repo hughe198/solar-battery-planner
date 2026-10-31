@@ -2,16 +2,17 @@ import { Routes } from '@angular/router';
 import { authGuard, guestGuard, systemGuard } from './core/auth.guard';
 import { AuthPage } from './pages/auth/auth-page';
 import { Control } from './pages/control/control';
-import { Dashboard } from './pages/dashboard/dashboard';
 import { DataImport } from './pages/data-import/data-import';
-import { Forecast } from './pages/forecast/forecast';
-import { Plan } from './pages/plan/plan';
+import { History } from './pages/history/history';
 import { SystemSetup } from './pages/system-setup/system-setup';
+import { Tonight } from './pages/tonight/tonight';
 
 export const routes: Routes = [
-  { path: '', component: Dashboard, canActivate: [systemGuard] },
-  { path: 'plan', component: Plan, canActivate: [systemGuard], title: 'Overnight charge' },
-  { path: 'forecast', component: Forecast, canActivate: [systemGuard], title: 'Forecast' },
+  { path: '', component: Tonight, canActivate: [systemGuard], pathMatch: 'full', title: 'Tonight' },
+  { path: 'history', component: History, canActivate: [systemGuard], title: 'History' },
+  // The charge plan and forecast pages were merged into Tonight; keep old bookmarks working.
+  { path: 'plan', redirectTo: '' },
+  { path: 'forecast', redirectTo: '' },
   { path: 'inverter', component: Control, canActivate: [systemGuard], title: 'Inverter control' },
   { path: 'data', component: DataImport, canActivate: [systemGuard], title: 'Your data' },
   { path: 'setup', component: SystemSetup, canActivate: [authGuard], title: 'System setup' },

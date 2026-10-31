@@ -13,8 +13,8 @@ import {
   InverterControl,
   SchedulePeriod,
 } from '../../core/models';
+import { MODE_LABELS } from '../../core/plan.service';
 import { SystemService } from '../../core/system.service';
-import { MODE_LABELS } from '../plan/plan';
 
 /** What each test step does, shown before the user runs it. */
 export const STEP_DETAILS: Record<number, string> = {

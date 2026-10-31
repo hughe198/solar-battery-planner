@@ -2,95 +2,81 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
-import {
-  ChargePlan,
-  FlowPoint,
-  PlanOutcome,
-  Recommendation,
-  Replay,
-  SystemConfig,
-} from '../../core/models';
-import { Plan } from './plan';
+import { Backtest, History as WeekHistory, Replay, SystemConfig } from '../../core/models';
+import { History } from './history';
 
-const SYSTEM = { name: 'Home', timezone: 'UTC', arrays: [] } as unknown as SystemConfig;
-
-const OUTCOME: PlanOutcome = {
-  load_kwh: 10,
-  solar_kwh: 12,
-  import_kwh: 4,
-  export_kwh: 3,
-  import_cost_pence: 45,
-  export_revenue_pence: 12,
-  net_cost_pence: 33,
-  end_soc_percent: 40,
-  full_at: '2026-06-02T11:00:00Z',
-  reserve_at: null,
+const SYSTEM: SystemConfig = {
+  name: 'Home',
+  latitude: 51.5,
+  longitude: 0,
+  timezone: 'UTC',
+  planning_mode: 'maximise_own_usage',
+  data_source: 'csv',
+  battery: {
+    capacity_kwh: 10,
+    min_soc_percent: 10,
+    max_charge_kw: 5,
+    max_discharge_kw: 5,
+    round_trip_efficiency_percent: 90,
+    wear_pence_per_cycle: 0,
+  },
+  tariff: {
+    name: 'Octopus Go',
+    preset: null,
+    standing_charge_pence_per_day: 53,
+    bands: [
+      { direction: 'import', days: 'all', start: '23:30', end: '05:30', rate: 7.5 },
+      { direction: 'import', days: 'all', start: '05:30', end: '23:30', rate: 27.5 },
+      { direction: 'export', days: 'all', start: '00:00', end: '00:00', rate: 15 },
+    ],
+  },
+  arrays: [{ name: 'South', kwp: 4, tilt_degrees: 35, azimuth_degrees: 180 }],
 };
 
-function recommendation(mode: Recommendation['mode'], target: number): Recommendation {
-  return {
-    mode,
-    target_soc_percent: target,
-    stored_kwh: 4,
-    charge_kwh: 4.4,
-    charge_cost_pence: 33,
-    force_charge_start: '2026-06-02T04:20:00Z',
-    force_charge_stop: '2026-06-02T05:30:00Z',
-    force_charge_minutes: 70,
-    force_charge_reaches_target: true,
-    hold_start: '2026-06-01T23:30:00Z',
-    hold_stop: '2026-06-02T04:20:00Z',
-    discharge_start: '2026-06-01T22:30:00Z',
-    discharge_stop: '2026-06-01T23:30:00Z',
-    discharge_kwh: 3.2,
-    discharge_revenue_pence: 48,
-    discharge_to_percent: 10,
-    expected: OUTCOME,
-    dull: { ...OUTCOME, solar_kwh: 6, net_cost_pence: 120 },
-    bright: { ...OUTCOME, solar_kwh: 16, net_cost_pence: -20 },
-    reasons: [`Charge to ${target}%: 4.4 kWh from the grid at 7.5p, costing 33p.`],
-    downsides: ['Battery wear: charging puts 0.40 of a full cycle through the battery.'],
-  };
-}
+const HISTORY: WeekHistory = {
+  days: Array.from({ length: 7 }, (_, d) => ({
+    day: `2026-05-2${d + 1}`,
+    load_kwh: 10,
+    solar_kwh: 12,
+    import_kwh: 4,
+    export_kwh: 5,
+    self_sufficiency_percent: 60,
+    import_cost_pence: 50,
+    export_revenue_pence: 75,
+    min_soc_percent: 10,
+    max_soc_percent: 100,
+  })),
+  points: Array.from({ length: 7 * 48 }, (_, i) => ({
+    start: new Date(Date.UTC(2026, 4, 21) + i * 1_800_000).toISOString(),
+    load_kwh: 0.2,
+    solar_kwh: 0,
+    import_kwh: i % 48 < 11 ? 0.3 : 0,
+    export_kwh: i % 48 > 24 && i % 48 < 30 ? 0.5 : 0,
+    soc_percent: i % 2 ? 50 : null,
+    cheap: i % 48 < 11,
+  })),
+};
 
-function point(i: number): FlowPoint {
-  return {
-    start: new Date(Date.UTC(2026, 5, 2, 0, 0) + i * 1_800_000).toISOString(),
-    load_kwh: 0.3,
-    solar_kwh: i > 16 && i < 36 ? 0.8 : 0,
-    import_kwh: i < 11 ? 0.3 : 0,
-    export_kwh: i > 20 && i < 30 ? 0.4 : 0,
-    soc_percent: 50,
-    cheap: i < 11,
-  };
-}
+const NO_BACKTEST = { history_days: 5, backtest: null };
 
-const PLAN: ChargePlan = {
-  day: '2026-06-02',
-  mode: 'maximise_own_usage',
-  start_soc_percent: 10,
-  max_soc_percent: 100,
-  charge_start: '2026-06-01T23:30:00Z',
-  charge_end: '2026-06-02T05:30:00Z',
-  charge_rate_kw: 3.6,
-  taper_rate_kw: 1.2,
-  taper_from_percent: 90,
-  charge_rate_samples: 40,
-  recommendations: [
-    recommendation('maximise_own_usage', 52),
-    recommendation('maximise_export_revenue', 95),
+const BACKTEST: Backtest = {
+  train_days: 60,
+  test_days: 14,
+  load_mae_kwh: 1.2,
+  load_error_percent: 11.5,
+  solar_mae_kwh: 2.1,
+  solar_error_percent: 14,
+  solar_physics_error_percent: 22,
+  days: [
+    {
+      day: '2026-05-31',
+      load_actual_kwh: 10,
+      load_predicted_kwh: 9,
+      solar_actual_kwh: 15,
+      solar_predicted_kwh: 16,
+      solar_physics_kwh: 19,
+    },
   ],
-  candidates: [],
-  timeline: Array.from({ length: 47 }, (_, i) => point(i)),
-  start_soc_source: 'assumed',
-  reading_at: null,
-  reading_soc_percent: null,
-  lead_in: [],
-  load: { expected: 10, low: 8, high: 12 },
-  solar: { expected: 12, low: 6, high: 16 },
-  load_method: 'learned',
-  solar_method: 'learned',
-  history_days: 60,
 };
 
 const REPLAY: Replay = {
@@ -122,47 +108,51 @@ const REPLAY: Replay = {
 };
 REPLAY.review!.day = REPLAY.days[0];
 
-describe('Plan', () => {
+describe('History', () => {
   let http: HttpTestingController;
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
-      imports: [Plan],
+      imports: [History],
       providers: [provideRouter([]), provideHttpClient(), provideHttpClientTesting()],
     }).compileComponents();
     http = TestBed.inject(HttpTestingController);
   });
 
-  function render(replay: Replay = REPLAY) {
-    const fixture = TestBed.createComponent(Plan);
+  function render(
+    replay: Replay = REPLAY,
+    options: { history?: WeekHistory; backtest?: Backtest } = {},
+  ) {
+    const fixture = TestBed.createComponent(History);
     fixture.detectChanges();
     http.expectOne('/api/system').flush(SYSTEM);
-    http.expectOne('/api/plan').flush(PLAN);
+    http
+      .expectOne((r) => r.url === '/api/history')
+      .flush(options.history ?? { days: [], points: [] });
     http.expectOne((r) => r.url === '/api/plan/replay').flush(replay);
+    http
+      .expectOne('/api/forecast/accuracy')
+      .flush(options.backtest ? { history_days: 74, backtest: options.backtest } : NO_BACKTEST);
     fixture.detectChanges();
     return { fixture, el: fixture.nativeElement as HTMLElement };
   }
 
-  it('shows the recommendation for each mode and why', () => {
-    const { el } = render();
-    expect(el.textContent).toContain('Tuesday 2 June');
-    const modes = el.querySelectorAll('.plan-modes section');
-    expect(modes.length).toBe(2);
-    expect(modes[0].textContent).toContain('Maximise own usage (your mode)');
-    expect(modes[0].textContent).toContain('52%');
-    expect(modes[1].textContent).toContain('95%');
-    expect(el.textContent).toContain('Why 52%');
-    expect(el.textContent).toContain('costing 33p');
-    expect(modes[0].textContent).toMatch(/Force charge 04:20–\s*05:30/);
-    expect(modes[0].textContent).toContain('1 h 10 min');
-    expect(modes[0].textContent).toMatch(/Hold the battery 23:30–\s*04:20/);
-    expect(modes[0].textContent).toMatch(/Force discharge 22:30–\s*23:30/);
-    expect(modes[0].textContent).toContain('earning 48p');
-    expect(modes[0].textContent).toContain('Downsides');
-    expect(modes[0].textContent).toContain('0.40 of a full cycle');
-    expect(el.textContent).toContain('3.6 kW, 1.2 kW above 90%');
-    expect(el.querySelectorAll('table.plan-table')[0].querySelectorAll('tbody tr').length).toBe(3);
-    expect(el.querySelector('app-flow-chart path.soc')?.getAttribute('d')).toMatch(/^M/);
+  it('charts the last week and summarises it', () => {
+    const { fixture, el } = render(REPLAY, { history: HISTORY });
+    http.expectOne('/api/plan/replay/2026-05-31').flush({ ...REPLAY.review, points: [] });
+    fixture.detectChanges();
+    expect(el.textContent).toContain('Your last 7 days');
+    expect(el.textContent).toContain('60%');
+    expect(el.textContent).toContain('£3.50'); // 7 × 50p of imports
+    expect(el.querySelectorAll('app-week-chart rect.ss').length).toBe(7);
+    expect(el.querySelectorAll('app-week-chart circle.soc-end').length).toBe(14);
+    const week = el.querySelectorAll('app-flow-chart')[0];
+    const days = [...week.querySelectorAll('text.axis')].map((t) => t.textContent?.trim());
+    expect(days).toContain('Thu');
+    expect(week.querySelectorAll('rect.cheap').length).toBe(7);
+    expect(week.querySelectorAll('rect.export').length).toBe(7 * 5);
+    // Gaps in battery data break the line rather than joining across them.
+    expect(week.querySelector('path.soc')?.getAttribute('d')?.match(/M/g)?.length).toBe(7 * 24);
   });
 
   it('reviews the last charge and its cost', () => {
@@ -174,16 +164,17 @@ describe('Plan', () => {
     expect(el.textContent).toContain('would have saved');
   });
 
-  it('recalculates from a new starting level', () => {
-    const { fixture, el } = render();
-    const input = el.querySelector('input[type=number]') as HTMLInputElement;
-    input.value = '45';
-    (el.querySelector('.soc-input button') as HTMLButtonElement).click();
-    const req = http.expectOne((r) => r.url === '/api/plan');
-    expect(req.request.params.get('start_soc_percent')).toBe('45');
-    expect(req.request.params.get('day')).toBe('2026-06-02');
-    req.flush(PLAN);
-    fixture.detectChanges();
+  it('shows backtest accuracy when there is enough history', () => {
+    const { el } = render(REPLAY, { backtest: BACKTEST });
+    expect(el.textContent).toContain('Trained on 60 days');
+    expect(el.textContent).toContain('12%');
+    expect(el.textContent).toContain('panel physics alone: 22%');
+    expect(el.querySelectorAll('table.backtest tbody tr').length).toBe(1);
+  });
+
+  it('says when there is not enough history to check accuracy', () => {
+    const { el } = render();
+    expect(el.textContent).toContain('three weeks of usage history');
   });
 
   describe('look back', () => {
@@ -252,7 +243,7 @@ describe('Plan', () => {
     };
 
     it('asks for as much history as it can', () => {
-      const fixture = TestBed.createComponent(Plan);
+      const fixture = TestBed.createComponent(History);
       fixture.detectChanges();
       const req = http.expectOne((r) => r.url === '/api/plan/replay');
       expect(req.request.params.get('days')).toBe('120');

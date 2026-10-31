@@ -1,7 +1,7 @@
-<h1>Forecast</h1>
+<h1>{{ system()?.name ?? 'Tonight' }}</h1>
 <p class="muted">
-  Predicted household usage and solar generation for each half hour, from the weather forecast for
-  your location and what the model has learned from your history.
+  The overnight charge for the day you pick, played out half hour by half hour over the forecast for
+  your home's usage and solar, and on a dull and a bright version of that day.
 </p>
 
 @if (shownDay(); as day) {
@@ -33,6 +33,91 @@
 
 @if (error()) {
   <p class="form-error" role="alert">{{ error() }}</p>
+}
+
+@if (plan(); as p) {
+  <section class="card">
+    <h2>Charge before {{ dayLabel(p.day) }}</h2>
+    <label class="soc-input">
+      Battery level just before the cheap window opens at {{ localTime(p.charge_start) }} (%)
+      <span class="row">
+        <input #soc type="number" min="0" max="100" step="1" [value]="p.start_soc_percent" />
+        <button type="button" class="secondary" (click)="recalculate(soc.value)">
+          Recalculate
+        </button>
+      </span>
+    </label>
+
+    <div class="plan-modes">
+      @for (r of p.recommendations; track r.mode; let first = $first) {
+        <section class="card" [class.chosen]="first">
+          <span class="muted">{{ modeLabels[r.mode] }}{{ first ? ' (your mode)' : '' }}</span>
+          <div class="target">{{ r.target_soc_percent | number: '1.0-0' }}%</div>
+          <p>
+            @if (r.discharge_start) {
+              <strong
+                >Force discharge {{ localTime(r.discharge_start) }}–{{
+                  localTime(r.discharge_stop)
+                }}</strong
+              >
+              to {{ r.discharge_to_percent | number: '1.0-0' }}%:
+              {{ r.discharge_kwh | number: '1.1-1' }} kWh exported, earning
+              {{ pence(r.discharge_revenue_pence) }}.<br />
+            }
+            @if (r.hold_start) {
+              <span class="muted"
+                >Hold the battery {{ localTime(r.hold_start) }}–{{ localTime(r.hold_stop) }}, house
+                on the grid.</span
+              ><br />
+            }
+            @if (r.force_charge_start) {
+              <strong
+                >Force charge {{ localTime(r.force_charge_start) }}–{{
+                  localTime(r.force_charge_stop)
+                }}</strong
+              >
+              ({{ duration(r.force_charge_minutes) }}): {{ r.charge_kwh | number: '1.1-1' }} kWh,
+              costing {{ pence(r.charge_cost_pence) }}.
+              @if (!r.force_charge_reaches_target) {
+                <span class="muted">It may fall a little short by the end of the cheap rate.</span>
+              }
+            } @else {
+              No charge needed.
+            }
+          </p>
+          <p class="muted">
+            Expected day: imports {{ pence(r.expected.import_cost_pence) }}, exports
+            {{ pence(r.expected.export_revenue_pence) }}, so it
+            {{ net(r.expected.net_cost_pence) }}.
+          </p>
+          @if (r.downsides.length) {
+            <div class="downsides">
+              <strong>Downsides</strong>
+              <ul>
+                @for (d of r.downsides; track $index) {
+                  <li>{{ d }}</li>
+                }
+              </ul>
+            </div>
+          }
+          @if (!first) {
+            <details>
+              <summary>Why</summary>
+              <ul class="plain">
+                @for (reason of r.reasons; track $index) {
+                  <li>{{ reason }}</li>
+                }
+              </ul>
+            </details>
+          }
+        </section>
+      }
+    </div>
+    <p class="muted">
+      Want the planner to set this on your Fox ESS inverter?
+      <a routerLink="/inverter">Inverter control</a> (off unless you turn it on).
+    </p>
+  </section>
 }
 
 @if (forecast(); as f) {
@@ -271,101 +356,118 @@
     }
   </section>
 
-  <section class="card">
-    <h2>How this was predicted</h2>
-    <ul class="plain">
-      <li><strong>Usage:</strong> {{ methodLabels[f.load_method] }}.</li>
-      <li><strong>Solar:</strong> {{ methodLabels[f.solar_method] }}.</li>
-      @if (goodSolar(); as good) {
-        <li>
-          <strong>Good solar hours:</strong> the time your panels are forecast to make at least
-          {{ good.kw | number: '1.0-1' }} kW, a tenth of their {{ good.kwp | number: '1.0-1' }} kWp.
-        </li>
-      }
-      @if (system(); as s) {
-        @for (array of s.arrays; track $index) {
-          @if (f.array_performance[$index] !== undefined) {
-            <li class="muted">
-              {{ array.name }} ({{ array.kwp }} kWp) delivers about
-              {{ f.array_performance[$index] * 100 | number: '1.0-0' }}% of its ideal output.
-            </li>
-          }
-        }
-      }
-    </ul>
-  </section>
+  @if (plan(); as p) {
+    @if (scenarios().length) {
+      <section class="card">
+        <h2>If the day turns out differently</h2>
+        <div class="table-scroll">
+          <table class="plan-table">
+            <thead>
+              <tr>
+                <th>If the day is</th>
+                <th>Solar</th>
+                <th>Use</th>
+                <th>Import</th>
+                <th>Export</th>
+                <th>Battery full</th>
+                <th>Net</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (s of scenarios(); track s.name) {
+                <tr>
+                  <td>{{ s.name }}</td>
+                  <td>{{ s.outcome.solar_kwh | number: '1.1-1' }} kWh</td>
+                  <td>{{ s.outcome.load_kwh | number: '1.1-1' }} kWh</td>
+                  <td>{{ s.outcome.import_kwh | number: '1.1-1' }} kWh</td>
+                  <td>{{ s.outcome.export_kwh | number: '1.1-1' }} kWh</td>
+                  <td>{{ localTime(s.outcome.full_at) }}</td>
+                  <td>{{ pence(s.outcome.net_cost_pence) }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+        <p class="muted">
+          Import includes the charge and overnight use at the cheap rate. Charge timing uses
+          {{
+            p.charge_rate_samples
+              ? 'the rate your battery has charged at recently'
+              : 'the charge rate in your battery settings'
+          }}
+          ({{ p.charge_rate_kw | number: '1.1-1' }} kW{{
+            p.taper_rate_kw < p.charge_rate_kw - 0.05
+              ? ', ' +
+                (p.taper_rate_kw | number: '1.1-1') +
+                ' kW above ' +
+                p.taper_from_percent +
+                '%'
+              : ''
+          }}).
+        </p>
+      </section>
+    }
+  }
 
   <section class="card">
-    <h2>Recent accuracy</h2>
-    @if (f.backtest; as b) {
-      <p>
-        Trained on {{ b.train_days }} days, then asked to predict the {{ b.test_days }} days after
-        them using the weather that actually happened.
-      </p>
-      <div class="tiles">
-        <div class="tile">
-          <span class="muted">Daily usage error</span>
-          <strong>{{ b.load_error_percent | number: '1.0-0' }}%</strong>
-          <span class="muted">±{{ b.load_mae_kwh | number: '1.1-1' }} kWh a day</span>
-        </div>
-        @if (b.solar_error_percent !== null) {
-          <div class="tile">
-            <span class="muted">Daily solar error</span>
-            <strong>{{ b.solar_error_percent | number: '1.0-0' }}%</strong>
-            <span class="muted">
-              ±{{ b.solar_mae_kwh | number: '1.1-1' }} kWh a day
-              @if (b.solar_physics_error_percent !== null) {
-                (panel physics alone: {{ b.solar_physics_error_percent | number: '1.0-0' }}%)
-              }
-            </span>
-          </div>
+    <details>
+      <summary>How this was predicted</summary>
+      <ul class="plain">
+        <li><strong>Usage:</strong> {{ methodLabels[f.load_method] }}.</li>
+        <li><strong>Solar:</strong> {{ methodLabels[f.solar_method] }}.</li>
+        @if (goodSolar(); as good) {
+          <li>
+            <strong>Good solar hours:</strong> the time your panels are forecast to make at least
+            {{ good.kw | number: '1.0-1' }} kW, a tenth of their
+            {{ good.kwp | number: '1.0-1' }} kWp.
+          </li>
         }
-      </div>
-      <table class="backtest">
-        <thead>
-          <tr>
-            <th>Day</th>
-            <th>Usage: actual / predicted</th>
-            <th>Solar: actual / predicted</th>
-          </tr>
-        </thead>
-        <tbody>
-          @for (d of b.days; track d.day) {
-            <tr>
-              <td>{{ d.day }}</td>
-              <td>
-                <span class="bar load" [style.width.%]="barWidth(d.load_actual_kwh)"></span>
-                <span
-                  class="bar load predicted"
-                  [style.width.%]="barWidth(d.load_predicted_kwh)"
-                ></span>
-                {{ d.load_actual_kwh | number: '1.1-1' }} /
-                {{ d.load_predicted_kwh | number: '1.1-1' }}
-              </td>
-              <td>
-                <span class="bar solar" [style.width.%]="barWidth(d.solar_actual_kwh)"></span>
-                <span
-                  class="bar solar predicted"
-                  [style.width.%]="barWidth(d.solar_predicted_kwh)"
-                ></span>
-                {{ d.solar_actual_kwh | number: '1.1-1' }} /
-                {{ d.solar_predicted_kwh | number: '1.1-1' }}
-              </td>
-            </tr>
+        @if (system(); as s) {
+          @for (array of s.arrays; track $index) {
+            @if (f.array_performance[$index] !== undefined) {
+              <li class="muted">
+                {{ array.name }} ({{ array.kwp }} kWp) delivers about
+                {{ f.array_performance[$index] * 100 | number: '1.0-0' }}% of its ideal output.
+              </li>
+            }
           }
-        </tbody>
-      </table>
-      <p class="muted">
-        Tomorrow's solar range is wider than these errors suggest, because the weather itself is a
-        forecast.
-      </p>
-    } @else {
-      <p class="muted">
-        Accuracy is checked once you have three weeks of usage history matched to weather; until
-        then, treat the ranges above as rough.
-      </p>
-    }
+        }
+      </ul>
+    </details>
   </section>
+
+  @if (system(); as s) {
+    <div class="tiles">
+      <div class="card tile">
+        <span class="muted">Battery</span>
+        <strong>{{ s.battery.capacity_kwh | number: '1.0-1' }} kWh</strong>
+        <span class="muted">{{ usableKwh() | number: '1.0-1' }} kWh usable</span>
+      </div>
+      <div class="card tile">
+        <span class="muted">Solar</span>
+        <strong>{{ totalKwp() | number: '1.0-2' }} kWp</strong>
+        <span class="muted">{{ s.arrays.length }} array{{ s.arrays.length === 1 ? '' : 's' }}</span>
+      </div>
+      @if (cheapest(); as c) {
+        <div class="card tile">
+          <span class="muted">Cheapest import</span>
+          <strong>{{ c.rate | number: '1.0-2' }}p</strong>
+          <span class="muted">{{ c.start.slice(0, 5) }}–{{ c.end.slice(0, 5) }}</span>
+        </div>
+      }
+      @if (exportRange(); as e) {
+        <div class="card tile">
+          <span class="muted">Export</span>
+          <strong
+            >{{ e.min | number: '1.0-2' }}p{{
+              e.max > e.min ? '–' + (e.max | number: '1.0-2') + 'p' : ''
+            }}</strong
+          >
+          <span class="muted">{{ s.tariff.name }}</span>
+        </div>
+      }
+    </div>
+  }
 } @else if (loading()) {
   <p class="muted">Loading forecast…</p>
 }

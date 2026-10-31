@@ -63,3 +63,11 @@ main {
   margin: 0 auto;
   padding: 1.5rem 1rem 3rem;
 }
+
+/* Separates the three main pages from the settings and data pages. */
+.nav-divider {
+  width: 1px;
+  height: 1.5rem;
+  margin: 0 0.4rem;
+  background: var(--border);
+}

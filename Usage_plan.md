@@ -2,7 +2,7 @@
 
 Status: planned, not started.
 
-The user marks a day as Away, Low, Normal or High on the Forecast page, and the app adjusts that
+The user marks a day as Away, Low, Normal or High on the Tonight page, and the app adjusts that
 day's usage forecast. The plan, battery line and statement all update from it. For example, when
 they're away the forecast can use the home's base load.
 
@@ -37,7 +37,7 @@ With under 14 days of history, use fixed values: Away at half the forecast, Low 
 ## How it fits the code
 
 - **One central change:** apply the adjustment in `HistoryForecaster.forecast`
-  (`backend/app/forecasting/service.py`), right after the prediction. The Forecast page, plan,
+  (`backend/app/forecasting/service.py`), right after the prediction. The Tonight page, plan,
   lead-in and inverter preview then all pick it up.
 - **Per half hour, by local date:** a charge cycle can run from 02:00 to 02:00, so marking Sunday as
   Away leaves Monday 00:00–02:00 as normal.
@@ -59,7 +59,7 @@ holiday already in the history.
 
 ## On screen
 
-- **Forecast page:** a four-button selector under the day arrows, for today to 7 days ahead. Changing
+- **Tonight page:** a four-button selector under the day arrows, for today to 7 days ahead. Changing
   it saves straight away and redraws the chart.
 - **Usage tile:** shows the option in use, such as "4.2 kWh, away".
 - **Statement:** adds the reason, for example: "You've marked Sunday as away, so usage is based on
@@ -73,7 +73,7 @@ holiday already in the history.
 2. **Forecast:** apply the adjustment and narrower ranges, and exclude marked days from training.
    Test that an Away day changes the plan, that a cycle crossing midnight is handled correctly, and
    that normal forecasts stay unaffected by a marked week.
-3. **Forecast page:** selector, tile and statement.
+3. **Tonight page:** selector, tile and statement.
 4. **Look back:** calendar markers and marking past days.
 
 ## Decisions to confirm before starting

@@ -287,7 +287,7 @@ how the battery was charged; the planner (step 4) simulates the battery on top o
 `GET /api/forecast?day=YYYY-MM-DD` (today to 7 days ahead, default tomorrow) returns the
 half-hourly forecast, daily totals with ranges, the method used, the learned array multipliers
 and the backtest. `GET /api/forecast/accuracy` returns just the backtest and needs no weather
-fetch. The Forecast page (`/forecast`) shows both.
+fetch. The Tonight page (`/`) shows the forecast, and the History page (`/history`) the accuracy.
 
 ## Planner
 
@@ -330,7 +330,7 @@ The planner (`backend/app/planner`) picks the overnight charge by simulation, no
   grid-only mode, so the hold is written as a forced charge to the lowest level the inverter
   accepts: a forced charge stops at its level and the rest of the period runs the house from the
   grid. An owner has seen this on a charge to 90%; a hold from above the level hasn't been watched
-  yet. It can be set by hand in the Fox app, and the Forecast page says how.
+  yet. It can be set by hand in the Fox app, and the Tonight page says how.
 - **Discharge before a free window.** When the charge window is free (import at 0p or less)
   and export pays, whatever is above the battery's reserve is force discharged (exported) in up
   to 90 minutes ending as the window opens, since the window refills it for nothing. The charge
@@ -351,7 +351,8 @@ first) with outcomes for each scenario, reasons, the cost of every candidate and
 half-hourly timeline. `GET /api/plan/replay?days=30` returns the replay and review,
 `GET /api/plan/replay/YYYY-MM-DD` one day in full for the calendar, and
 `GET /api/history?days=7` the metered half hours and daily totals for the home page charts.
-The Charge plan page (`/plan`) and home page show them.
+The Tonight page (`/`) shows the plan, and the History page (`/history`) the review, look-back
+calendar and charts.
 
 ## Inverter control (opt-in)
 

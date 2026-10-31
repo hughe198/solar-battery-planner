@@ -4,17 +4,18 @@
     <nav>
       <a
         class="nav-button"
-        routerLink="/plan"
+        routerLink="/"
         routerLinkActive="active"
+        [routerLinkActiveOptions]="{ exact: true }"
         ariaCurrentWhenActive="page"
-        >Charge plan</a
+        >Tonight</a
       >
       <a
         class="nav-button"
-        routerLink="/forecast"
+        routerLink="/history"
         routerLinkActive="active"
         ariaCurrentWhenActive="page"
-        >Forecast</a
+        >History</a
       >
       <a
         class="nav-button"
@@ -23,6 +24,7 @@
         ariaCurrentWhenActive="page"
         >Inverter</a
       >
+      <span class="nav-divider" aria-hidden="true"></span>
       <a
         class="nav-button"
         routerLink="/setup"

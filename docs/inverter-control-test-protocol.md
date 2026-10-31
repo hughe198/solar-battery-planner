@@ -85,7 +85,7 @@ Run **step 5**. It adds a 10-minute force charge at 500 W starting about 5 minut
 2. Press **Apply**. It's refused if the plan or your schedule changed since the preview.
 3. Check the Fox app shows the force charge period.
 4. Next morning, compare the battery level at the end of the cheap window with the target, and
-   check the Charge plan page's review of the night.
+   check the History page's review of the night.
 5. Repeat for a few nights before trusting it.
 
 ## Stage 7: automatic nightly apply
