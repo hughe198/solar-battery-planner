@@ -29,8 +29,8 @@
   <section class="card">
     <h2>Tonight's charge</h2>
     <p class="muted">
-      The planner will recommend an overnight charge here once your usage history is imported and
-      the prediction model is trained. Mode:
+      The planner will recommend an overnight charge here, based on
+      <a routerLink="/forecast">tomorrow's forecast</a> of your usage and solar. Mode:
       <strong>{{
         s.planning_mode === 'maximise_own_usage' ? 'maximise own usage' : 'maximise export revenue'
       }}</strong

@@ -10,10 +10,11 @@ household usage and solar generation for the next day. Two planning modes:
 
 1. **Accounts and system setup**: sign up, log in, describe your battery, solar arrays,
    location and tariff.
-2. **Data import** (this step): Fox ESS cloud API and CSV upload, matched to historical weather
+2. **Data import**: Fox ESS cloud API and CSV upload, matched to historical weather
    (`backend/app/importers`, `backend/app/weather`). See [Data import](#data-import).
-3. **Prediction model**: forecast tomorrow's load and solar per interval
-   (`backend/app/forecasting`).
+3. **Prediction model** (this step): forecast tomorrow's load and solar per half hour, with
+   a likely range and recent accuracy (`backend/app/forecasting`). See
+   [Prediction model](#prediction-model).
 4. **Planner page**: turn the forecast into an overnight charge target (`backend/app/planner`).
 
 ## Running locally
@@ -51,7 +52,7 @@ prefix:
 | `SBP_CORS_ORIGINS` | `["http://localhost:4200"]` | JSON list |
 | `SBP_CREDENTIALS_SECRET` | dev-only value | Encrypts stored Fox ESS API keys. **Must** be set in production and kept stable |
 | `SBP_FOX_ESS_BASE_URL` | `https://www.foxesscloud.com` | |
-| `SBP_OPEN_METEO_ARCHIVE_URL` / `SBP_OPEN_METEO_RECENT_URL` | Open-Meteo public APIs | Point at a paid/self-hosted instance for commercial use |
+| `SBP_OPEN_METEO_ARCHIVE_URL` / `SBP_OPEN_METEO_RECENT_URL` / `SBP_OPEN_METEO_FORECAST_URL` | Open-Meteo public APIs | Point at a paid/self-hosted instance for commercial use |
 
 SQLite is the default and is fine for development or a single small server. For a multi-user
 deployment use Postgres (`SBP_DATABASE_URL=postgresql+psycopg://…` and `pip install psycopg`).
@@ -82,3 +83,34 @@ The Data page (`/data`) and `/api/import/*` endpoints cover:
 
 `GET /api/import/intervals?start=&end=` returns half hours joined to their weather, which is
 what the prediction model in step 3 will train on.
+
+## Prediction model
+
+Plain statistics with numpy, no machine learning: each fit is a few small least-squares solves,
+so the model is retrained on every request and always reflects the latest import. It predicts
+household **usage** and **solar generation**, not grid import/export, because those depend on
+how the battery was charged; the planner (step 4) simulates the battery on top of the forecast.
+
+- **Solar.** A physics estimate per array: sun position (NOAA approximations), Open-Meteo's
+  global and diffuse irradiance transposed onto the panel's tilt and azimuth (isotropic sky),
+  and a cell-temperature derating. Hourly radiation is split into half hours by sun height. A
+  ridge regression then learns one multiplier per array from the user's history (shading,
+  inverter losses, soiling, wrong kWp), shrunk towards a standard 85% performance ratio.
+- **Usage.** A weighted regression with one value per local half hour for weekdays and another
+  for weekends, plus heating-degree terms (below 15.5 °C daily mean) for four blocks of the day.
+  Recent days weigh more (60-day half-life), and it is shrunk towards a typical UK home
+  (Ofgem 2,700 kWh/year, Elexon profile shape) scaled to the user's average.
+- **Thin history.** Both priors are worth three days of data, so with no history the forecast is
+  the typical home and panel physics, and the user's own data takes over within a couple of
+  weeks. The response says which (`learned`, `blended`, `typical`, `physics`).
+- **Accuracy and ranges.** With three weeks of complete days, the last quarter (7–28 days) is
+  held out, predicted from a model trained on the earlier days with the weather that actually
+  happened, and compared with what was measured; physics-only solar is shown alongside. The
+  10th–90th percentile errors give the ranges: per four-hour block for usage, as ratios for
+  solar. Solar ranges are then widened (×1.5, with a floor) because tomorrow's weather is
+  itself a forecast. Logging forecasts to calibrate that allowance is a later improvement.
+
+`GET /api/forecast?day=YYYY-MM-DD` (today to 7 days ahead, default tomorrow) returns the
+half-hourly forecast, daily totals with ranges, the method used, the learned array multipliers
+and the backtest. `GET /api/forecast/accuracy` returns just the backtest and needs no weather
+fetch. The Forecast page (`/forecast`) shows both.

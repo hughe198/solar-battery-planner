@@ -7,6 +7,7 @@
   --accent: #d97706;
   --accent-text: #ffffff;
   --error: #b42318;
+  --load: #2563eb;
   color-scheme: light;
 }
 
@@ -20,6 +21,7 @@
     --accent: #f59e0b;
     --accent-text: #1b1300;
     --error: #f97066;
+    --load: #60a5fa;
     color-scheme: dark;
   }
 }
@@ -228,4 +230,109 @@ button {
 button.destructive {
   background: var(--error);
   color: #fff;
+}
+
+.day-picker {
+  max-width: 12rem;
+  margin-bottom: 1rem;
+}
+
+.forecast-chart {
+  width: 100%;
+  height: auto;
+  display: block;
+
+  .grid {
+    stroke: var(--border);
+  }
+
+  .axis {
+    fill: var(--muted);
+    font-size: 11px;
+  }
+
+  .series {
+    fill: none;
+    stroke-width: 2;
+  }
+
+  .band {
+    stroke: none;
+    opacity: 0.18;
+  }
+
+  .load {
+    stroke: var(--load);
+    fill: var(--load);
+  }
+
+  .solar {
+    stroke: var(--accent);
+    fill: var(--accent);
+  }
+
+  .series.load,
+  .series.solar {
+    fill: none;
+  }
+}
+
+.legend {
+  font-size: 0.9rem;
+  margin: 0.5rem 0 0;
+}
+
+.key {
+  display: inline-block;
+  width: 0.8rem;
+  height: 0.8rem;
+  border-radius: 2px;
+  vertical-align: -0.1rem;
+
+  &.load {
+    background: var(--load);
+  }
+
+  &.solar {
+    background: var(--accent);
+  }
+}
+
+ul.plain {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+table.backtest {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  margin-bottom: 0.5rem;
+
+  th,
+  td {
+    text-align: left;
+    padding: 0.3rem 0.5rem 0.3rem 0;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+
+  .bar {
+    display: block;
+    height: 0.35rem;
+    border-radius: 2px;
+    margin-bottom: 2px;
+
+    &.load {
+      background: var(--load);
+    }
+
+    &.solar {
+      background: var(--accent);
+    }
+
+    &.predicted {
+      opacity: 0.45;
+    }
+  }
 }

@@ -185,3 +185,71 @@ class MatchedInterval(BaseModel):
     battery_soc_percent: float | None
     source: UsageSource
     weather: WeatherOut | None
+
+
+class IntervalForecastOut(BaseModel):
+    """Predicted kWh for one half hour (UTC), with a 10th-90th percentile range."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    start: datetime
+    end: datetime
+    load_kwh: float
+    load_low_kwh: float
+    load_high_kwh: float
+    solar_kwh: float
+    solar_low_kwh: float
+    solar_high_kwh: float
+    temperature_c: float | None
+    cloud_cover_percent: float | None
+
+
+class RangeOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    expected: float
+    low: float
+    high: float
+
+
+class BacktestDayOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    day: date
+    load_actual_kwh: float
+    load_predicted_kwh: float
+    solar_actual_kwh: float
+    solar_predicted_kwh: float
+    solar_physics_kwh: float
+
+
+class BacktestOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    train_days: int
+    test_days: int
+    load_mae_kwh: float
+    load_error_percent: float
+    solar_mae_kwh: float
+    solar_error_percent: float | None
+    solar_physics_error_percent: float | None
+    days: list[BacktestDayOut]
+
+
+class DayForecastOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    day: date
+    intervals: list[IntervalForecastOut]
+    load: RangeOut
+    solar: RangeOut
+    load_method: str
+    solar_method: str
+    history_days: int
+    array_performance: list[float]
+    backtest: BacktestOut | None
+
+
+class AccuracyOut(BaseModel):
+    history_days: int
+    backtest: BacktestOut | None
