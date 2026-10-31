@@ -17,3 +17,8 @@ class Base(DeclarativeBase):
 def get_db() -> Iterator[Session]:
     with SessionLocal() as db:
         yield db
+
+
+def get_session_factory() -> sessionmaker[Session]:
+    """For work that outlives the request, such as background imports."""
+    return SessionLocal

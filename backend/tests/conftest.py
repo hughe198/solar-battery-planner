@@ -4,7 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.database import Base, get_db
+from app.database import Base, get_db, get_session_factory
 from app.main import app
 
 
@@ -21,6 +21,7 @@ def client():
             yield db
 
     app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[get_session_factory] = lambda: TestSession
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()

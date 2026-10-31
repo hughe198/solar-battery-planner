@@ -1,6 +1,6 @@
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { NonNullableFormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
-import { Router } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import { errorMessage } from '../../core/errors';
 import { SolarArray, SystemConfig } from '../../core/models';
 import { SystemService } from '../../core/system.service';
@@ -18,7 +18,7 @@ const COMPASS = [
 
 @Component({
   selector: 'app-system-setup',
-  imports: [ReactiveFormsModule],
+  imports: [ReactiveFormsModule, RouterLink],
   templateUrl: './system-setup.html',
 })
 export class SystemSetup implements OnInit {

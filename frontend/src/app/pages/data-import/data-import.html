@@ -1,0 +1,194 @@
+<h1>Your data</h1>
+<p class="muted">
+  The planner learns from your past usage and solar generation, matched to the weather on each day.
+  Connect Fox ESS or upload a CSV to get started.
+</p>
+
+@if (notice()) {
+  <p class="notice" role="status">{{ notice() }}</p>
+}
+@if (error()) {
+  <p class="form-error" role="alert">{{ error() }}</p>
+}
+
+<section class="card privacy">
+  <h2>How your data is used</h2>
+  <ul>
+    <li>
+      Your data is used only to predict your household's usage and solar generation and to recommend
+      how much to charge your battery. It is not shared, sold or used for anything else.
+    </li>
+    <li>
+      Your Fox ESS API key is stored encrypted and used only to <strong>read</strong> your
+      inverter's history. The planner never changes your inverter's settings.
+    </li>
+    <li>
+      To look up historical weather, your system's latitude and longitude (nothing else) are sent to
+      <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a>.
+    </li>
+    <li>
+      You can delete your imported data, or your whole account, at any time at the bottom of this
+      page. Deletion is immediate and permanent.
+    </li>
+  </ul>
+</section>
+
+@if (status(); as s) {
+  <div class="tiles">
+    <div class="card tile">
+      <span class="muted">Usage history</span>
+      <strong>{{ s.usage.count | number }} half hours</strong>
+      <span class="muted">
+        @if (s.usage.first) {
+          {{ s.usage.first | date: 'd MMM y' }} – {{ s.usage.last | date: 'd MMM y' }}
+        } @else {
+          nothing imported yet
+        }
+      </span>
+    </div>
+    <div class="card tile">
+      <span class="muted">Weather matched</span>
+      <strong>{{ s.matched_intervals | number }} of {{ s.usage.count | number }}</strong>
+      <span class="muted">half hours</span>
+      @if (s.matched_intervals < s.usage.count && !jobActive()) {
+        <button type="button" class="link" (click)="fetchWeather()" [disabled]="busy()">
+          Fetch missing weather
+        </button>
+      }
+    </div>
+  </div>
+
+  <section class="card">
+    <h2>Fox ESS cloud</h2>
+    @if (s.fox_ess; as fox) {
+      <p>
+        Connected to inverter <strong>{{ fox.device_sn }}</strong> with the API key ending
+        <code>{{ fox.api_key_hint }}</code
+        >.
+        @if (fox.last_synced_at) {
+          <span class="muted">Last synced {{ fox.last_synced_at | date: 'd MMM y, HH:mm' }}.</span>
+        }
+      </p>
+
+      @if (s.latest_job; as job) {
+        <div class="job" [class.failed]="job.status === 'failed'">
+          @switch (job.status) {
+            @case ('queued') {
+              <strong>Import waiting to start…</strong>
+            }
+            @case ('running') {
+              <strong>Importing: {{ job.days_done }} of {{ job.days_total }} days</strong>
+              <progress [value]="job.days_done" [max]="job.days_total"></progress>
+            }
+            @case ('done') {
+              <strong>Last import finished</strong>
+              <span class="muted">
+                {{ job.start_date | date: 'd MMM y' }} – {{ job.end_date | date: 'd MMM y' }}:
+                {{ job.intervals_imported | number }} half hours imported,
+                {{ job.days_skipped }} day{{ job.days_skipped === 1 ? '' : 's' }} already had data.
+              </span>
+            }
+            @case ('failed') {
+              <strong>Last import stopped</strong>
+            }
+          }
+          @if (job.message) {
+            <span>{{ job.message }}</span>
+          }
+        </div>
+      }
+
+      <form [formGroup]="syncForm" (ngSubmit)="sync()">
+        <div class="row">
+          <label>From <input type="date" formControlName="start_date" min="2020-01-01" /></label>
+          <label>To <input type="date" formControlName="end_date" [max]="today" /></label>
+        </div>
+        <p class="api-usage">
+          This import uses up to <strong>{{ syncDays() }}</strong> of the
+          {{ dailyCalls | number }} Fox ESS API calls your inverter is allowed each day (one per day
+          of history, about one a second, so roughly
+          {{ syncDays() / 60 | number: '1.0-0' }} minute{{ syncDays() >= 90 ? 's' : '' }}). That
+          allowance is shared with any other app using your inverter, such as Home Assistant or the
+          Fox app, so if they stop updating, wait until tomorrow. Days already imported are skipped
+          and don't use any calls. You can import up to {{ maxSyncDays }} days at a time.
+        </p>
+        <div class="row">
+          <button
+            type="submit"
+            [disabled]="busy() || jobActive() || syncDays() < 1 || syncDays() > maxSyncDays"
+          >
+            Import history
+          </button>
+          <button
+            type="button"
+            class="secondary"
+            (click)="disconnect()"
+            [disabled]="busy() || jobActive()"
+          >
+            Disconnect Fox ESS
+          </button>
+        </div>
+      </form>
+    } @else {
+      <p class="muted">
+        Fox ESS lets each account create its own API key. In
+        <a href="https://www.foxesscloud.com" target="_blank" rel="noopener">Fox ESS Cloud</a>, open
+        <strong>User Profile → API Management</strong> and generate a key. Your inverter's serial
+        number is on the device list in the same site.
+      </p>
+      <form [formGroup]="connectForm" (ngSubmit)="connect()">
+        <div class="row">
+          <label
+            >API key <input type="password" autocomplete="off" formControlName="api_key"
+          /></label>
+          <label>Inverter serial number <input formControlName="device_sn" /></label>
+        </div>
+        <p class="api-usage">
+          We check the key with one API call, then only call Fox ESS when you ask for an import. Fox
+          allows {{ dailyCalls | number }} calls per inverter per day, shared with your other apps.
+        </p>
+        <button type="submit" [disabled]="busy()">Connect</button>
+      </form>
+    }
+  </section>
+
+  <section class="card">
+    <h2>Upload a CSV</h2>
+    <p class="muted">
+      If you don't use Fox ESS, or want to fill gaps, upload a CSV with a header row and these
+      columns: <code>start</code>, <code>load_kwh</code>, <code>solar_kwh</code>,
+      <code>grid_import_kwh</code>, <code>grid_export_kwh</code> and optionally
+      <code>battery_soc_percent</code>. <code>start</code> is each interval's start time (e.g.
+      <code>2024-06-01T10:30</code>, read in your system's time zone). Intervals of 30 minutes or
+      less are added up into half hours. Uploading the same period again replaces it.
+    </p>
+    <div class="row">
+      <input type="file" accept=".csv,text/csv" (change)="chooseFile($event)" />
+      <button type="button" (click)="upload()" [disabled]="busy() || !csvFile()">Upload</button>
+    </div>
+  </section>
+
+  <section class="card danger">
+    <h2>Delete your data</h2>
+    <p class="muted">
+      <strong>Delete imported data</strong> removes all usage and weather data, your import history
+      and your Fox ESS API key, and keeps your system details.
+      <strong>Delete account</strong> removes everything, including your login.
+    </p>
+    <div class="row">
+      <button
+        type="button"
+        class="secondary"
+        (click)="deleteData()"
+        [disabled]="busy() || jobActive()"
+      >
+        Delete imported data
+      </button>
+      <button type="button" class="destructive" (click)="deleteAccount()" [disabled]="busy()">
+        Delete account
+      </button>
+    </div>
+  </section>
+} @else if (!error()) {
+  <p class="muted">Loading…</p>
+}

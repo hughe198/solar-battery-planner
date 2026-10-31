@@ -115,14 +115,11 @@
         >
       </span>
     </label>
-    <label>
-      Usage data source
-      <select formControlName="data_source">
-        <option value="none">Not connected yet</option>
-        <option value="fox_ess">Fox ESS cloud (coming soon)</option>
-        <option value="csv">CSV upload (coming soon)</option>
-      </select>
-    </label>
+    @if (!isNew()) {
+      <p class="muted">
+        Connect Fox ESS or upload usage data on the <a routerLink="/data">Data</a> page.
+      </p>
+    }
   </fieldset>
 
   @if (error()) {

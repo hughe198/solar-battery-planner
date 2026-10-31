@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.importers.store import delete_imported_data
 from app.models import User
 from app.schemas import Credentials, Token, UserOut
 from app.security import create_access_token, current_user, hash_password, verify_password
@@ -49,3 +50,13 @@ def token(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get
 @router.get("/me", response_model=UserOut)
 def me(user: User = Depends(current_user)) -> UserOut:
     return _user_out(user)
+
+
+@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+def delete_account(user: User = Depends(current_user), db: Session = Depends(get_db)) -> Response:
+    """Permanently delete the account, its system and all imported data."""
+    if user.system is not None:
+        delete_imported_data(db, user.system)
+    db.delete(user)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -185,3 +185,47 @@ button {
     font-size: 1.4rem;
   }
 }
+
+.notice {
+  border-left: 3px solid var(--accent);
+  background: var(--surface);
+  padding: 0.5rem 0.75rem;
+  margin: 0 0 1rem;
+}
+
+.privacy ul {
+  margin: 0;
+  padding-left: 1.2rem;
+
+  li + li {
+    margin-top: 0.35rem;
+  }
+}
+
+.api-usage {
+  font-size: 0.9rem;
+  color: var(--muted);
+  border-left: 3px solid var(--border);
+  padding-left: 0.75rem;
+  margin: 0;
+}
+
+.job {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0 0 1rem;
+
+  &.failed {
+    color: var(--error);
+  }
+
+  progress {
+    width: 100%;
+  }
+}
+
+button.destructive {
+  background: var(--error);
+  color: #fff;
+}
