@@ -92,7 +92,7 @@ changing with real data in it.
 ## Deploying from Windows
 
 `deploy\deploy.ps1` deploys from a Windows PC to an Ubuntu 24.04 server over SSH. It needs only
-what Windows ships (OpenSSH `ssh`/`scp`, `tar`) plus Git and Node 22, and does the manual steps
+what Windows ships (OpenSSH `ssh`/`scp`, `tar`) plus Git and Node (22.22.3+, 24.15+ or 26+), and does the manual steps
 below for you apart from nginx.
 
 1. Copy `deploy\deploy.config.example.psd1` to `deploy\deploy.config.psd1` (git ignores it) and

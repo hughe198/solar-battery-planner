@@ -12,7 +12,7 @@ Each run asks for your SSH key passphrase twice (scp, then ssh) and your sudo pa
 To type the passphrase once per Windows login instead, start the "OpenSSH Authentication
 Agent" service and run ssh-add.
 
-Uses only what Windows 10/11 ships (OpenSSH ssh/scp, tar) plus Git and Node 22.
+Uses only what Windows 10/11 ships (OpenSSH ssh/scp, tar) plus Git and Node (22.22.3+, 24.15+ or 26+).
 
 .PARAMETER Setup
 First run, or to repair: installs python3-venv and Postgres if missing, creates the service
@@ -192,7 +192,7 @@ if ($Status -or $Rollback) {
 
 Assert-Command 'git' 'Install Git for Windows.'
 Assert-Command 'tar' 'tar.exe ships with Windows 10 1803 and later.'
-Assert-Command 'npm' 'Install Node.js 22.'
+Assert-Command 'npm' 'Install Node.js 22.22.3+, 24.15+ or 26+.'
 Show-AgentTip
 
 Write-Step 'Checking the working copy'
