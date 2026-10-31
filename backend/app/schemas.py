@@ -338,6 +338,7 @@ class RecommendationOut(BaseModel):
     dull: OutcomeOut
     bright: OutcomeOut
     reasons: list[str]
+    downsides: list[str]
 
 
 class CandidateOut(BaseModel):

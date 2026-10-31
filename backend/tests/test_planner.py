@@ -312,3 +312,17 @@ def test_no_discharge_when_the_window_costs_or_export_pays_nothing():
     for result in (paid, unpaid):
         assert all(r.discharge_start is None for r in result.recommendations)
         assert result.recommendations[0].discharge_kwh == 0
+
+
+def test_downsides_explain_wear_and_risk():
+    free = plan(free_window_system(), make_forecast(evening_peak, bright), start_soc_percent=60)
+    own, export = free.recommendations
+    assert own.downsides[0].startswith("Battery wear: the discharge and refill put an extra 0.50")
+    assert "per full cycle" in own.downsides[0]
+    assert any("free window doesn't happen" in d for d in own.downsides)
+    # Export mode fills up to sell solar: more cycling, and time near full.
+    assert export.downsides[0].startswith("Charges")
+    assert any("above 90%" in d for d in export.downsides)
+
+    dull = plan(make_system(), make_forecast(evening_peak, bright, spread=0.4), 10)
+    assert any(d.startswith("If the day turns out dull") for d in dull.recommendations[0].downsides)

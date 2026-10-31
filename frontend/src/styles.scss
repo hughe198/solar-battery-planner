@@ -397,6 +397,18 @@ button.destructive {
     border-width: 2px;
   }
 
+  .downsides {
+    border-left: 3px solid var(--accent);
+    padding-left: 0.75rem;
+    margin: 0.75rem 0;
+    font-size: 0.9rem;
+
+    ul {
+      margin: 0.25rem 0 0;
+      padding-left: 1.1rem;
+    }
+  }
+
   .target {
     font-size: 2rem;
     font-weight: 700;

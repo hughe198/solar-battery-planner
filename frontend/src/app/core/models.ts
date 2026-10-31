@@ -212,6 +212,8 @@ export interface Recommendation {
   dull: PlanOutcome;
   bright: PlanOutcome;
   reasons: string[];
+  /** Costs besides money: battery wear and the risks the strategy takes on. */
+  downsides: string[];
 }
 
 /** Average effective cost of one target under each mode (lower is better), in pence. */

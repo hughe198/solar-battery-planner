@@ -54,6 +54,8 @@ class Recommendation:
     dull: Outcome
     bright: Outcome
     reasons: list[str]
+    # What the strategy costs besides money: battery wear and the risks it takes on.
+    downsides: list[str]
 
 
 @dataclass(frozen=True)

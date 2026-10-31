@@ -59,6 +59,16 @@
           Expected day: imports {{ pence(r.expected.import_cost_pence) }}, exports
           {{ pence(r.expected.export_revenue_pence) }}, so it {{ net(r.expected.net_cost_pence) }}.
         </p>
+        @if (r.downsides.length) {
+          <div class="downsides">
+            <strong>Downsides</strong>
+            <ul>
+              @for (d of r.downsides; track $index) {
+                <li>{{ d }}</li>
+              }
+            </ul>
+          </div>
+        }
         @if (!first) {
           <details>
             <summary>Why</summary>

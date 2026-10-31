@@ -59,6 +59,9 @@ LEAN_UNDER_PENCE = 2.0
 # Alternatives described in the explanation, in SoC percentage points either side.
 COMPARE_STEP_PERCENT = 10
 FULL_TOLERANCE_KWH = 0.01
+# Held above this level for long, lithium cells age faster.
+HIGH_SOC_PERCENT = 90
+HIGH_SOC_HOURS = 2.0
 
 MODES = (PlanningMode.maximise_own_usage, PlanningMode.maximise_export_revenue)
 
@@ -216,6 +219,61 @@ class Explainer:
             f"{b.percent(after_kwh):.0f}%: about {drain.export_kwh:.1f} kWh exported earns "
             f"{pence(drain.revenue_pence)}, and the free window refills it for nothing."
         )
+
+    def downsides(
+        self,
+        target_kwh: float,
+        start_kwh: float,
+        drain: Discharge | None,
+        sim: Simulation,
+        row: int,
+        results: dict[str, Outcome],
+    ) -> list[str]:
+        """The costs of a strategy that aren't in the money score, plainly."""
+        b, prices = self.battery, self.prices
+        lines = []
+        added = max(target_kwh - start_kwh, 0.0)
+        if drain:
+            cycle = drain.stored_kwh / b.capacity_kwh
+            per_cycle = drain.revenue_pence / cycle if cycle else 0.0
+            lines.append(
+                f"Battery wear: the discharge and refill put an extra {cycle:.2f} of a full "
+                f"cycle through the battery each night, at full power, for "
+                f"{pence(drain.revenue_pence)} ({pence(per_cycle)} per full cycle). Batteries "
+                "are rated for a limited number of cycles; as a rough guide, a £3,000 battery "
+                "rated for 6,000 cycles wears about 50p a cycle, so check your warranty before "
+                "relying on this for small sums."
+            )
+            lines.append(
+                "If the free window doesn't happen (a missed schedule or a tariff change), the "
+                f"battery starts the night at {b.percent(start_kwh):.0f}% and the house imports "
+                "at the normal rate until morning."
+            )
+        elif added > 0.05:
+            lines.append(
+                f"Battery wear: charging puts {added / b.capacity_kwh:.2f} of a full cycle "
+                "through the battery from the grid."
+            )
+        high = b.capacity_kwh * HIGH_SOC_PERCENT / 100
+        hours_high = float((sim.stored_kwh[row, 1:] >= high).sum()) * HOURS_PER_INTERVAL
+        if b.percent(target_kwh) >= HIGH_SOC_PERCENT or hours_high >= HIGH_SOC_HOURS:
+            lines.append(
+                f"The battery spends about {hours_high:.0f} hours above {HIGH_SOC_PERCENT}% on "
+                "the expected day. Lithium batteries age faster kept near full, and charging "
+                "slows above 90%."
+                if hours_high >= HIGH_SOC_HOURS
+                else f"Charging to {b.percent(target_kwh):.0f}% is near full: lithium batteries "
+                "age faster held there, and charging slows above 90%."
+            )
+        d = results["dull"]
+        if d.reserve_at is not None and d.net_cost_pence > results["expected"].net_cost_pence + 1:
+            lines.append(
+                f"If the day turns out dull the battery reaches its reserve at "
+                f"{self.clock(d.reserve_at)} and the house imports at "
+                f"{rate(prices.day_import_mean)}p: that day {net_phrase(d.net_cost_pence)}, "
+                f"where the expected day {net_phrase(results['expected'].net_cost_pence)}."
+            )
+        return lines
 
     def reasons(
         self,
@@ -401,6 +459,10 @@ def plan(
             reasons.insert(1, explainer.hold(timing))
         if drain:
             reasons.insert(0, explainer.discharge(drain, before_kwh, start_kwh))
+        _, sim_e, _ = runs["expected"]
+        downsides = explainer.downsides(
+            float(targets[chosen]), start_kwh, drain, sim_e, chosen, results
+        )
         recommendations.append(
             Recommendation(
                 mode=mode,
@@ -425,7 +487,27 @@ def plan(
                 dull=results["dull"],
                 bright=results["bright"],
                 reasons=reasons,
+                downsides=downsides,
             )
+        )
+
+    by_mode = {r.mode: r for r in recommendations}
+    own, export = (
+        by_mode[PlanningMode.maximise_own_usage],
+        by_mode[PlanningMode.maximise_export_revenue],
+    )
+    extra = export.stored_kwh - own.stored_kwh
+    if extra > 0.05:
+        gain = own.expected.net_cost_pence - export.expected.net_cost_pence
+        export.downsides.insert(
+            0,
+            f"Charges {extra:.1f} kWh more than maximise own usage ("
+            f"{extra / battery.capacity_kwh:.2f} of a cycle) to sell more solar, for "
+            + (
+                f"{pence(gain)} more on the expected day."
+                if gain >= 0.5
+                else "little difference on the expected day; it pays on bright days."
+            ),
         )
 
     chosen, timing = plans[system.planning_mode]

@@ -49,6 +49,7 @@ function recommendation(mode: Recommendation['mode'], target: number): Recommend
     dull: { ...OUTCOME, solar_kwh: 6, net_cost_pence: 120 },
     bright: { ...OUTCOME, solar_kwh: 16, net_cost_pence: -20 },
     reasons: [`Charge to ${target}%: 4.4 kWh from the grid at 7.5p, costing 33p.`],
+    downsides: ['Battery wear: charging puts 0.40 of a full cycle through the battery.'],
   };
 }
 
@@ -153,6 +154,8 @@ describe('Plan', () => {
     expect(modes[0].textContent).toMatch(/Hold the battery 23:30–\s*04:20/);
     expect(modes[0].textContent).toMatch(/Force discharge 22:30–\s*23:30/);
     expect(modes[0].textContent).toContain('earning 48p');
+    expect(modes[0].textContent).toContain('Downsides');
+    expect(modes[0].textContent).toContain('0.40 of a full cycle');
     expect(el.textContent).toContain('3.6 kW, 1.2 kW above 90%');
     expect(el.querySelectorAll('table.plan-table')[0].querySelectorAll('tbody tr').length).toBe(3);
     expect(el.querySelector('app-flow-chart path.soc')?.getAttribute('d')).toMatch(/^M/);
