@@ -231,6 +231,16 @@ def apply(
     trigger: ControlTrigger,
 ) -> ControlAction:
     """Write a proposal. Saves the original schedule first if this is the first write."""
+    if not proposal.added and not proposal.removed:
+        return _log(
+            db,
+            system,
+            ControlActionKind.apply,
+            trigger,
+            ControlStatus.skipped,
+            "No charge needed and no planner periods to remove, so nothing was written.",
+            day=proposal.day,
+        )
     if control.original_schedule is None:
         control.original_schedule = proposal.schedule.to_snapshot()
         control.original_saved_at = datetime.now(timezone.utc)

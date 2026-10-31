@@ -362,3 +362,18 @@ def test_nightly_applies_once_in_the_evening(client, headers, inverter, weather)
         assert action.trigger == ControlTrigger.auto
         assert action.status == ControlStatus.ok, action.message
         assert run_once(db, inverter, weather, evening + timedelta(minutes=10)) == []
+
+
+def test_apply_with_nothing_to_change_writes_nothing(monkeypatch):
+    monkeypatch.setattr(
+        service, "_log", lambda db, system, kind, trigger, status, message, **kw: status
+    )
+    inverter = FakeInverter()
+    schedule = Schedule.from_fox(inverter.scheduler("x"))
+    system = system_with()
+    system.fox_ess = SimpleNamespace(device_sn="INV1")
+    control = InverterControl()
+    proposal = service.propose(system, control, plan_for(None, None, charge_kwh=0), schedule)
+    status = service.apply(None, system, control, inverter, proposal, ControlTrigger.manual)
+    assert status == ControlStatus.skipped
+    assert inverter.writes == []

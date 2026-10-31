@@ -37,6 +37,9 @@ describe('DataImport', () => {
     const privacy = el.querySelector('.privacy')?.textContent ?? '';
     expect(privacy).toContain('not shared, sold or used for anything else');
     expect(privacy).toContain('delete');
+    // The key is read-only unless the user turns inverter control on.
+    expect(privacy).toContain('off unless you choose it');
+    expect(privacy).toContain('write');
     expect(el.textContent).toContain('Delete imported data');
     expect(el.textContent).toContain('Delete account');
     expect(el.textContent).toContain('User Profile → API Management');

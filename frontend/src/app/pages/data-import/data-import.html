@@ -19,8 +19,12 @@
       how much to charge your battery. It is not shared, sold or used for anything else.
     </li>
     <li>
-      Your Fox ESS API key is stored encrypted and used only to <strong>read</strong> your
-      inverter's history. The planner never changes your inverter's settings.
+      Your Fox ESS API key is stored encrypted. By default it is used only to
+      <strong>read</strong> your inverter's history and settings, and the planner never changes your
+      inverter. If you turn on <a routerLink="/inverter">inverter control</a> (off unless you choose
+      it), the key is also used to <strong>write</strong> the overnight force charge to your
+      inverter's schedule, each change is logged, and you can undo it or turn control off at any
+      time. Disconnecting Fox ESS or deleting your data turns control off.
     </li>
     <li>
       To look up historical weather, your system's latitude and longitude (nothing else) are sent to

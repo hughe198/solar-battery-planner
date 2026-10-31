@@ -2,7 +2,7 @@ import { DatePipe, DecimalPipe } from '@angular/common';
 import { Component, DestroyRef, OnInit, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NonNullableFormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
-import { Router } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import { Observable, Subscription, switchMap, takeWhile, timer } from 'rxjs';
 import { errorMessage } from '../../core/errors';
 import { ImportService } from '../../core/import.service';
@@ -25,7 +25,7 @@ function daysAgo(days: number): string {
 
 @Component({
   selector: 'app-data-import',
-  imports: [ReactiveFormsModule, DatePipe, DecimalPipe],
+  imports: [ReactiveFormsModule, DatePipe, DecimalPipe, RouterLink],
   templateUrl: './data-import.html',
 })
 export class DataImport implements OnInit {

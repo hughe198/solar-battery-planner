@@ -1,0 +1,265 @@
+<h1>Inverter control</h1>
+<p class="muted">
+  Let the planner set your Fox ESS inverter's overnight force charge for you. It's off unless you
+  turn it on, every change is shown before it's made and checked afterwards, and you can undo it at
+  any time.
+</p>
+
+@if (error()) {
+  <p class="form-error" role="alert">{{ error() }}</p>
+}
+@if (last(); as a) {
+  <p class="notice result-{{ a.status }}" role="status">
+    <strong>{{ statusLabels[a.status] }}.</strong> {{ a.message }}
+  </p>
+}
+
+@if (status(); as s) {
+  @if (!s.connected) {
+    <section class="card">
+      <p>Connect Fox ESS on the <a routerLink="/data">Data</a> page first.</p>
+    </section>
+  } @else if (!s.enabled) {
+    <section class="card opt-in">
+      <h2>Before you turn this on</h2>
+      <ul>
+        <li>
+          The planner will use your Fox ESS API key to <strong>change</strong> your inverter's mode
+          schedule: it adds a force charge period for the cheap window, with the charge level,
+          charge power and minimum charge. Your other schedule periods are kept.
+        </li>
+        <li>
+          Fox schedules repeat every day, so a charge stays in place on later nights until it's
+          changed or removed.
+        </li>
+        <li>
+          Nothing is written until you run the write test or press Apply. Automatic nightly apply is
+          a separate choice you can make later.
+        </li>
+        <li>
+          This has not been tested against every inverter. Fox's own app can always see and change
+          the schedule, and you can remove the planner's periods or restore your original schedule
+          here.
+        </li>
+      </ul>
+      <label class="choice">
+        <input type="checkbox" [checked]="accepted()" (change)="accepted.set(!accepted())" />
+        I understand the planner will change my inverter's settings
+      </label>
+      <button type="button" [disabled]="!accepted() || busy()" (click)="turnOn()">
+        Turn on inverter control
+      </button>
+    </section>
+  } @else {
+    <section class="card">
+      <h2>1. Write test</h2>
+      <p>
+        Build up trust one small step at a time. Each step reads the result back from Fox ESS and is
+        logged below. Applying the plan unlocks after step 4.
+      </p>
+      <ol class="test-steps">
+        @for (t of s.test_steps; track t.step) {
+          <li [class.passed]="t.passed">
+            <span class="tick" aria-hidden="true">{{ t.passed ? '✓' : '○' }}</span>
+            <div>
+              <strong>{{ t.label }}</strong>
+              <p class="muted">{{ stepDetails[t.step] }}</p>
+            </div>
+          </li>
+        }
+      </ol>
+      @if (nextStep(); as n) {
+        <button type="button" [disabled]="busy()" (click)="runStep(n)">Run step {{ n }}</button>
+      } @else {
+        <p class="muted">All steps passed.</p>
+      }
+      @if (s.test_periods.length) {
+        <p class="notice">
+          A test period is on your inverter
+          @for (p of s.test_periods; track $index) {
+            ({{ p.start }}–{{ p.end }})
+          }
+          . Run the next removal step, or use “Remove planner periods” below.
+        </p>
+      }
+    </section>
+
+    <section class="card">
+      <h2>2. Apply the next charge</h2>
+      <p>
+        Preview reads your inverter's schedule and works out tonight's plan. Nothing is written
+        until you press Apply, and Apply writes exactly what the preview shows.
+      </p>
+      <button type="button" class="secondary" [disabled]="busy()" (click)="loadPreview()">
+        Preview
+      </button>
+      @if (proposal(); as p) {
+        <div class="preview">
+          <p>
+            Plan for {{ p.day }} ({{ modeLabels[p.mode] }}):
+            @if (p.added.length) {
+              force charge to <strong>{{ p.target_soc_percent }}%</strong> at
+              {{ p.power_w | number: '1.0-0' }} W from {{ localTime(p.start) }} to
+              {{ localTime(p.stop) }}, minimum charge {{ p.min_soc_on_grid }}%.
+            } @else {
+              no charge needed.
+            }
+          </p>
+          <div class="table-scroll">
+            <table class="plan-table">
+              <thead>
+                <tr>
+                  <th>Period</th>
+                  <th>Mode</th>
+                  <th>Charge to</th>
+                  <th>Power</th>
+                  <th>Change</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (r of p.removed; track $index) {
+                  <tr class="removed">
+                    <td>{{ r.start }}–{{ r.end }}</td>
+                    <td>{{ r.work_mode }}</td>
+                    <td>{{ r.charge_to_percent ?? '–' }}</td>
+                    <td>{{ r.power_w ?? '–' }}</td>
+                    <td>Removed</td>
+                  </tr>
+                }
+                @for (r of p.after; track $index) {
+                  <tr>
+                    <td>{{ r.start }}–{{ r.end }}</td>
+                    <td>{{ r.work_mode }}</td>
+                    <td>{{ r.charge_to_percent ?? '–' }}</td>
+                    <td>{{ r.power_w ?? '–' }}</td>
+                    <td>{{ isAdded(r, p) ? 'Added' : 'Kept' }}</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+          <ul class="plain">
+            @for (n of p.notes; track $index) {
+              <li>{{ n }}</li>
+            }
+          </ul>
+          <details>
+            <summary>Exact request sent to Fox ESS</summary>
+            <pre>{{ p.request | json }}</pre>
+          </details>
+          <button type="button" [disabled]="busy() || !s.can_apply" (click)="apply(p)">
+            Apply to inverter
+          </button>
+          @if (!s.can_apply) {
+            <p class="muted">Pass the write test up to step 4 to unlock this.</p>
+          }
+        </div>
+      }
+    </section>
+
+    <section class="card">
+      <h2>3. Undo</h2>
+      @if (s.planner_periods.length) {
+        <p>
+          The planner's periods on your inverter:
+          @for (p of s.planner_periods; track $index) {
+            {{ p.start }}–{{ p.end }} to {{ p.charge_to_percent }}%{{ $last ? '.' : ',' }}
+          }
+        </p>
+      }
+      <div class="row">
+        <button type="button" class="secondary" [disabled]="busy()" (click)="clear()">
+          Remove planner periods
+        </button>
+        <button
+          type="button"
+          class="secondary"
+          [disabled]="busy() || !s.has_original"
+          (click)="restore()"
+        >
+          Restore original schedule
+        </button>
+      </div>
+      @if (s.has_original) {
+        <p class="muted">
+          Saved {{ s.original_saved_at | date: 'medium' }}: schedule
+          {{ s.original_enabled ? 'on' : 'off' }}, with
+          @for (p of s.original; track $index) {
+            {{ p.work_mode }} {{ p.start }}–{{ p.end }}{{ $last ? '.' : ',' }}
+          } @empty {
+            no periods.
+          }
+        </p>
+      }
+    </section>
+
+    <section class="card">
+      <h2>4. Automatic nightly apply</h2>
+      @if (!s.auto_apply_available) {
+        <p class="muted">
+          This server doesn't run the nightly apply. It needs SBP_AUTO_APPLY=true, or
+          <code>python -m app.control.nightly</code> from cron.
+        </p>
+      }
+      <label class="choice">
+        <input
+          type="checkbox"
+          [checked]="s.auto_apply"
+          [disabled]="busy() || (!s.can_auto_apply && !s.auto_apply)"
+          (change)="setAutoApply(!s.auto_apply)"
+        />
+        Apply the plan automatically each evening, up to two hours before the cheap rate starts
+      </label>
+      @if (!s.can_auto_apply && !s.auto_apply) {
+        <p class="muted">Unlocks after the write test and one successful Apply by hand.</p>
+      }
+      <p class="muted">
+        If a night's plan or write fails, it's logged below and the inverter keeps the charge it
+        already had.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Log</h2>
+      @if (s.actions.length) {
+        <div class="table-scroll">
+          <table class="plan-table control-log">
+            <thead>
+              <tr>
+                <th>When</th>
+                <th>What</th>
+                <th>Result</th>
+                <th>Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (a of s.actions; track a.id) {
+                <tr class="result-{{ a.status }}">
+                  <td>{{ a.created_at | date: 'short' }}</td>
+                  <td>{{ kindLabels[a.kind] }}{{ a.trigger === 'auto' ? ' (automatic)' : '' }}</td>
+                  <td>{{ statusLabels[a.status] }}</td>
+                  <td>
+                    {{ a.message }}
+                    @if (a.sent || a.read_back) {
+                      <details>
+                        <summary>Sent and read back</summary>
+                        <pre>{{ { sent: a.sent, read_back: a.read_back } | json }}</pre>
+                      </details>
+                    }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      } @else {
+        <p class="muted">Nothing yet.</p>
+      }
+      <button type="button" class="link" [disabled]="busy()" (click)="turnOff()">
+        Turn inverter control off
+      </button>
+    </section>
+  }
+} @else {
+  <p class="muted">Loading…</p>
+}
