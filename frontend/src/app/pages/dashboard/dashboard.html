@@ -1,0 +1,43 @@
+@if (system(); as s) {
+  <h1>{{ s.name }}</h1>
+
+  <div class="tiles">
+    <div class="card tile">
+      <span class="muted">Battery</span>
+      <strong>{{ s.battery.capacity_kwh | number: '1.0-1' }} kWh</strong>
+      <span class="muted">{{ usableKwh() | number: '1.0-1' }} kWh usable</span>
+    </div>
+    <div class="card tile">
+      <span class="muted">Solar</span>
+      <strong>{{ totalKwp() | number: '1.0-2' }} kWp</strong>
+      <span class="muted">{{ s.arrays.length }} array{{ s.arrays.length === 1 ? '' : 's' }}</span>
+    </div>
+    <div class="card tile">
+      <span class="muted">Cheap import</span>
+      <strong>{{ s.tariff.cheap_import_rate | number: '1.0-2' }}p</strong>
+      <span class="muted"
+        >{{ s.tariff.cheap_start.slice(0, 5) }}–{{ s.tariff.cheap_end.slice(0, 5) }}</span
+      >
+    </div>
+    <div class="card tile">
+      <span class="muted">Export</span>
+      <strong>{{ s.tariff.export_rate | number: '1.0-2' }}p</strong>
+      <span class="muted">day import {{ s.tariff.day_import_rate | number: '1.0-2' }}p</span>
+    </div>
+  </div>
+
+  <section class="card">
+    <h2>Tonight's charge</h2>
+    <p class="muted">
+      The planner will recommend an overnight charge here once your usage history is imported and
+      the prediction model is trained. Mode:
+      <strong>{{
+        s.planning_mode === 'maximise_own_usage' ? 'maximise own usage' : 'maximise export revenue'
+      }}</strong
+      >.
+    </p>
+    <a routerLink="/setup">Edit system</a>
+  </section>
+} @else {
+  <p class="muted">Loading…</p>
+}

@@ -1,0 +1,134 @@
+<form class="setup" [formGroup]="form" (ngSubmit)="submit()">
+  <h1>{{ isNew() ? 'Set up your system' : 'Your system' }}</h1>
+  <p class="muted">
+    These details let the planner work out how much to charge your battery overnight.
+  </p>
+
+  <fieldset class="card">
+    <legend>Location</legend>
+    <label>Name <input formControlName="name" /></label>
+    <div class="row">
+      <label>Latitude <input type="number" step="0.001" formControlName="latitude" /></label>
+      <label>Longitude <input type="number" step="0.001" formControlName="longitude" /></label>
+    </div>
+    <div class="row">
+      <label>Time zone <input formControlName="timezone" /></label>
+      <button type="button" class="secondary" (click)="useMyLocation()" [disabled]="locating()">
+        {{ locating() ? 'Locating…' : 'Use my location' }}
+      </button>
+    </div>
+  </fieldset>
+
+  <fieldset class="card" formGroupName="battery">
+    <legend>Battery</legend>
+    <div class="row">
+      <label
+        >Capacity (kWh) <input type="number" step="0.1" formControlName="capacity_kwh"
+      /></label>
+      <label>
+        Minimum charge (%)
+        <input type="number" step="1" formControlName="min_soc_percent" />
+      </label>
+    </div>
+    <div class="row">
+      <label
+        >Max charge rate (kW) <input type="number" step="0.1" formControlName="max_charge_kw"
+      /></label>
+      <label>
+        Max discharge rate (kW)
+        <input type="number" step="0.1" formControlName="max_discharge_kw" />
+      </label>
+    </div>
+    <label>
+      Round-trip efficiency (%)
+      <input type="number" step="1" formControlName="round_trip_efficiency_percent" />
+    </label>
+  </fieldset>
+
+  <fieldset class="card" formArrayName="arrays">
+    <legend>Solar panels</legend>
+    @for (array of form.controls.arrays.controls; track array; let i = $index) {
+      <div class="array" [formGroupName]="i">
+        <div class="row">
+          <label>Name <input formControlName="name" /></label>
+          <label>Size (kWp) <input type="number" step="0.1" formControlName="kwp" /></label>
+        </div>
+        <div class="row">
+          <label>
+            Tilt (° from flat)
+            <input type="number" step="1" formControlName="tilt_degrees" />
+          </label>
+          <label>
+            Facing
+            <select formControlName="azimuth_degrees">
+              @for (c of compass; track c.degrees) {
+                <option [ngValue]="c.degrees">{{ c.label }} ({{ c.degrees }}°)</option>
+              }
+            </select>
+          </label>
+        </div>
+        @if (form.controls.arrays.length > 1) {
+          <button type="button" class="link" (click)="removeArray(i)">Remove this array</button>
+        }
+      </div>
+    }
+    <button type="button" class="secondary" (click)="addArray()">Add another array</button>
+  </fieldset>
+
+  <fieldset class="card" formGroupName="tariff">
+    <legend>Tariff</legend>
+    <div class="row">
+      <label
+        >Day import (p/kWh) <input type="number" step="0.01" formControlName="day_import_rate"
+      /></label>
+      <label>
+        Cheap import (p/kWh)
+        <input type="number" step="0.01" formControlName="cheap_import_rate" />
+      </label>
+      <label
+        >Export (p/kWh) <input type="number" step="0.01" formControlName="export_rate"
+      /></label>
+    </div>
+    <div class="row">
+      <label>Cheap window starts <input type="time" formControlName="cheap_start" /></label>
+      <label>Cheap window ends <input type="time" formControlName="cheap_end" /></label>
+    </div>
+  </fieldset>
+
+  <fieldset class="card">
+    <legend>Planning</legend>
+    <label class="choice">
+      <input type="radio" formControlName="planning_mode" value="maximise_own_usage" />
+      <span>
+        <strong>Maximise own usage</strong>
+        <span class="muted"
+          >Charge enough to cover the house until the sun takes over. Usually saves the most.</span
+        >
+      </span>
+    </label>
+    <label class="choice">
+      <input type="radio" formControlName="planning_mode" value="maximise_export_revenue" />
+      <span>
+        <strong>Maximise export revenue</strong>
+        <span class="muted"
+          >Charge less overnight and leave headroom so more solar is exported.</span
+        >
+      </span>
+    </label>
+    <label>
+      Usage data source
+      <select formControlName="data_source">
+        <option value="none">Not connected yet</option>
+        <option value="fox_ess">Fox ESS cloud (coming soon)</option>
+        <option value="csv">CSV upload (coming soon)</option>
+      </select>
+    </label>
+  </fieldset>
+
+  @if (error()) {
+    <p class="form-error" role="alert">{{ error() }}</p>
+  }
+  <button type="submit" [disabled]="busy()">
+    {{ isNew() ? 'Save and continue' : 'Save changes' }}
+  </button>
+</form>
