@@ -60,6 +60,32 @@ deployment use Postgres (`SBP_DATABASE_URL=postgresql+psycopg://…` and `pip in
 Tables are created on startup. Migrations (Alembic) will be added once the schema starts
 changing with real data in it.
 
+## Tariffs
+
+A tariff is a list of rate bands for import and another for export, each with a start and end
+in local clock time (on the hour or half hour), a rate in p/kWh and whether it applies every day,
+Monday to Friday or at weekends. A band can cross midnight, and start = end means all day. For
+each direction and each kind of day the bands must cover all 24 hours exactly once; the API
+rejects gaps and overlaps with a plain message (e.g. "Import has no rate for 02:00-05:00"), and
+the setup form shows the same check and a 24-hour strip of the rates as you type. There is also
+a standing charge in p/day. Presets (single rate, Economy 7, Octopus Go, Intelligent Go, Flux,
+Cosy) come from `GET /api/system/tariff-presets` and fill in typical times and example prices
+for the user to correct. Dynamic tariffs such as Agile, and bank-holiday rates, aren't modelled.
+
+Code that prices energy should use `app.tariffs.TariffSchedule` rather than the bands:
+
+```python
+from app.tariffs import TariffSchedule
+
+schedule = TariffSchedule.from_system(system)
+schedule.rate_at(interval.start, "import")   # p/kWh; naive datetimes are UTC
+schedule.day_rates(day, "export")            # [(utc_start, p/kWh)] for each half hour of a local day
+schedule.standing_charge_pence_per_day
+```
+
+Databases from step 1 (one cheap window) are converted to bands on startup
+(`app/migrations.py`).
+
 ## Data import
 
 Usage is stored per half hour (UTC) and weather per hour, both against the user's system.

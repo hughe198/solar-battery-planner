@@ -3,8 +3,9 @@ from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Battery, SolarArray, System, Tariff, User, WeatherRecord
-from app.schemas import SystemIn, SystemOut
+from app.models import Battery, SolarArray, System, Tariff, TariffBand, User, WeatherRecord
+from app.schemas import SystemIn, SystemOut, TariffPresetOut
+from app.tariffs import PRESETS, Preset
 from app.security import current_user
 
 router = APIRouter(prefix="/api/system", tags=["system"])
@@ -39,8 +40,10 @@ def save_system(
 
     if system.tariff is None:
         system.tariff = Tariff()
-    for field, value in body.tariff.model_dump().items():
-        setattr(system.tariff, field, value)
+    tariff = body.tariff
+    for field in ("name", "preset", "standing_charge_pence_per_day"):
+        setattr(system.tariff, field, getattr(tariff, field))
+    system.tariff.bands = [TariffBand(**band.model_dump()) for band in tariff.bands]
 
     system.arrays = [SolarArray(**array.model_dump()) for array in body.arrays]
 
@@ -48,3 +51,9 @@ def save_system(
     db.commit()
     db.refresh(system)
     return system
+
+
+@router.get("/tariff-presets", response_model=list[TariffPresetOut])
+def tariff_presets() -> list[Preset]:
+    """Common UK tariffs to start from. Rates are examples; users edit them to match their bill."""
+    return PRESETS

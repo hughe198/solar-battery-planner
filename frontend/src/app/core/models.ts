@@ -22,14 +22,38 @@ export interface SolarArray {
   azimuth_degrees: number;
 }
 
-export interface Tariff {
+export type RateDirection = 'import' | 'export';
+/** Weekdays are Monday to Friday. */
+export type RateDays = 'all' | 'weekdays' | 'weekends';
+
+/**
+ * A rate for a window of the day, in local time on the hour or half hour ("HH:MM" or
+ * "HH:MM:SS"). The window may cross midnight; end "00:00" is midnight and start == end is
+ * all day.
+ */
+export interface TariffBand {
+  direction: RateDirection;
+  days: RateDays;
+  start: string;
+  end: string;
   /** Pence per kWh. */
-  day_import_rate: number;
-  cheap_import_rate: number;
-  export_rate: number;
-  /** Local time, "HH:MM" or "HH:MM:SS". */
-  cheap_start: string;
-  cheap_end: string;
+  rate: number;
+}
+
+export interface Tariff {
+  name: string;
+  preset: string | null;
+  standing_charge_pence_per_day: number;
+  /** For each direction and kind of day, the bands cover all 24 hours exactly once. */
+  bands: TariffBand[];
+}
+
+export interface TariffPreset {
+  id: string;
+  name: string;
+  description: string;
+  standing_charge_pence_per_day: number;
+  bands: TariffBand[];
 }
 
 export interface SystemConfig {
