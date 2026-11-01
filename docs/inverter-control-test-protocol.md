@@ -113,13 +113,13 @@ The server only runs this with `SBP_AUTO_APPLY=true` on one server process, or w
   writes upsetting the cloud's copy of the schedule. The planner only uses v1.
 - What the inverter does outside the scheduled periods when the scheduler is on. Fox normally
   falls back to the inverter's own work mode. Stage 5 lets you see this.
-- What a ForceCharge period does when the battery is already above `fdSoc`. The planner relies on
-  this to hold the battery, since Fox has no grid-only mode: it writes a ForceCharge to the lowest
-  accepted level. An owner has seen a manual ForceCharge to 90% stop there and run the house from
-  the grid for the rest of the period, which is the same state, but no one has watched one start
-  from above its level. The write test doesn't cover this, as its periods charge to 100%. To
-  check it, set one by hand in the Fox app with the battery above the level, and confirm the
-  battery neither charges nor discharges.
+- Whether the hold works on your inverter. The planner relies on it, since Fox has no grid-only
+  mode: it writes a ForceCharge to the lowest accepted level. On one owner's inverter, a manual
+  ForceCharge to 50% from 02:00 to 05:00 on 1 November 2026, with the battery at 65%, kept it at
+  65% and ran the house from the grid, with import matching usage. That hold was set by hand 15
+  points below the battery, not written by the planner at the lowest level, and the write test
+  doesn't cover it, as its periods charge to 100%. To check yours, set one by hand in the Fox app
+  with the battery above the level, and confirm the battery neither charges nor discharges.
 - The minimum charge range. Fox documents 10–100%. If your system's minimum is lower (for
   example 5%), periods are written with the inverter's lowest accepted value and the preview
   says so.

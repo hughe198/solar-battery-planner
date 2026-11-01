@@ -2,6 +2,7 @@ import { DecimalPipe } from '@angular/common';
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { RouterLink } from '@angular/router';
+import { chargeLabel, dayLabel, describeInProgress, localDate } from '../../core/charge-summary';
 import { errorMessage } from '../../core/errors';
 import { ForecastService } from '../../core/forecast.service';
 import { Backtest, History as WeekHistory, Replay, ReplayDetail } from '../../core/models';
@@ -28,6 +29,7 @@ export class History implements OnInit {
   private readonly forecasts = inject(ForecastService);
   readonly system = toSignal(inject(SystemService).get());
   readonly pence = formatPence;
+  clock: () => number = () => Date.now();
 
   readonly history = signal<WeekHistory | null>(null);
   readonly replay = signal<Replay | null>(null);
@@ -59,6 +61,17 @@ export class History implements OnInit {
   readonly selectedDay = signal<string | null>(null);
   readonly detail = signal<ReplayDetail | null>(null);
   readonly detailError = signal<string | null>(null);
+
+  readonly inProgress = computed(() => this.replay()?.in_progress ?? null);
+
+  private readonly inProgressWords = computed(() => {
+    const current = this.inProgress();
+    const zone = this.system()?.timezone;
+    return current ? describeInProgress(current, zone, localDate(this.clock(), zone)) : null;
+  });
+  readonly inProgressTitle = computed(() => this.inProgressWords()?.title ?? '');
+  readonly inProgressSummary = computed(() => this.inProgressWords()?.summary ?? '');
+  readonly inProgressScore = computed(() => this.inProgressWords()?.score ?? '');
 
   readonly backtestMax = computed(() => {
     const days = this.backtest()?.days ?? [];
@@ -96,6 +109,8 @@ export class History implements OnInit {
     this.selectedDay.set(day);
     this.detail.set(null);
     this.detailError.set(null);
+    // The cycle under way has no replay to fetch; it comes with the rest.
+    if (day === this.inProgress()?.day) return;
     this.plans.replayDay(day).subscribe({
       next: (detail) => {
         // Clicking quickly can leave an earlier day's answer arriving last.
@@ -107,14 +122,11 @@ export class History implements OnInit {
     });
   }
 
-  dayLabel(day: string): string {
-    return new Intl.DateTimeFormat('en-GB', {
-      weekday: 'long',
-      day: 'numeric',
-      month: 'long',
-      timeZone: 'UTC',
-    }).format(new Date(`${day}T00:00:00Z`));
+  chargeLabel(charge: { day: string; charge_start?: string | null }): string {
+    return chargeLabel(charge, this.system()?.timezone);
   }
+
+  readonly dayLabel = dayLabel;
 
   /** Width of a backtest bar as a percentage of the largest value. */
   barWidth(kwh: number): number {

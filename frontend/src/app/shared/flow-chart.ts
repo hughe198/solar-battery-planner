@@ -28,6 +28,15 @@ const PLOT_WIDTH = WIDTH - PAD.left - PAD.right;
       [attr.aria-label]="label()"
       (mouseleave)="hovered.set(null)"
     >
+      @for (run of leadUpRuns(); track run.x) {
+        <rect
+          class="lead-up"
+          [attr.x]="run.x"
+          [attr.y]="pad.top"
+          [attr.width]="run.width"
+          [attr.height]="flowTop + flowHeight - pad.top"
+        />
+      }
       @for (run of cheapRuns(); track run.x) {
         <rect
           class="cheap"
@@ -135,7 +144,11 @@ const PLOT_WIDTH = WIDTH - PAD.left - PAD.right;
           <span class="key best"></span> With the best charge
         }
         <span class="key import"></span> Import (up) <span class="key export"></span> Export (down)
-        · kWh per half hour. <span class="key cheap"></span> Cheap window. Hover for values.
+        · kWh per half hour. <span class="key cheap"></span> Cheap window.
+        @if (leadUpRuns().length) {
+          <span class="key lead-up"></span> Evening before, not scored.
+        }
+        Hover for values.
       }
     </p>
   `,
@@ -200,20 +213,24 @@ export class FlowChart {
     return path.trim();
   }
 
-  readonly cheapRuns = computed(() => {
+  readonly cheapRuns = computed(() => this.runs((p) => p.cheap));
+  readonly leadUpRuns = computed(() => this.runs((p) => !!p.lead_up));
+
+  private runs(within: (p: FlowPoint) => boolean): { x: number; width: number }[] {
     const runs: { x: number; width: number }[] = [];
     let start: number | null = null;
     const pts = this.points();
     pts.forEach((p, i) => {
-      if (p.cheap && start === null) start = i;
-      if ((!p.cheap || i === pts.length - 1) && start !== null) {
-        const end = p.cheap ? i + 1 : i;
+      const inside = within(p);
+      if (inside && start === null) start = i;
+      if ((!inside || i === pts.length - 1) && start !== null) {
+        const end = inside ? i + 1 : i;
         runs.push({ x: this.slotX(start), width: (end - start) * this.slotWidth() });
         start = null;
       }
     });
     return runs;
-  });
+  }
 
   /** Day names at local midnight for multi-day charts, otherwise every three hours. */
   readonly xTicks = computed(() => {
