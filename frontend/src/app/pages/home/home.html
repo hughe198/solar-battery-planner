@@ -1,0 +1,108 @@
+<h1>Yesterday and last night</h1>
+<p class="data-freshness muted" aria-live="polite">
+  @if (updating()) {
+    Fetching your latest readings from Fox ESS…
+  } @else if (dataUpTo(); as upTo) {
+    Readings up to {{ upTo }}.
+  }
+  @if (status()?.fox_ess && !updating()) {
+    <button type="button" class="link" (click)="update()">Update now</button>
+  }
+</p>
+@if (updateError(); as message) {
+  <p class="form-error" role="alert">{{ message }}</p>
+}
+
+<section class="card home-yesterday">
+  <h2>Yesterday, {{ dayLabel(yesterdayDate()) }}</h2>
+  @if (yesterday(); as y) {
+    <div class="tiles">
+      <div class="tile">
+        <span class="muted">Your home used</span>
+        <strong>{{ y.load_kwh | number: '1.1-1' }} kWh</strong>
+      </div>
+      <div class="tile">
+        <span class="muted">Solar made</span>
+        <strong>{{ y.solar_kwh | number: '1.1-1' }} kWh</strong>
+      </div>
+      <div class="tile">
+        <span class="muted">{{ net() >= 0 ? 'Net cost' : 'Net earned' }}</span>
+        <strong>{{ pence(net() >= 0 ? net() : -net()) }}</strong>
+        <span class="muted"
+          >imports {{ pence(y.import_cost_pence) }}, exports
+          {{ pence(y.export_revenue_pence) }}</span
+        >
+      </div>
+      @if (y.min_soc_percent !== null) {
+        <div class="tile">
+          <span class="muted">Battery</span>
+          <strong
+            >{{ y.min_soc_percent | number: '1.0-0' }}–{{
+              y.max_soc_percent | number: '1.0-0'
+            }}%</strong
+          >
+        </div>
+      }
+    </div>
+    @if (yesterdaysCharge(); as c) {
+      <p class="home-result">
+        <strong>{{ chargeLabel() }}:</strong> went in at
+        {{ c.soc_before_percent | number: '1.0-0' }}% and reached
+        {{ c.soc_after_charge_percent | number: '1.0-0' }}%. With hindsight,
+        {{ c.best_soc_percent | number: '1.0-0' }}% was best,
+        @if (c.missed_saving_pence < 1) {
+          so it was about right.
+        } @else {
+          so it cost {{ pence(c.missed_saving_pence) }} more than it needed to.
+        }
+        <a routerLink="/history">See History</a>
+      </p>
+    } @else {
+      <p class="muted">Yesterday's charge gets its score once its whole cycle is imported.</p>
+    }
+  } @else if (recent()) {
+    <p class="muted">
+      No readings for yesterday yet.
+      @if (!status()?.fox_ess) {
+        <a routerLink="/data">Import your data</a>
+      }
+    </p>
+  }
+</section>
+
+<section class="card home-charge">
+  @if (latestCharge(); as charge) {
+    <h2>{{ charge.title }}</h2>
+    <p class="verdict">{{ charge.summary }}</p>
+    <p class="muted">{{ charge.score }}</p>
+  } @else {
+    <h2>Last night's charge</h2>
+    <p class="muted">Nothing to show until readings from the latest cheap period are imported.</p>
+  }
+  @if (recent()?.points?.length) {
+    <app-flow-chart
+      [points]="recent()!.points"
+      [timeZone]="system()?.timezone"
+      label="Battery level and grid import and export per half hour, yesterday and today so far"
+    />
+  }
+</section>
+
+<section class="card chosen home-tonight">
+  <h2>Suggested for tonight</h2>
+  @if (suggestion(); as s) {
+    <div class="target">{{ s.headline }}</div>
+    @for (step of s.steps; track $index) {
+      <p>{{ step }}</p>
+    }
+    @if (s.why) {
+      <p>{{ s.why }}</p>
+    }
+    <p class="muted">{{ s.going }} {{ s.left }}</p>
+    <p><a routerLink="/tonight">See the full plan</a></p>
+  } @else if (planError(); as message) {
+    <p class="form-error" role="alert">{{ message }}</p>
+  } @else {
+    <p class="muted">Working out tonight's charge…</p>
+  }
+</section>

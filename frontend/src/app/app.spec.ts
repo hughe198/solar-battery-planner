@@ -45,6 +45,7 @@ describe('App', () => {
     const el = fixture.nativeElement as HTMLElement;
     const buttons = [...el.querySelectorAll<HTMLElement>('nav .nav-button')];
     expect(buttons.map((b) => b.textContent?.trim())).toEqual([
+      'Home',
       'Tonight',
       'History',
       'Inverter',

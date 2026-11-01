@@ -155,9 +155,126 @@ describe('History', () => {
     expect(week.querySelector('path.soc')?.getAttribute('d')?.match(/M/g)?.length).toBe(7 * 24);
   });
 
-  it('reviews the last charge and its cost', () => {
-    const { el } = render();
-    expect(el.textContent).toContain('How your last charge worked out');
+  describe('the charge under way', () => {
+    const IN_PROGRESS: NonNullable<Replay['in_progress']> = {
+      day: '2026-06-01',
+      charge_start: '2026-06-01T02:00:00Z',
+      charge_end: '2026-06-01T05:00:00Z',
+      scored_after: '2026-06-02T02:00:00Z',
+      window_finished: true,
+      soc_before_percent: 66,
+      soc_peak_percent: 66,
+      soc_after_percent: 65,
+      outcome: 'held',
+      grid_only: true,
+      latest_reading_at: '2026-06-01T18:00:00Z',
+      points: [
+        {
+          start: '2026-06-01T01:30:00Z',
+          load_kwh: 0.1,
+          solar_kwh: 0,
+          import_kwh: 0,
+          export_kwh: 0,
+          soc_percent: 66,
+          cheap: false,
+          lead_up: true,
+        },
+        {
+          start: '2026-06-01T02:00:00Z',
+          load_kwh: 0.1,
+          solar_kwh: 0,
+          import_kwh: 0.1,
+          export_kwh: 0,
+          soc_percent: 65,
+          cheap: true,
+          lead_up: false,
+        },
+      ],
+    };
+    const open = (progress: Partial<typeof IN_PROGRESS> = {}, today = '2026-06-01T18:30:00Z') => {
+      const fixture = TestBed.createComponent(History);
+      fixture.componentInstance.clock = () => new Date(today).getTime();
+      fixture.detectChanges();
+      http.expectOne('/api/system').flush(SYSTEM);
+      http.expectOne((r) => r.url === '/api/history').flush({ days: [], points: [] });
+      http
+        .expectOne((r) => r.url === '/api/plan/replay')
+        .flush({ ...REPLAY, in_progress: { ...IN_PROGRESS, ...progress } });
+      http.expectOne('/api/forecast/accuracy').flush(NO_BACKTEST);
+      http.expectOne('/api/plan/replay/2026-05-31').flush({ ...REPLAY.review, points: [] });
+      fixture.detectChanges();
+      return { fixture, el: fixture.nativeElement as HTMLElement };
+    };
+    const section = (el: HTMLElement) => el.querySelector('.in-progress-charge');
+
+    it("calls it last night's charge, says what it did and when it gets a score", () => {
+      const card = section(open().el)!;
+      expect(card.querySelector('h2')?.textContent).toBe("Last night's charge");
+      expect(card.textContent).toContain(
+        'In the 02:00–05:00 cheap period, the battery went in at 66% and held at 65%, with the house on the grid.',
+      );
+      expect(card.textContent).toContain(
+        'In progress. Its score comes after 02:00 on Tuesday, once that data is imported.',
+      );
+    });
+
+    it('uses the date when the data is too old for it to be last night', () => {
+      const { el } = open({}, '2026-06-04T09:00:00Z');
+      expect(section(el)?.querySelector('h2')?.textContent).toBe(
+        'Charge at 02:00 on Monday 1 June',
+      );
+    });
+
+    it('describes a charge, a fall and a window still open', () => {
+      expect(section(open({ outcome: 'charged', soc_peak_percent: 90 }).el)?.textContent).toContain(
+        'went in at 66% and charged to 90%, with the house on the grid.',
+      );
+    });
+
+    it('does not claim grid only when the battery fell', () => {
+      expect(
+        section(open({ outcome: 'discharged', soc_after_percent: 55, grid_only: false }).el)
+          ?.textContent,
+      ).toContain('went in at 66% and fell to 55%.');
+    });
+
+    it('says so far while the window is open', () => {
+      expect(section(open({ window_finished: false }).el)?.textContent).toContain(
+        'held at 65% so far, with the house on the grid.',
+      );
+    });
+
+    it('marks its calendar square and shows its chart without asking for a replay', () => {
+      const { fixture, el } = open();
+      const square = el.querySelector<HTMLButtonElement>('button.calendar-day.in-progress')!;
+      expect(el.querySelector('.day-stepper-label strong')?.textContent).toBe('June 2026');
+      expect(square.textContent).toContain('65%');
+      expect(square.getAttribute('aria-label')).toContain('no score yet');
+
+      square.click();
+      fixture.detectChanges();
+
+      http.expectNone('/api/plan/replay/2026-06-01');
+      const lookBack = el.querySelector('.look-back')!;
+      expect(lookBack.querySelector('h3')?.textContent).toBe("Last night's charge");
+      expect(lookBack.querySelector('path.soc')?.getAttribute('d')).toMatch(/^M/);
+      expect(lookBack.querySelectorAll('rect.lead-up').length).toBe(1);
+      expect(lookBack.textContent).toContain('Evening before, not scored.');
+      expect(lookBack.textContent).not.toContain('Loading');
+    });
+  });
+
+  it('names the charge it reviews by date and time, and its cost', () => {
+    const { el } = render({
+      ...REPLAY,
+      review: {
+        day: { ...REPLAY.days[0], charge_start: '2026-05-30T23:30:00Z' },
+        comments: REPLAY.review!.comments,
+      },
+    });
+    expect(el.textContent).toContain('Charge at 23:30 on Saturday 30 May');
+    expect(el.textContent).toContain('The latest charge with a full result.');
+    expect(el.textContent).not.toContain('How your last charge');
     expect(el.textContent).toContain('100%');
     expect(el.textContent).toContain('40p');
     expect(el.textContent).toContain('That was more than the day needed.');

@@ -57,9 +57,18 @@
   </section>
 }
 
+@if (inProgress()) {
+  <section class="card in-progress-charge">
+    <h2>{{ inProgressTitle() }}</h2>
+    <p class="verdict">{{ inProgressSummary() }}</p>
+    <p class="muted">{{ inProgressScore() }}</p>
+  </section>
+}
+
 <section class="card">
-  <h2>How your last charge worked out</h2>
   @if (review(); as rv) {
+    <h2>{{ chargeLabel(rv.day) }}</h2>
+    <p class="muted">The latest charge with a full result.</p>
     <div class="tiles">
       <div class="tile">
         <span class="muted">You charged to</span>
@@ -83,6 +92,7 @@
       }
     </ul>
   } @else {
+    <h2>How each charge worked out</h2>
     <p class="muted">
       Once you've imported days with battery level (Fox ESS includes it), this shows how each
       night's charge worked out and what a better one would have saved.
@@ -95,10 +105,27 @@
   @if (rp.days.length) {
     <section class="card look-back">
       <h2>Look back</h2>
-      <app-charge-calendar [days]="rp.days" [selected]="selectedDay()" (pick)="selectDay($event)" />
+      <app-charge-calendar
+        [days]="rp.days"
+        [selected]="selectedDay()"
+        [inProgress]="inProgress()"
+        (pick)="selectDay($event)"
+      />
       @if (selectedDay(); as day) {
-        <h3>{{ dayLabel(day) }}</h3>
+        @if (inProgress(); as c) {
+          @if (c.day === day) {
+            <h3>{{ inProgressTitle() }}</h3>
+            <p>{{ inProgressSummary() }}</p>
+            <p class="muted">{{ inProgressScore() }}</p>
+            <app-flow-chart
+              [points]="c.points"
+              [timeZone]="system()?.timezone"
+              label="Metered battery level and grid import and export per half hour, so far"
+            />
+          }
+        }
         @if (detail(); as d) {
+          <h3>{{ chargeLabel(d.day) }}</h3>
           <div class="tiles">
             <div class="tile">
               <span class="muted">Went in at</span>
@@ -130,8 +157,10 @@
             }
           </ul>
         } @else if (detailError(); as message) {
+          <h3>{{ dayLabel(day) }}</h3>
           <p class="form-error" role="alert">{{ message }}</p>
-        } @else {
+        } @else if (day !== inProgress()?.day) {
+          <h3>{{ dayLabel(day) }}</h3>
           <p class="muted">Loading…</p>
         }
       }
