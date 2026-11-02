@@ -22,7 +22,12 @@ from app.control.schedule import (
     merge,
     without,
 )
-from app.importers.fox_ess import FoxEssClient, FoxEssError
+from app.importers.fox_ess import (
+    SCHEDULER_FLAG_PATH,
+    SCHEDULER_SET_PATH,
+    FoxEssClient,
+    FoxEssError,
+)
 from app.models import (
     ControlAction,
     ControlActionKind,
@@ -69,6 +74,12 @@ class Proposal:
     @property
     def fingerprint(self) -> str:
         return fingerprint(self.after)
+
+    @property
+    def enable_after(self) -> bool:
+        """Whether the schedule is switched on after applying: on for a new charge, otherwise
+        as it was."""
+        return bool(self.after) and (self.schedule.enabled or bool(self.added))
 
 
 def propose(
@@ -199,6 +210,24 @@ def read_schedule(client: FoxEssClient, sn: str) -> Schedule:
     return Schedule.from_fox(client.scheduler(sn))
 
 
+def write_requests(sn: str, periods: list[Period], enable: bool) -> list[tuple[str, dict]]:
+    """The exact write requests, as (path, JSON body), in the order they're sent. The dry run
+    prints these, and the request tests check the real client sends exactly these."""
+    groups = [p.to_fox() for p in periods]
+    requests: list[tuple[str, dict]] = []
+    if groups:
+        requests.append((SCHEDULER_SET_PATH, {"deviceSN": sn, "groups": groups}))
+    requests.append((SCHEDULER_FLAG_PATH, {"deviceSN": sn, "enable": int(bool(enable and groups))}))
+    return requests
+
+
+def apply_requests(sn: str, proposal: Proposal) -> list[tuple[str, dict]]:
+    """What `apply` would send for this proposal: nothing when there's nothing to change."""
+    if not proposal.added and not proposal.removed:
+        return []
+    return write_requests(sn, proposal.after, proposal.enable_after)
+
+
 def _write(client: FoxEssClient, sn: str, periods: list[Period], enable: bool) -> None:
     """Write the periods, then switch the schedule on or off. With no periods the schedule is
     switched off, which returns the inverter to its own work mode."""
@@ -307,7 +336,7 @@ def apply(
         )
     else:
         done = "No charge needed; the planner's force charge periods were removed."
-    enable = bool(proposal.after) and (proposal.schedule.enabled or bool(proposal.added))
+    enable = proposal.enable_after
     action = _run_write(
         db,
         system,

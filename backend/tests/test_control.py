@@ -6,6 +6,7 @@ import pytest
 
 from app.api.control import get_control_client_factory
 from app.api.imports import get_fox_client_factory
+from app.config import settings
 from app.control import service, testing
 from app.control.nightly import run_once
 from app.control.schedule import Period, Schedule, charge_periods, matches, merge
@@ -248,7 +249,12 @@ def test_full_schedule_is_refused():
 
 
 @pytest.fixture
-def inverter():
+def writes_on(monkeypatch):
+    monkeypatch.setattr(settings, "inverter_writes", True)
+
+
+@pytest.fixture
+def inverter(writes_on):
     fake = FakeInverter([group((16, 0), (18, 59), "Feedin", fdSoc=10, fdPwr=0, minSocOnGrid=10)])
     app.dependency_overrides[get_control_client_factory] = lambda: fake
     return fake
@@ -435,3 +441,26 @@ def test_apply_with_nothing_to_change_writes_nothing(monkeypatch):
     status = service.apply(None, system, control, inverter, proposal, ControlTrigger.manual)
     assert status == ControlStatus.skipped
     assert inverter.writes == []
+
+
+def test_writes_off_refuses_every_write_but_still_reads(client, headers, inverter, monkeypatch):
+    opt_in(client, headers)
+    monkeypatch.setattr(settings, "inverter_writes", False)
+    assert client.get("/api/control", headers=headers).json()["writes_allowed"] is False
+    step(client, headers, 1)  # only reads
+    for path, body in (
+        ("/api/control/test", {"step": 2}),
+        ("/api/control/apply", {"fingerprint": "x"}),
+        ("/api/control/clear", None),
+        ("/api/control/restore", None),
+    ):
+        resp = client.post(path, json=body, headers=headers)
+        assert resp.status_code == 409, path
+        assert "switched off on this server" in resp.json()["detail"]
+    assert inverter.writes == []
+
+
+def test_nightly_does_nothing_while_writes_are_off():
+    # Returns before touching the database, the plan or the inverter.
+    assert settings.inverter_writes is False
+    assert run_once(None, FakeInverter(), None) == []

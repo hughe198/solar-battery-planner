@@ -157,9 +157,12 @@ def test_importer_chunks_by_24_hours():
     assert [i.start for i in intervals] == [utc(2024, 6, 1), utc(2024, 6, 2), utc(2024, 6, 3)]
 
 
-def test_scheduler_writes_use_the_v1_paths_and_bodies():
+def test_scheduler_writes_use_the_v1_paths_and_bodies(monkeypatch):
     import json
 
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "inverter_writes", True)
     seen, sleeps = [], []
     client = make_client([{"errno": 0, "result": None}] * 2, seen, sleeps)
     groups = [{"startHour": 1, "startMinute": 0, "endHour": 4, "endMinute": 59}]

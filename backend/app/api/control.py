@@ -49,6 +49,20 @@ def get_control_client_factory() -> Callable[[str], FoxEssClient]:
     return control_client
 
 
+WRITES_OFF = (
+    "Writes to inverters are switched off on this server, so nothing was sent. Reading, the "
+    "preview and the dry run still work. Change the schedule in the Fox app if you need to, or "
+    "set SBP_INVERTER_WRITES=true for the live stages of docs/inverter-trust-ladder.md."
+)
+
+
+def _require_writes() -> None:
+    """Refuse a write up front, with a clear reason, while the server blocks them. The Fox
+    client blocks them too, so this is for the message, not the safety."""
+    if not settings.inverter_writes:
+        raise HTTPException(status.HTTP_409_CONFLICT, WRITES_OFF)
+
+
 def _clock(minutes: int) -> str:
     minutes %= 24 * 60
     return f"{minutes // 60:02d}:{minutes % 60:02d}"
@@ -120,6 +134,7 @@ def _status(db: Session, system: System) -> ControlStatusOut:
         enabled=enabled,
         auto_apply=bool(enabled and control.auto_apply),
         auto_apply_available=settings.auto_apply,
+        writes_allowed=settings.inverter_writes,
         consented_at=control.consented_at if control else None,
         test_level=level,
         test_steps=[
@@ -274,6 +289,7 @@ def apply_plan(
     changed since the preview, so what is written is always what was shown."""
     system = _system(user)
     control = _enabled(system)
+    _require_writes()
     if control.test_level < testing.UNLOCKS_APPLY:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
@@ -301,6 +317,7 @@ def clear_periods(
     """Take the planner's force charge and test periods out, keeping the user's own."""
     system = _system(user)
     control = _enabled(system)
+    _require_writes()
     action = service.clear(db, system, control, _client(system, client_factory))
     db.commit()
     return action
@@ -315,6 +332,7 @@ def restore_schedule(
     """Put back the schedule saved before the planner first wrote to the inverter."""
     system = _system(user)
     control = _enabled(system)
+    _require_writes()
     action = service.restore(db, system, control, _client(system, client_factory))
     db.commit()
     return action
@@ -330,6 +348,8 @@ def run_test_step(
     """Run one step of the write test (see app.control.testing)."""
     system = _system(user)
     control = _enabled(system)
+    if body.step > 1:  # step 1 only reads
+        _require_writes()
     try:
         action = testing.run_step(
             db,

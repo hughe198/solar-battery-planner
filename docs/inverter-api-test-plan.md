@@ -1,6 +1,8 @@
 # Inverter API: white-box test plan
 
-Status: planned, not started. The defects below were found by reading the code and confirmed against
+Status: Layer 1, part of Layers 2 and 4, and Layer 5 are built (see
+[the trust ladder](inverter-trust-ladder.md), which turns this plan into stages with automated,
+AI and human checks). The defects below were found by reading the code and confirmed against
 an in-memory fake inverter on 1 November 2026. No live write has been made by the app.
 
 The goal is to prove, one call type at a time, that every request sent to Fox ESS is the request we
@@ -200,8 +202,9 @@ that Clear and Restore still work from that state.
 ### Layer 5: Dry run against the real schedule
 
 A command that reads the real schedule, builds tonight's proposal and prints the exact requests
-without sending them. Add a server setting, such as `SBP_INVERTER_WRITES=false` by default, that
-blocks both write endpoints in `FoxEssClient` itself, so a bug higher up can't get past it.
+without sending them: `python -m app.control.dryrun --email you@example.com`. The server setting
+`SBP_INVERTER_WRITES`, `false` by default, blocks both write endpoints in `FoxEssClient` itself, so
+a bug higher up can't get past it.
 
 Run it for a week and compare each night with what you'd set by hand.
 

@@ -1,0 +1,27 @@
+{
+  "scenario": "No charge or hold: one read, no write",
+  "requests": [
+    {
+      "method": "POST",
+      "path": "/op/v1/device/scheduler/get",
+      "body": {
+        "deviceSN": "TESTSN0001"
+      }
+    }
+  ],
+  "outcome": "skipped",
+  "message": "No charge needed and no planner periods to remove, so nothing was written.",
+  "inverter_after": {
+    "enable": 1,
+    "groups": [
+      {
+        "enable": 1,
+        "startHour": 16,
+        "startMinute": 0,
+        "endHour": 18,
+        "endMinute": 59,
+        "workMode": "SelfUse"
+      }
+    ]
+  }
+}

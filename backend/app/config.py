@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     # Run the nightly automatic apply in this server process (see app.control.nightly). Off by
     # default; turn on for exactly one server process, or run the module from cron instead.
     auto_apply: bool = False
+    # Lets the server write to inverters at all. Off by default: with it off, the Fox client
+    # refuses both schedule write calls before anything is sent, whatever the code above it
+    # does, so reads, previews and dry runs still work but nothing on an inverter can change.
+    inverter_writes: bool = False
     # Open-Meteo: reanalysis archive for older days, historical forecasts for the last week
     # (the archive lags real time by several days).
     open_meteo_archive_url: str = "https://archive-api.open-meteo.com/v1/archive"

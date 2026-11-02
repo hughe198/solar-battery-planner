@@ -1,0 +1,65 @@
+{
+  "scenario": "Remove the planner's charge, keep the user's period",
+  "requests": [
+    {
+      "method": "POST",
+      "path": "/op/v1/device/scheduler/get",
+      "body": {
+        "deviceSN": "TESTSN0001"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/op/v1/device/scheduler/enable",
+      "body": {
+        "deviceSN": "TESTSN0001",
+        "groups": [
+          {
+            "enable": 1,
+            "startHour": 16,
+            "startMinute": 0,
+            "endHour": 18,
+            "endMinute": 59,
+            "workMode": "Feedin",
+            "fdSoc": 10,
+            "fdPwr": 0,
+            "minSocOnGrid": 10
+          }
+        ]
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/op/v1/device/scheduler/set/flag",
+      "body": {
+        "deviceSN": "TESTSN0001",
+        "enable": 1
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/op/v1/device/scheduler/get",
+      "body": {
+        "deviceSN": "TESTSN0001"
+      }
+    }
+  ],
+  "outcome": "ok",
+  "message": "The planner's force charge periods were removed.",
+  "inverter_after": {
+    "enable": 1,
+    "groups": [
+      {
+        "enable": 1,
+        "startHour": 16,
+        "startMinute": 0,
+        "endHour": 18,
+        "endMinute": 59,
+        "workMode": "Feedin",
+        "fdSoc": 10,
+        "fdPwr": 0,
+        "minSocOnGrid": 10
+      }
+    ]
+  }
+}

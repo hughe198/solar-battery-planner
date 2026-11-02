@@ -368,6 +368,8 @@ export interface InverterControl {
   enabled: boolean;
   auto_apply: boolean;
   auto_apply_available: boolean;
+  /** Whether this server lets anything write to an inverter at all (SBP_INVERTER_WRITES). */
+  writes_allowed: boolean;
   consented_at: string | null;
   test_level: number;
   test_steps: TestStep[];

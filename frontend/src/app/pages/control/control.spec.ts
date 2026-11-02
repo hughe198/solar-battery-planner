@@ -12,6 +12,7 @@ const OFF: InverterControl = {
   enabled: false,
   auto_apply: false,
   auto_apply_available: false,
+  writes_allowed: true,
   consented_at: null,
   test_level: 0,
   test_steps: STEPS,
@@ -126,6 +127,17 @@ describe('Control', () => {
     )!;
     expect(apply.disabled).toBe(true);
     expect(el.textContent).toContain('Pass the write test up to step 4');
+  });
+
+  it('only lets the read-only step run while the server blocks writes', () => {
+    const fixture = render({ ...OFF, enabled: true, test_level: 1, writes_allowed: false });
+    const el = fixture.nativeElement as HTMLElement;
+    expect(el.textContent).toContain('Writes to inverters are switched off on this server');
+    const buttons = Array.from(el.querySelectorAll('button'));
+    const named = (text: string) => buttons.find((b) => b.textContent?.includes(text))!;
+    expect(named('Run step 2').disabled).toBe(true);
+    expect(named('Remove planner periods').disabled).toBe(true);
+    expect(named('Preview').disabled).toBe(false);
   });
 
   it('applies exactly the previewed schedule', () => {

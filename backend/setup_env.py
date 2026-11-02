@@ -84,6 +84,15 @@ VARS: list[Var] = [
         kind="origins",
     ),
     Var(
+        "inverter_writes",
+        "Allow writes to inverters",
+        "The master switch for changing an inverter's schedule. While it's off, the server "
+        "refuses every write before it reaches Fox ESS: reading, previews and the dry run "
+        "still work. Turn on only for the live stages of docs/inverter-trust-ladder.md.",
+        default="false",
+        kind="bool",
+    ),
+    Var(
         "auto_apply",
         "Nightly automatic inverter apply",
         "Runs the nightly automatic apply of the charge plan to opted-in inverters inside this "
