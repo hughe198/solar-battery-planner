@@ -29,6 +29,8 @@ SCHEDULER_PATH = "/op/v1/device/scheduler/get"
 SCHEDULER_SET_PATH = "/op/v1/device/scheduler/enable"
 SCHEDULER_FLAG_PATH = "/op/v1/device/scheduler/set/flag"
 WRITE_GAP_SECONDS = 2.1
+# Every path that changes an inverter. Nothing else the client calls writes.
+WRITE_PATHS = frozenset({SCHEDULER_SET_PATH, SCHEDULER_FLAG_PATH})
 
 # Fox variable name -> UsageInterval field. All are power in kW except SoC (%).
 POWER_VARIABLES = {
@@ -52,6 +54,10 @@ class FoxEssAuthError(FoxEssError):
     pass
 
 
+class FoxEssWritesBlocked(FoxEssError):
+    """A write was refused by this server before anything was sent to Fox ESS."""
+
+
 class FoxEssClient:
     """Thin signed client. Waits so that calls are at least `min_gap` seconds apart."""
 
@@ -65,8 +71,12 @@ class FoxEssClient:
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
         max_retries: int = 3,
+        writes_allowed: bool | None = None,
     ) -> None:
         self.api_key = api_key
+        # False blocks writes from this client. Nothing here can allow a write the server
+        # setting blocks; the setting is read on every write, not once.
+        self.writes_allowed = writes_allowed
         self.http = http or httpx.Client(base_url=base_url or settings.fox_ess_base_url, timeout=30)
         self.min_gap = min_gap
         self.sleep = sleep
@@ -99,7 +109,20 @@ class FoxEssClient:
     def get(self, path: str, params: dict[str, Any]) -> Any:
         return self._call("GET", path, params=params)
 
+    def _check_write(self, path: str) -> None:
+        if path not in WRITE_PATHS:
+            return
+        if not settings.inverter_writes:
+            raise FoxEssWritesBlocked(
+                "Writes to inverters are switched off on this server (SBP_INVERTER_WRITES), "
+                "so nothing was sent to Fox ESS"
+            )
+        if self.writes_allowed is False:
+            raise FoxEssWritesBlocked("This client is read-only, so nothing was sent to Fox ESS")
+
     def _call(self, method: str, path: str, **kwargs: Any) -> Any:
+        # The last line of defence: checked here so no caller can get past it.
+        self._check_write(path)
         for attempt in range(self.max_retries + 1):
             self._pace()
             try:
