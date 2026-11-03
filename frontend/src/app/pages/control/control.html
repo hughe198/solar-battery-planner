@@ -51,6 +51,13 @@
       </button>
     </section>
   } @else {
+    @if (!s.writes_allowed) {
+      <p class="notice writes-off" role="status">
+        Writes to inverters are switched off on this server, so nothing here can change your
+        inverter. Step 1 and the preview only read, so they still work. The server's owner turns
+        writes on (SBP_INVERTER_WRITES) only for the live stages of the trust ladder.
+      </p>
+    }
     <section class="card">
       <h2>1. Write test</h2>
       <p>
@@ -69,7 +76,13 @@
         }
       </ol>
       @if (nextStep(); as n) {
-        <button type="button" [disabled]="busy()" (click)="runStep(n)">Run step {{ n }}</button>
+        <button
+          type="button"
+          [disabled]="busy() || (n > 1 && !s.writes_allowed)"
+          (click)="runStep(n)"
+        >
+          Run step {{ n }}
+        </button>
       } @else {
         <p class="muted">All steps passed.</p>
       }
@@ -156,7 +169,11 @@
             <summary>Exact request sent to Fox ESS</summary>
             <pre>{{ p.request | json }}</pre>
           </details>
-          <button type="button" [disabled]="busy() || !s.can_apply" (click)="apply(p)">
+          <button
+            type="button"
+            [disabled]="busy() || !s.can_apply || !s.writes_allowed"
+            (click)="apply(p)"
+          >
             Apply to inverter
           </button>
           @if (!s.can_apply) {
@@ -177,13 +194,18 @@
         </p>
       }
       <div class="row">
-        <button type="button" class="secondary" [disabled]="busy()" (click)="clear()">
+        <button
+          type="button"
+          class="secondary"
+          [disabled]="busy() || !s.writes_allowed"
+          (click)="clear()"
+        >
           Remove planner periods
         </button>
         <button
           type="button"
           class="secondary"
-          [disabled]="busy() || !s.has_original"
+          [disabled]="busy() || !s.has_original || !s.writes_allowed"
           (click)="restore()"
         >
           Restore original schedule

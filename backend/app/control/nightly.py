@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.plan import make_plan, next_day
+from app.config import settings
 from app.control.service import ControlError, apply, propose, read_schedule
 from app.crypto import decrypt
 from app.importers.fox_ess import WRITE_GAP_SECONDS, FoxEssClient, FoxEssError
@@ -49,6 +50,9 @@ def run_once(
     weather_client: OpenMeteoClient,
     now: datetime | None = None,
 ) -> list[ControlAction]:
+    if not settings.inverter_writes:
+        log.info("Writes to inverters are switched off (SBP_INVERTER_WRITES), so nothing to do")
+        return []
     now = now or datetime.now(timezone.utc)
     actions = []
     controls = db.scalars(

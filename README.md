@@ -377,5 +377,12 @@ by default and needs explicit consent on the **Inverter** page (`/inverter`, API
   manual apply. See [the test protocol](docs/inverter-control-test-protocol.md).
 - Auto-apply (`app/control/nightly.py`) runs each system once a night, from two hours before the
   charge window opens.
+- **Writes are off on the server by default.** `SBP_INVERTER_WRITES=false` makes the Fox client
+  refuse both write calls before anything is sent, so only reads, the preview, step 1 of the write
+  test and the dry run work. Turn it on only for the live stages of
+  [the trust ladder](docs/inverter-trust-ladder.md).
+- The dry run, `python -m app.control.dryrun --email you@example.com --out dryrun.md`, reads the
+  schedule once and prints a review pack: the plan, the schedule before and after, automated
+  checks, the exact requests Apply would send, and checklists for a person and an AI reviewer.
 
 None of this has been tested against a live inverter yet.

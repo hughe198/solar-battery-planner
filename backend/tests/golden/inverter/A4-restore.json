@@ -1,0 +1,58 @@
+{
+  "scenario": "Original schedule back, switched off as it was",
+  "requests": [
+    {
+      "method": "POST",
+      "path": "/op/v1/device/scheduler/enable",
+      "body": {
+        "deviceSN": "TESTSN0001",
+        "groups": [
+          {
+            "enable": 1,
+            "startHour": 16,
+            "startMinute": 0,
+            "endHour": 18,
+            "endMinute": 59,
+            "workMode": "Feedin",
+            "fdSoc": 10,
+            "fdPwr": 0,
+            "minSocOnGrid": 10
+          }
+        ]
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/op/v1/device/scheduler/set/flag",
+      "body": {
+        "deviceSN": "TESTSN0001",
+        "enable": 0
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/op/v1/device/scheduler/get",
+      "body": {
+        "deviceSN": "TESTSN0001"
+      }
+    }
+  ],
+  "outcome": "ok",
+  "message": "Your original schedule was put back and read back as saved.",
+  "inverter_after": {
+    "enable": 0,
+    "groups": [
+      {
+        "enable": 1,
+        "startHour": 16,
+        "startMinute": 0,
+        "endHour": 18,
+        "endMinute": 59,
+        "workMode": "Feedin",
+        "fdSoc": 10,
+        "fdPwr": 0,
+        "minSocOnGrid": 10
+      }
+    ]
+  }
+}

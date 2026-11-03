@@ -1,0 +1,65 @@
+{
+  "scenario": "Charge 02:00–05:30 to 79.2%, empty schedule off",
+  "requests": [
+    {
+      "method": "POST",
+      "path": "/op/v1/device/scheduler/get",
+      "body": {
+        "deviceSN": "TESTSN0001"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/op/v1/device/scheduler/enable",
+      "body": {
+        "deviceSN": "TESTSN0001",
+        "groups": [
+          {
+            "enable": 1,
+            "startHour": 2,
+            "startMinute": 0,
+            "endHour": 5,
+            "endMinute": 29,
+            "workMode": "ForceCharge",
+            "fdSoc": 80,
+            "fdPwr": 3600,
+            "minSocOnGrid": 10
+          }
+        ]
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/op/v1/device/scheduler/set/flag",
+      "body": {
+        "deviceSN": "TESTSN0001",
+        "enable": 1
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/op/v1/device/scheduler/get",
+      "body": {
+        "deviceSN": "TESTSN0001"
+      }
+    }
+  ],
+  "outcome": "ok",
+  "message": "Force charge to 80% written for 02:00–05:30 and read back as written.",
+  "inverter_after": {
+    "enable": 1,
+    "groups": [
+      {
+        "enable": 1,
+        "startHour": 2,
+        "startMinute": 0,
+        "endHour": 5,
+        "endMinute": 29,
+        "workMode": "ForceCharge",
+        "fdSoc": 80,
+        "fdPwr": 3600,
+        "minSocOnGrid": 10
+      }
+    ]
+  }
+}

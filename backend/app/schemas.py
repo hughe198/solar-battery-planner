@@ -530,6 +530,8 @@ class ControlStatusOut(BaseModel):
     auto_apply: bool
     # Whether this server runs the nightly automatic apply at all.
     auto_apply_available: bool
+    # Whether this server lets anything write to an inverter at all (SBP_INVERTER_WRITES).
+    writes_allowed: bool
     consented_at: datetime | None
     test_level: int
     test_steps: list[TestStepOut]

@@ -1,0 +1,171 @@
+"""Checks on a proposal before anything is written, in plain words.
+
+These are the invariants from docs/inverter-api-test-plan.md that can be judged from one
+proposal: the dry run prints them for a person and an AI reviewer to read, and the tests assert
+them across many generated plans and schedules. Nothing here talks to an inverter.
+"""
+
+from dataclasses import dataclass
+from typing import Any, Literal
+
+from app.control.schedule import FORCE_CHARGE, FORCE_DISCHARGE, Period, charge_periods
+
+Status = Literal["pass", "fail", "warn"]
+DAY_MINUTES = 24 * 60
+
+
+@dataclass(frozen=True)
+class Check:
+    name: str
+    status: Status
+    detail: str
+
+
+def _minutes(periods: list[Period]) -> set[int]:
+    return {m for p in periods for m in range(p.start, p.end + 1)}
+
+
+def check(proposal: Any, tz: str, raw_schedule: dict[str, Any] | None = None) -> list[Check]:
+    """Every check on a proposal from app.control.service.propose. `raw_schedule` is the
+    schedule exactly as Fox returned it, for what the parsed one leaves out."""
+    checks: list[Check] = []
+    schedule = proposal.schedule
+    added: list[Period] = proposal.added
+    kept = [p for p in proposal.after if not any(p is a for a in added)]
+
+    # 5. Every value sent is within the range the inverter reports.
+    out_of_range = []
+    for p in added:
+        for key, value in (
+            ("fdsoc", p.fd_soc),
+            ("fdpwr", p.fd_pwr),
+            ("minsocongrid", p.min_soc_on_grid),
+        ):
+            low, high = schedule.ranges[key]
+            if value is not None and not low <= value <= high:
+                out_of_range.append(f"{p.label()} {key} {value:g} outside {low:g}–{high:g}")
+    checks.append(
+        Check(
+            "Values within the inverter's ranges",
+            "fail" if out_of_range else "pass",
+            "; ".join(out_of_range) or f"{len(added)} new period(s) checked.",
+        )
+    )
+
+    # 6. Periods are well formed, ours don't overlap anything, and they fit.
+    shape = [
+        f"{p.label()} runs {p.start}–{p.end} minutes"
+        for p in proposal.after
+        if not 0 <= p.start <= p.end < DAY_MINUTES
+    ]
+    for i, a in enumerate(added):
+        for b in added[i + 1 :] + kept:
+            if a.overlaps(b):
+                shape.append(f"{a.work_mode} {a.label()} overlaps {b.work_mode} {b.label()}")
+    if len(proposal.after) > schedule.max_groups:
+        shape.append(f"{len(proposal.after)} periods, but the inverter holds {schedule.max_groups}")
+    checks.append(
+        Check(
+            "Periods well formed, not overlapping, and fit",
+            "fail" if shape else "pass",
+            "; ".join(shape)
+            or f"{len(proposal.after)} of at most {schedule.max_groups} periods, none clash.",
+        )
+    )
+
+    # 7. The user's periods that aren't replaced go back exactly as read.
+    changed = [p.label() for p in kept if p.raw and p.to_fox() != {**p.raw, "enable": 1}]
+    checks.append(
+        Check(
+            "Your other periods sent back unchanged",
+            "fail" if changed else "pass",
+            ("Changed: " + ", ".join(changed)) if changed else f"{len(kept)} kept as read.",
+        )
+    )
+
+    # 9. Forced periods only in the spans the plan gave.
+    charge_spans = [
+        (s, e)
+        for s, e in (
+            (proposal.hold_start, proposal.hold_stop),
+            (proposal.start, proposal.stop),
+        )
+        if s is not None and e is not None
+    ]
+    allowed_charge = _minutes(
+        [p for s, e in charge_spans for p in charge_periods(s, e, tz, 0, 0, 0)]
+    )
+    allowed_discharge = (
+        _minutes(charge_periods(proposal.discharge_start, proposal.discharge_stop, tz, 0, 0, 0))
+        if proposal.discharge_start is not None and proposal.discharge_stop is not None
+        else set()
+    )
+    stray = []
+    for p in added:
+        allowed = {FORCE_CHARGE: allowed_charge, FORCE_DISCHARGE: allowed_discharge}.get(
+            p.work_mode, set()
+        )
+        if not _minutes([p]) <= allowed:
+            stray.append(f"{p.work_mode} {p.label()}")
+    checks.append(
+        Check(
+            "Forced periods only where the plan put them",
+            "fail" if stray else "pass",
+            ("Outside the plan: " + ", ".join(stray)) if stray else "All inside the plan's times.",
+        )
+    )
+
+    # D6. Fox says fdSoc must be at least minSocOnGrid.
+    below = [
+        f"{p.work_mode} {p.label()} stops at {p.fd_soc:g}% under the {p.min_soc_on_grid:g}% minimum"
+        for p in added
+        if p.fd_soc is not None and p.min_soc_on_grid is not None and p.fd_soc < p.min_soc_on_grid
+    ]
+    checks.append(
+        Check(
+            "Stop level at or above the minimum (Fox's rule, defect D6)",
+            "fail" if below else "pass",
+            "; ".join(below) or "Every new period stops at or above its minimum.",
+        )
+    )
+
+    # Things a person should know, though nothing is wrong.
+    mine_removed = [
+        p for p in proposal.removed if p.work_mode not in (FORCE_CHARGE, FORCE_DISCHARGE)
+    ]
+    if mine_removed:
+        checks.append(
+            Check(
+                "Your own periods replaced (defect D5)",
+                "warn",
+                "Removed whole, even where only part overlaps: "
+                + ", ".join(f"{p.work_mode} {p.label()}" for p in mine_removed),
+            )
+        )
+    switched_off = [
+        g
+        for g in (raw_schedule or {}).get("groups") or []
+        if not g.get("enable", 1)
+        and (g.get("startHour"), g.get("startMinute"), g.get("endHour"), g.get("endMinute"))
+        != (0, 0, 0, 0)
+    ]
+    if switched_off and proposal.added:
+        checks.append(
+            Check(
+                "Switched-off periods dropped (defect D2)",
+                "warn",
+                f"{len(switched_off)} switched-off period(s) won't be written back: "
+                + ", ".join(
+                    f"{g.get('workMode')} {Period.from_fox(g).label()}" for g in switched_off
+                ),
+            )
+        )
+    if proposal.added and not schedule.enabled and kept:
+        checks.append(
+            Check(
+                "Your periods switch on too",
+                "warn",
+                "The schedule is off now, and switching it on runs your other periods as well.",
+            )
+        )
+    return checks
