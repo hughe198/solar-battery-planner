@@ -6,7 +6,7 @@ And simulating every other target on the same day shows, with hindsight, what th
 would have been and what the actual decision saved or cost.
 """
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from statistics import mean
 from zoneinfo import ZoneInfo
 
@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.importers.base import INTERVAL
 from app.models import PlanningMode, System, UsageRecord
-from app.planner.base import Replay, ReplayDay, ReplayDetail, ReplayPoint, Review
+from app.planner.base import InProgress, Replay, ReplayDay, ReplayDetail, ReplayPoint, Review
 from app.planner.charging import learn_rate_from_history, reachable_kwh
 from app.planner.optimiser import (
     best_index,
@@ -42,10 +42,36 @@ TYPICAL_DAYS = 28
 # A charge within this of the hindsight best counts as about right.
 ABOUT_RIGHT_PENCE = 1.0
 FULL_SOC_PERCENT = 99
+# A day's chart opens this evening before the window, if the window opens later.
+LEAD_UP_FROM = time(21, 0)
+# Battery readings are whole percent and the house uses a little, so this much still counts as held.
+HELD_POINTS = 1.5
+# Enough of the house's use in the window coming from the grid to call it grid only.
+GRID_ONLY_SHARE = 0.9
 
 
 def _utc(moment: datetime) -> datetime:
     return moment.replace(tzinfo=timezone.utc)
+
+
+def _point(
+    record: UsageRecord,
+    start: datetime,
+    cheap: bool = False,
+    best: float | None = None,
+    lead_up: bool = False,
+) -> ReplayPoint:
+    return ReplayPoint(
+        start=start,
+        load_kwh=record.load_kwh,
+        solar_kwh=record.solar_kwh,
+        import_kwh=record.grid_import_kwh,
+        export_kwh=record.grid_export_kwh,
+        soc_percent=record.battery_soc_percent,
+        cheap=cheap,
+        best_soc_percent=best,
+        lead_up=lead_up,
+    )
 
 
 def _percent_error(simulated: float, actual: float) -> float | None:
@@ -158,6 +184,7 @@ class Replayer:
             missed_saving_pence=round(float(max(scores[actual] - scores[best], 0.0)), 1),
             wasted_export_kwh=round(float(max(exports[actual] - exports[best], 0.0)), 2),
             shortfall_import_kwh=round(float(max(day_imports[actual] - day_imports[best], 0.0)), 2),
+            charge_start=cycle.night_start if night else None,
         )
 
     def _replayed(
@@ -207,19 +234,78 @@ class Replayer:
         }
         in_night = set(night)
         points = [
-            ReplayPoint(
-                start=s,
-                load_kwh=records[s].load_kwh,
-                solar_kwh=records[s].solar_kwh,
-                import_kwh=records[s].grid_import_kwh,
-                export_kwh=records[s].grid_export_kwh,
-                soc_percent=records[s].battery_soc_percent,
-                cheap=s in in_night,
-                best_soc_percent=best_soc.get(s),
-            )
-            for s in night + daytime
+            *self._lead_up(cycle, records),
+            *(
+                _point(records[s], s, cheap=s in in_night, best=best_soc.get(s))
+                for s in night + daytime
+            ),
         ]
         return ReplayDetail(found, self.comments(found, earlier, cycle, records, mode), points)
+
+    def _lead_up(self, cycle: Cycle, records: dict[datetime, UsageRecord]) -> list[ReplayPoint]:
+        """The evening before the window opens, to show how the battery got there."""
+        opens = cycle.night_start.astimezone(self.zone)
+        evening = opens.date() if opens.hour >= 12 else opens.date() - timedelta(days=1)
+        moment = datetime.combine(evening, LEAD_UP_FROM, self.zone).astimezone(timezone.utc)
+        points = []
+        while moment < cycle.night_start:
+            if moment in records:
+                points.append(_point(records[moment], moment, lead_up=True))
+            moment += INTERVAL
+        return points
+
+    def _in_progress(self, records: dict[datetime, UsageRecord]) -> InProgress | None:
+        """The newest cycle that has started but whose data doesn't reach its end yet."""
+        if not records:
+            return None
+        latest = max(records)
+        latest_day = latest.astimezone(self.zone).date()
+        for day in (latest_day + timedelta(days=1), latest_day):
+            cycle = cycle_for(day, self.book, self.system.timezone)
+            night = cycle.night_starts()
+            if night and cycle.night_start <= latest and latest + INTERVAL < cycle.day_end:
+                return self._summarise_in_progress(day, cycle, records, latest)
+        return None
+
+    def _summarise_in_progress(
+        self, day: date, cycle: Cycle, records: dict[datetime, UsageRecord], latest: datetime
+    ) -> InProgress | None:
+        before = records.get(cycle.night_start - INTERVAL)
+        window = [records[s] for s in cycle.night_starts() if s in records]
+        levels = [r.battery_soc_percent for r in window if r.battery_soc_percent is not None]
+        if before is None or before.battery_soc_percent is None or not levels:
+            return None
+        start, after, peak = before.battery_soc_percent, levels[-1], max(levels)
+        if peak - start > HELD_POINTS:
+            outcome = "charged"
+        elif start - after > HELD_POINTS:
+            outcome = "discharged"
+        else:
+            outcome = "held"
+        house = sum(max(r.load_kwh - r.solar_kwh, 0.0) for r in window)
+        grid = sum(r.grid_import_kwh for r in window)
+        in_night = set(cycle.night_starts())
+        return InProgress(
+            day=day,
+            charge_start=cycle.night_start,
+            charge_end=cycle.night_end,
+            scored_after=cycle.day_end,
+            window_finished=latest + INTERVAL >= cycle.night_end,
+            soc_before_percent=round(start, 1),
+            soc_peak_percent=round(peak, 1),
+            soc_after_percent=round(after, 1),
+            outcome=outcome,
+            grid_only=outcome != "discharged" and grid >= GRID_ONLY_SHARE * house,
+            latest_reading_at=latest + INTERVAL,
+            points=[
+                *self._lead_up(cycle, records),
+                *(
+                    _point(records[s], s, cheap=s in in_night)
+                    for s in cycle.night_starts() + cycle.day_starts()
+                    if s in records
+                ),
+            ],
+        )
 
     def replay(self, mode: PlanningMode, days: int = DEFAULT_DAYS) -> Replay:
         records = self._records(days)
@@ -249,6 +335,7 @@ class Replayer:
             soc_error_percent=round(mean(soc_errors), 1) if soc_errors else None,
             missed_saving_pence=round(sum(d.missed_saving_pence for d in shown), 1),
             review=review,
+            in_progress=self._in_progress(records),
         )
 
     def comments(

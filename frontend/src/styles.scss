@@ -387,6 +387,14 @@ button.destructive {
   margin: 0.5rem 0 0;
 }
 
+.data-freshness {
+  min-height: 1.5rem;
+}
+
+.home-result {
+  margin-top: 0.75rem;
+}
+
 .good-solar {
   display: block;
 }
@@ -436,6 +444,12 @@ button.destructive {
   &.empty {
     background: var(--border);
     opacity: 0.45;
+  }
+
+  &.in-progress {
+    background: transparent;
+    border: 2px dashed var(--muted);
+    color: var(--text);
   }
 
   &.selected {
@@ -516,6 +530,15 @@ button.destructive {
     vertical-align: 0.2rem;
   }
 
+  &.in-progress {
+    background: transparent;
+    border: 1px dashed var(--muted);
+  }
+
+  &.lead-up {
+    background: color-mix(in srgb, var(--muted) 18%, transparent);
+  }
+
   &.rating-good {
     background: var(--rating-good);
   }
@@ -571,6 +594,11 @@ button.destructive {
     fill: none;
     stroke: var(--battery);
     stroke-width: 2;
+  }
+
+  .lead-up {
+    fill: var(--muted);
+    opacity: 0.12;
   }
 
   .soc.best {

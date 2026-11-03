@@ -420,6 +420,9 @@ class ReplayDayOut(BaseModel):
     missed_saving_pence: float
     wasted_export_kwh: float
     shortfall_import_kwh: float
+    charge_start: datetime | None
+
+    _charge_start_utc = field_validator("charge_start", mode="after")(_utc)
 
 
 class ReviewOut(BaseModel):
@@ -440,8 +443,30 @@ class ReplayPointOut(BaseModel):
     soc_percent: float | None
     cheap: bool
     best_soc_percent: float | None
+    lead_up: bool
 
     _start_utc = field_validator("start", mode="after")(_utc)
+
+
+class InProgressOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    day: date
+    charge_start: datetime
+    charge_end: datetime
+    scored_after: datetime
+    window_finished: bool
+    soc_before_percent: float
+    soc_peak_percent: float
+    soc_after_percent: float
+    outcome: str
+    grid_only: bool
+    latest_reading_at: datetime
+    points: list[ReplayPointOut]
+
+    _times_utc = field_validator(
+        "charge_start", "charge_end", "scored_after", "latest_reading_at", mode="after"
+    )(_utc)
 
 
 class ReplayDetailOut(BaseModel):
@@ -462,6 +487,7 @@ class ReplayOut(BaseModel):
     soc_error_percent: float | None
     missed_saving_pence: float
     review: ReviewOut | None
+    in_progress: InProgressOut | None
 
 
 class PeriodOut(BaseModel):

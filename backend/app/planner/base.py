@@ -140,6 +140,8 @@ class ReplayDay:
     missed_saving_pence: float
     wasted_export_kwh: float
     shortfall_import_kwh: float
+    # When the cheap window opened; the day alone can't say, as it may open the evening before.
+    charge_start: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -155,6 +157,29 @@ class ReplayPoint:
     soc_percent: float | None
     cheap: bool
     best_soc_percent: float | None
+    # Before the cheap window opened: shown for context, and not part of the score.
+    lead_up: bool = False
+
+
+@dataclass(frozen=True)
+class InProgress:
+    """A cycle that has started but not finished, so it can't be scored yet."""
+
+    day: date
+    charge_start: datetime
+    charge_end: datetime
+    # When the cycle ends and the charge can be scored.
+    scored_after: datetime
+    window_finished: bool
+    soc_before_percent: float
+    # The highest level in the window, and the level at the end of it (or the latest, if open).
+    soc_peak_percent: float
+    soc_after_percent: float
+    outcome: Literal["charged", "held", "discharged"]
+    # The house ran from the grid, rather than the battery, during the window.
+    grid_only: bool
+    latest_reading_at: datetime
+    points: list[ReplayPoint]
 
 
 @dataclass(frozen=True)
@@ -184,3 +209,4 @@ class Replay:
     soc_error_percent: float | None
     missed_saving_pence: float
     review: Review | None
+    in_progress: InProgress | None = None

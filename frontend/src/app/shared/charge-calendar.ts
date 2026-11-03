@@ -1,5 +1,5 @@
 import { Component, computed, input, output, signal } from '@angular/core';
-import { ReplayDay } from '../core/models';
+import { InProgressCharge, ReplayDay } from '../core/models';
 import { formatPence } from '../core/plan.service';
 
 /** Lost less than this and the charge was about right, as the replay's own review says. */
@@ -71,6 +71,18 @@ function shiftMonth(month: string, by: number): string {
               <span class="calendar-date">{{ cell.date }}</span>
               <strong>{{ round(d.soc_after_charge_percent) }}%</strong>
             </button>
+          } @else if (cell.key === inProgress()?.day) {
+            <button
+              type="button"
+              class="calendar-day in-progress"
+              [class.selected]="cell.key === selected()"
+              [attr.aria-pressed]="cell.key === selected()"
+              [attr.aria-label]="inProgressLabel()"
+              (click)="pick.emit(cell.key)"
+            >
+              <span class="calendar-date">{{ cell.date }}</span>
+              <strong>{{ round(inProgress()!.soc_after_percent) }}%</strong>
+            </button>
           } @else if (cell.date) {
             <span class="calendar-day empty">
               <span class="calendar-date muted">{{ cell.date }}</span>
@@ -84,8 +96,11 @@ function shiftMonth(month: string, by: number): string {
         Each square shows the level the battery was charged to, and what that lost against the best
         charge with hindsight: <span class="key rating-good"></span> about right
         <span class="key rating-fair"></span> under {{ costly }}p
-        <span class="key rating-poor"></span> {{ costly }}p or more. Grey days have no complete
-        data.
+        <span class="key rating-poor"></span> {{ costly }}p or more.
+        @if (inProgress()) {
+          <span class="key in-progress"></span> in progress, with no score yet.
+        }
+        Grey days have no complete data.
       </p>
     }
   `,
@@ -94,6 +109,8 @@ export class ChargeCalendar {
   /** Oldest first. */
   readonly days = input.required<ReplayDay[]>();
   readonly selected = input<string | null>(null);
+  /** The cycle under way, which has no score yet. */
+  readonly inProgress = input<InProgressCharge | null>(null);
   readonly pick = output<string>();
 
   readonly chosenMonth = signal<string | null>(null);
@@ -109,7 +126,8 @@ export class ChargeCalendar {
   });
   readonly lastMonth = computed(() => {
     const days = this.days();
-    return days.length ? monthOf(days[days.length - 1].day) : '';
+    const latest = this.inProgress()?.day ?? days[days.length - 1]?.day;
+    return latest ? monthOf(latest) : '';
   });
   readonly shownMonth = computed(() => this.chosenMonth() ?? (this.lastMonth() || null));
 
@@ -154,6 +172,18 @@ export class ChargeCalendar {
       year: 'numeric',
       timeZone: 'UTC',
     }).format(new Date(`${month}-01T00:00:00Z`));
+  }
+
+  inProgressLabel(): string {
+    const current = this.inProgress();
+    if (!current) return '';
+    const date = new Intl.DateTimeFormat('en-GB', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      timeZone: 'UTC',
+    }).format(new Date(`${current.day}T00:00:00Z`));
+    return `${date}: in progress, at ${Math.round(current.soc_after_percent)}% after the cheap window, no score yet`;
   }
 
   describe(d: ReplayDay): string {

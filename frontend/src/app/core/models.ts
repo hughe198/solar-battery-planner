@@ -247,6 +247,8 @@ export interface FlowPoint {
   cheap: boolean;
   /** Looking back: the level the hindsight best charge would have given. */
   best_soc_percent?: number | null;
+  /** Looking back: before the cheap window opened, so context rather than part of the score. */
+  lead_up?: boolean;
 }
 
 export interface ChargePlan {
@@ -295,6 +297,24 @@ export interface ReplayDay {
   missed_saving_pence: number;
   wasted_export_kwh: number;
   shortfall_import_kwh: number;
+  /** When the cheap window opened; null with no charge window. */
+  charge_start?: string | null;
+}
+
+/** A cycle that has started but not finished, so it can't be scored yet. */
+export interface InProgressCharge {
+  day: string;
+  charge_start: string;
+  charge_end: string;
+  scored_after: string;
+  window_finished: boolean;
+  soc_before_percent: number;
+  soc_peak_percent: number;
+  soc_after_percent: number;
+  outcome: 'charged' | 'held' | 'discharged';
+  grid_only: boolean;
+  latest_reading_at: string;
+  points: FlowPoint[];
 }
 
 export interface Replay {
@@ -305,6 +325,7 @@ export interface Replay {
   soc_error_percent: number | null;
   missed_saving_pence: number;
   review: { day: ReplayDay; comments: string[] } | null;
+  in_progress?: InProgressCharge | null;
 }
 
 export interface ReplayDetail {

@@ -238,7 +238,13 @@ def test_replay_of_one_day_has_its_half_hours_and_the_best_charge(client, header
     body = resp.json()
     assert body["day"]["day"] == day.isoformat()
     assert body["comments"][0].startswith(f"On {day:%A} {day.day} {day:%B}")
-    points = body["points"]
+    assert body["day"]["charge_start"].startswith(f"{day - timedelta(days=1)}T23:30")
+    # The chart opens at 21:00 the evening before, for context, outside the 48 half hours scored.
+    lead_up = [p for p in body["points"] if p["lead_up"]]
+    assert lead_up[0]["start"].startswith(f"{day - timedelta(days=1)}T21:00")
+    assert len(lead_up) == 5
+    assert not any(p["cheap"] or p["best_soc_percent"] is not None for p in lead_up)
+    points = [p for p in body["points"] if not p["lead_up"]]
     assert len(points) == 48
     assert points[0]["start"].startswith(f"{day - timedelta(days=1)}T23:30")
     assert points[0]["start"].endswith(("Z", "+00:00"))
@@ -248,6 +254,73 @@ def test_replay_of_one_day_has_its_half_hours_and_the_best_charge(client, header
     assert all((p["best_soc_percent"] is None) == p["cheap"] for p in points)
     first_after = next(p for p in points if not p["cheap"])
     assert first_after["best_soc_percent"] < first_after["soc_percent"]
+
+
+def next_window(soc: list[float], load: float = 0.1, imports: float = 0.1) -> str:
+    """Half hours of the window after the metered days, which opens at 23:30 on the last day."""
+    start = datetime.combine(FIRST_DAY + timedelta(days=DAYS - 1), datetime.min.time()) + timedelta(
+        hours=23, minutes=30
+    )
+    return "".join(
+        f"{start + timedelta(minutes=30 * k):%Y-%m-%dT%H:%M},{load},0,{imports},0,{level}\n"
+        for k, level in enumerate(soc)
+    )
+
+
+def test_replay_has_no_cycle_in_progress_when_the_data_ends_with_one(client, headers):
+    upload(client, headers, metered_days(charge_to_percent=100))
+    assert client.get("/api/plan/replay", headers=headers).json()["in_progress"] is None
+
+
+def test_replay_reports_a_held_cycle_before_it_can_be_scored(client, headers):
+    upload(client, headers, metered_days(charge_to_percent=40))
+    last = client.get("/api/plan/replay", headers=headers).json()["days"][-1]
+    assert last["day"] == (FIRST_DAY + timedelta(days=DAYS - 1)).isoformat()
+
+    rows = client.get(f"/api/plan/replay/{last['day']}", headers=headers).json()["points"]
+    level = rows[-1]["soc_percent"]
+    upload(client, headers, HEADER + next_window([level] * 12))
+
+    body = client.get("/api/plan/replay", headers=headers).json()
+    progress = body["in_progress"]
+    next_day = FIRST_DAY + timedelta(days=DAYS)
+    assert progress["day"] == next_day.isoformat()
+    assert progress["outcome"] == "held"
+    assert progress["grid_only"] is True
+    assert progress["window_finished"] is True
+    assert progress["soc_after_percent"] == pytest.approx(level, abs=0.1)
+    assert progress["charge_start"].startswith(f"{next_day - timedelta(days=1)}T23:30")
+    assert progress["charge_end"].startswith(f"{next_day}T05:30")
+    assert progress["scored_after"].startswith(f"{next_day}T23:30")
+    assert sum(p["lead_up"] for p in progress["points"]) == 5
+    assert sum(p["cheap"] for p in progress["points"]) == 12
+    # Still only the complete cycles are scored.
+    assert body["days"][-1]["day"] == last["day"]
+
+
+@pytest.mark.parametrize(
+    "rise, outcome, grid_only, finished, count",
+    [
+        (30, "charged", True, True, 12),
+        (-20, "discharged", False, True, 12),
+        (0, "held", True, False, 4),
+    ],
+)
+def test_replay_describes_what_an_in_progress_window_did(
+    client, headers, rise, outcome, grid_only, finished, count
+):
+    upload(client, headers, metered_days(charge_to_percent=40))
+    last = client.get("/api/plan/replay", headers=headers).json()["days"][-1]["day"]
+    rows = client.get(f"/api/plan/replay/{last}", headers=headers).json()["points"]
+    level = rows[-1]["soc_percent"]
+    imports = 0.0 if outcome == "discharged" else 0.5 if outcome == "charged" else 0.1
+    upload(client, headers, HEADER + next_window([level + rise] * count, imports=imports))
+
+    progress = client.get("/api/plan/replay", headers=headers).json()["in_progress"]
+
+    assert progress["outcome"] == outcome
+    assert progress["grid_only"] is grid_only
+    assert progress["window_finished"] is finished
 
 
 def test_replay_of_a_day_without_data_is_not_found(client, headers):
