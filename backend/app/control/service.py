@@ -5,6 +5,7 @@ it, read it back and compare, and log what was sent and what came back. Before t
 the schedule is saved so it can be put back exactly.
 """
 
+import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from math import ceil
@@ -48,6 +49,8 @@ from app.planner.base import ChargePlan
 # The lowest minimum charge the planner writes, whatever the inverter accepts. The owner chose
 # to keep it at 10% for safety (1 November 2026), as the true lower limit is uncertain.
 MIN_SOC_FLOOR = 10.0
+# Seconds to wait before each re-read when a read-back differs from what was written (D15).
+READ_BACK_WAITS = (10.0, 20.0, 30.0)
 
 
 def all_day_period(schedule: Schedule, control: InverterControl | None) -> Period | None:
@@ -418,7 +421,26 @@ def _write(
             raise
 
 
+def _wait(seconds: float) -> None:
+    time.sleep(seconds)
+
+
 def _verify(client: FoxEssClient, sn: str, before: Schedule, periods: list[Period], enable: bool):
+    """Read the schedule back and compare. Fox's cloud can answer a read straight after a write
+    with the schedule from before it (defect D15, twice on 5 November 2026), so a difference is
+    only reported once it's still there after waiting about a minute."""
+    back, problems = _compare(client, sn, before, periods, enable)
+    for seconds in READ_BACK_WAITS:
+        if not problems:
+            break
+        _wait(seconds)
+        back, problems = _compare(client, sn, before, periods, enable)
+    if problems:
+        problems.append(f"Still so after waiting {sum(READ_BACK_WAITS):g} seconds for Fox.")
+    return back, problems
+
+
+def _compare(client: FoxEssClient, sn: str, before: Schedule, periods: list[Period], enable: bool):
     back = read_schedule(client, sn)
     problems = matches(periods, back.periods)
     expected_on = bool(enable and periods)

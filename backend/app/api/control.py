@@ -12,12 +12,13 @@ from app.api.forecast import _system
 from app.api.imports import get_weather_client
 from app.api.plan import make_plan, next_day
 from app.config import settings
-from app.control import service, testing
+from app.control import dryrun, service, testing
 from app.control.nightly import control_client
 from app.control.schedule import Period, flag
 from app.crypto import decrypt
 from app.database import get_db
 from app.importers.fox_ess import FoxEssClient, FoxEssError, scheduler_set_body
+from app.planner.replay import Replayer
 from app.models import (
     ControlAction,
     ControlActionKind,
@@ -33,6 +34,11 @@ from app.schemas import (
     ControlActionOut,
     ControlSettingsIn,
     ControlStatusOut,
+    DryRunCheckOut,
+    DryRunNightOut,
+    DryRunOut,
+    DryRunRequestOut,
+    DryRunVerdictOut,
     PeriodOut,
     ProposalOut,
     TestStepIn,
@@ -44,6 +50,9 @@ from app.weather.open_meteo import OpenMeteoClient, WeatherError
 router = APIRouter(prefix="/api/control", tags=["control"])
 
 LOG_LENGTH = 30
+# Trust ladder stage 3: nights of dry runs before applying (a week, shortened by the owner on
+# 5 November 2026 after the live write tests).
+DRY_RUN_NIGHTS = 3
 
 
 def get_control_client_factory() -> Callable[[str], FoxEssClient]:
@@ -118,6 +127,28 @@ def _has_good_manual_apply(db: Session, system: System) -> bool:
     )
 
 
+def _nights(db: Session, system: System, nights: dict) -> list[DryRunNightOut]:
+    """Each night's latest dry run, newest first, with the morning verdict on its suggestion
+    once the day has been metered."""
+    judge = Replayer(db, system).judge if nights else None
+    out = []
+    for day, run in sorted(nights.items(), key=lambda kv: kv[0], reverse=True):
+        if day is None:
+            continue
+        verdict = judge(day, run.target_soc_percent) if judge else None
+        out.append(
+            DryRunNightOut(
+                day=day,
+                at=run.created_at,
+                passed=run.status == ControlStatus.ok,
+                target_soc_percent=run.target_soc_percent,
+                message=run.message,
+                verdict=DryRunVerdictOut.model_validate(verdict) if verdict else None,
+            )
+        )
+    return out
+
+
 def _status(db: Session, system: System) -> ControlStatusOut:
     control = system.inverter_control
     level = control.test_level if control else 0
@@ -130,6 +161,16 @@ def _status(db: Session, system: System) -> ControlStatusOut:
     ).all()
     enabled = bool(control and control.enabled and system.fox_ess)
     can_apply = enabled and level >= testing.UNLOCKS_APPLY
+    nights: dict = {}
+    for run in db.scalars(
+        select(ControlAction)
+        .where(
+            ControlAction.system_id == system.id,
+            ControlAction.kind == ControlActionKind.dry_run,
+        )
+        .order_by(ControlAction.id.desc())
+    ):
+        nights.setdefault(run.day, run)  # the latest run for each night
     return ControlStatusOut(
         connected=system.fox_ess is not None,
         enabled=enabled,
@@ -142,6 +183,8 @@ def _status(db: Session, system: System) -> ControlStatusOut:
             TestStepOut(step=n, label=label, passed=level >= n)
             for n, label in testing.STEPS.items()
         ],
+        dry_run_nights=_nights(db, system, nights),
+        dry_run_nights_needed=DRY_RUN_NIGHTS,
         can_apply=can_apply,
         can_auto_apply=can_apply and _has_good_manual_apply(db, system),
         has_original=original is not None,
@@ -247,6 +290,63 @@ def preview(
     p = _proposal(
         db, system, control, _client(system, client_factory), weather_client, start_soc_percent
     )
+    return _proposal_out(system, p)
+
+
+@router.post("/dry-run", response_model=DryRunOut)
+def dry_run(
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+    client_factory: Callable[[str], FoxEssClient] = Depends(get_control_client_factory),
+    weather_client: OpenMeteoClient = Depends(get_weather_client),
+) -> DryRunOut:
+    """Trust ladder stage 3: read the schedule once, work out what Apply would send tonight, run
+    the automated checks, and log it. Nothing is written to the inverter, so it works with
+    writes switched off on the server."""
+    system = _system(user)
+    control = _enabled(system)
+    try:
+        plan = make_plan(db, system, weather_client, next_day(system), None)
+    except WeatherError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc))
+    try:
+        run = dryrun.build(system, control, _client(system, client_factory), plan)
+    except FoxEssError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
+    except service.ControlError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
+    p = run.proposal
+    counts = {s: sum(c.status == s for c in run.checks) for s in ("pass", "warn", "fail")}
+    message = (
+        f"Dry run for {p.day:%a %d %b}: "
+        + (p.summary or "nothing to write")
+        + f". {counts['pass']} checks passed, {counts['warn']} notes"
+        + (f", {counts['fail']} FAILED" if counts["fail"] else "")
+        + ". Nothing was written."
+    )
+    action = service._log(
+        db,
+        system,
+        ControlActionKind.dry_run,
+        ControlTrigger.manual,
+        ControlStatus.failed if run.failed else ControlStatus.ok,
+        message,
+        day=p.day,
+        target_soc_percent=p.target_soc_percent,
+        read_back=run.raw,
+    )
+    db.commit()
+    return DryRunOut(
+        action=ControlActionOut.model_validate(action),
+        checks=[DryRunCheckOut(**c.__dict__) for c in run.checks],
+        requests=[DryRunRequestOut(path=path, body=body) for path, body in run.requests],
+        proposal=_proposal_out(system, p),
+    )
+
+
+def _proposal_out(system: System, p: service.Proposal) -> ProposalOut:
     return ProposalOut(
         day=p.day,
         mode=p.mode,

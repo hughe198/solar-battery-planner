@@ -528,6 +528,75 @@ def test_write_test_keeps_the_whole_day_covered_when_fox_drops_its_default(
         )
 
 
+def test_read_back_waits_for_fox_to_catch_up(client, headers, inverter, monkeypatch):
+    # D15: twice on 5 November 2026 the read straight after a write showed Fox's old copy,
+    # and a read a minute later showed the write exactly as sent. A good write was logged as
+    # a mismatch, and the write test didn't move on.
+    waits = []
+    monkeypatch.setattr(service, "_wait", waits.append)
+    inverter.groups = owners_schedule()
+    opt_in(client, headers)
+    step(client, headers, 1)
+    real_scheduler, stale = inverter.scheduler, {"reads": 0}
+
+    def lagging(sn):
+        if stale["reads"]:
+            stale["reads"] -= 1
+            return stale["old"]
+        return real_scheduler(sn)
+
+    real_set = inverter.set_scheduler_groups
+
+    def remember_old(sn, groups):
+        stale["old"], stale["reads"] = real_scheduler(sn), 2
+        real_set(sn, groups)
+
+    inverter.scheduler, inverter.set_scheduler_groups = lagging, remember_old
+    result = step(client, headers, 2)
+    assert result["status"] == "ok", result["message"]
+    assert len(waits) == 2  # two stale reads, each followed by a wait
+
+
+def test_read_back_still_reports_a_real_mismatch_after_waiting(client, headers, inverter, monkeypatch):
+    waits = []
+    monkeypatch.setattr(service, "_wait", waits.append)
+    opt_in(client, headers)
+    step(client, headers, 1)
+    inverter.set_scheduler_groups = lambda sn, groups: None  # Fox accepts and ignores it
+    result = step(client, headers, 2)
+    assert result["status"] in ("ok", "mismatch")  # step 2 writes back what's there
+    result = step(client, headers, 3)
+    assert result["status"] == "mismatch"
+    assert len(waits) == len(service.READ_BACK_WAITS)
+
+
+def test_dry_run_reads_once_writes_nothing_and_counts_each_night(
+    client, headers, inverter, monkeypatch
+):
+    # Trust ladder stage 3, shortened to three nights by the owner on 5 November 2026: run on
+    # the Automation page, with writes off, between the write test and applying.
+    monkeypatch.setattr(settings, "inverter_writes", False)
+    opt_in(client, headers)
+    resp = client.post("/api/control/dry-run", headers=headers)
+    assert resp.status_code == 200, resp.text
+    run = resp.json()
+    assert run["action"]["kind"] == "dry_run" and run["action"]["status"] == "ok"
+    assert run["checks"] and all(c["status"] in ("pass", "warn") for c in run["checks"])
+    assert run["requests"][0]["path"] == "/op/v3/device/scheduler/enable"  # would send
+    assert inverter.writes == []
+    client.post("/api/control/dry-run", headers=headers)  # again the same evening
+    status = client.get("/api/control", headers=headers).json()
+    assert status["dry_run_nights_needed"] == 3
+    assert [n["day"] for n in status["dry_run_nights"]] == [run["action"]["day"]]
+    assert status["dry_run_nights"][0]["passed"] is True
+    # The night hasn't happened yet, so there's no verdict on it.
+    assert status["dry_run_nights"][0]["verdict"] is None
+
+
+def test_dry_run_needs_control_turned_on(client, headers, inverter):
+    assert client.post("/api/control/dry-run", headers=headers).status_code == 403
+
+
 def test_opt_out_stops_writes_without_touching_the_inverter(client, headers, inverter):
     opt_in(client, headers)
     step(client, headers, 1)

@@ -16,12 +16,22 @@ from sqlalchemy.orm import Session
 
 from app.importers.base import INTERVAL
 from app.models import PlanningMode, System, UsageRecord
-from app.planner.base import InProgress, Replay, ReplayDay, ReplayDetail, ReplayPoint, Review
+from app.planner.base import (
+    InProgress,
+    Replay,
+    ReplayDay,
+    ReplayDetail,
+    ReplayPoint,
+    Review,
+    Verdict,
+)
 from app.planner.charging import learn_rate_from_history, reachable_kwh
 from app.planner.optimiser import (
+    PEAK_TOLERANCE_KWH,
     best_index,
     candidate_targets,
     effective_cost,
+    peak_slots,
     pence,
     rate,
 )
@@ -241,6 +251,116 @@ class Replayer:
             ),
         ]
         return ReplayDetail(found, self.comments(found, earlier, cycle, records, mode), points)
+
+    def judge(self, day: date, suggested_percent: float | None) -> Verdict | None:
+        """The morning verdict on a suggested charge for `day`'s window (None: no charge), once
+        the whole cycle has been metered; None until then."""
+        records = self._records(2)
+        cycle = cycle_for(day, self.book, self.system.timezone)
+        night, daytime = cycle.night_starts(), cycle.day_starts()
+        if not daytime or any(s not in records for s in night + daytime):
+            return None
+        before = records.get(cycle.night_start - INTERVAL)
+        after = records[night[-1]] if night else before
+        if before is None or before.battery_soc_percent is None:
+            return None
+        if after is None or after.battery_soc_percent is None:
+            return None
+
+        b = self.battery
+        start_kwh = float(b.kwh(before.battery_soc_percent))
+        actual_kwh = float(b.kwh(after.battery_soc_percent))
+        # A suggestion below the level the battery really had is a hold: no charge.
+        wanted = start_kwh if suggested_percent is None else float(b.kwh(suggested_percent))
+        suggested_kwh = min(max(wanted, start_kwh), b.capacity_kwh)
+        reachable = reachable_kwh(self.rate, b, start_kwh, cycle.window)
+        targets = np.unique(
+            np.concatenate(
+                [candidate_targets(b, start_kwh, reachable), [actual_kwh, suggested_kwh]]
+            )
+        )
+        actual = int(np.flatnonzero(targets == actual_kwh)[0])
+        suggested = int(np.flatnonzero(targets == suggested_kwh)[0])
+
+        def series(starts, field):
+            return np.array([getattr(records[s], field) for s in starts], dtype=float)
+
+        sim = simulate(
+            b,
+            start_kwh,
+            targets,
+            series(night, "load_kwh"),
+            series(night, "solar_kwh"),
+            series(daytime, "load_kwh"),
+            series(daytime, "solar_kwh"),
+        )
+        prices = CyclePrices.of(self.book, night, daytime)
+        scores = effective_cost(costs(sim, b, prices, start_kwh), self.system.planning_mode)
+        best = best_index(scores, tolerance=0.0)
+        # Leftover charge carries over, so on a day that never runs short many charges cost
+        # within a penny of the cheapest: the least of them is the useful yardstick.
+        enough = best_index(scores, tolerance=ABOUT_RIGHT_PENCE)
+        lost = float(max(scores[suggested] - scores[best], 0.0))
+        charged_lost = float(max(scores[actual] - scores[best], 0.0))
+
+        low = np.flatnonzero(sim.stored_kwh[suggested, 1:] <= b.reserve_kwh + 0.01)
+        reserve_at = daytime[low[0]] + INTERVAL if len(low) else None
+        peak = peak_slots(prices)
+        peak_kwh = float(sim.day_import_kwh[suggested][peak].sum()) if peak.any() else 0.0
+
+        pct = (lambda kwh: round(float(b.percent(kwh)), 1))
+        s_pct, a_pct, enough_pct = pct(suggested_kwh), pct(actual_kwh), pct(targets[enough])
+        before_pct = round(float(before.battery_soc_percent), 1)
+        if lost < ABOUT_RIGHT_PENCE:
+            verdict = "about right"
+        elif suggested_kwh < targets[enough]:
+            verdict = "too little"
+        else:
+            verdict = "more than needed"
+        if suggested_percent is None:
+            asked = "No charge was suggested"
+        elif suggested_percent <= before_pct:
+            asked = (
+                f"Suggested {suggested_percent:.0f}%, so no charge, as the battery already had "
+                f"{before_pct:.0f}%"
+            )
+        else:
+            asked = f"Suggested {s_pct:.0f}%"
+
+        def clock(moment: datetime) -> str:
+            return moment.astimezone(self.zone).strftime("%H:%M")
+
+        if peak.any():
+            hours = [s for s, p in zip(daytime, peak) if p]
+            span = f"{clock(hours[0])}–{clock(hours[-1] + INTERVAL)}"
+            lasted = (
+                f"would have lasted through the {span} peak"
+                if peak_kwh <= PEAK_TOLERANCE_KWH
+                else f"would have bought {peak_kwh:.1f} kWh at the {span} peak rate"
+            )
+        else:
+            lasted = "would have covered the day"
+        ran_down = f", running down at {clock(reserve_at)}" if reserve_at else ", never running down"
+        summary = (
+            f"{asked}; the battery was charged to {a_pct:.0f}%. With what really happened, "
+            f"{s_pct:.0f}% {lasted}{ran_down}. With hindsight, the least that would have done "
+            f"as well was {enough_pct:.0f}%"
+            + ("" if lost < ABOUT_RIGHT_PENCE else f", and the suggestion cost {pence(lost)} more")
+            + f". Verdict: {verdict}."
+        )
+        return Verdict(
+            day=day,
+            before_percent=before_pct,
+            suggested_percent=s_pct,
+            charged_percent=a_pct,
+            enough_percent=enough_pct,
+            lost_pence=round(lost, 1),
+            charged_lost_pence=round(charged_lost, 1),
+            reserve_at=reserve_at,
+            peak_import_kwh=round(peak_kwh, 2),
+            verdict=verdict,
+            summary=summary,
+        )
 
     def _lead_up(self, cycle: Cycle, records: dict[datetime, UsageRecord]) -> list[ReplayPoint]:
         """The evening before the window opens, to show how the battery got there."""

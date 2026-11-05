@@ -532,6 +532,57 @@ class TestStepOut(BaseModel):
     passed: bool
 
 
+class DryRunCheckOut(BaseModel):
+    name: str
+    status: str  # "pass", "fail" or "warn"
+    detail: str
+
+
+class DryRunRequestOut(BaseModel):
+    path: str
+    body: dict
+
+
+class DryRunOut(BaseModel):
+    """What applying tonight's plan would send, worked out from one read; nothing written."""
+
+    action: "ControlActionOut"
+    checks: list[DryRunCheckOut]
+    requests: list[DryRunRequestOut]
+    proposal: "ProposalOut"
+
+
+class DryRunVerdictOut(BaseModel):
+    """The suggestion judged against what really happened, once the day has been metered."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    suggested_percent: float
+    charged_percent: float
+    enough_percent: float
+    lost_pence: float
+    charged_lost_pence: float
+    reserve_at: datetime | None
+    peak_import_kwh: float
+    verdict: str
+    summary: str
+
+    _as_utc = field_validator("reserve_at")(_utc)
+
+
+class DryRunNightOut(BaseModel):
+    """The latest dry run for one charge night, and its morning verdict once there is one."""
+
+    day: date
+    at: datetime
+    passed: bool
+    target_soc_percent: float | None
+    message: str
+    verdict: DryRunVerdictOut | None = None
+
+    _as_utc = field_validator("at")(_utc)
+
+
 class ControlStatusOut(BaseModel):
     connected: bool
     enabled: bool
@@ -543,6 +594,9 @@ class ControlStatusOut(BaseModel):
     consented_at: datetime | None
     test_level: int
     test_steps: list[TestStepOut]
+    # Trust ladder stage 3: the latest dry run for each charge night, newest first.
+    dry_run_nights: list[DryRunNightOut] = []
+    dry_run_nights_needed: int = 3
     can_apply: bool
     can_auto_apply: bool
     has_original: bool
@@ -661,3 +715,7 @@ class UsageExpectationsOut(BaseModel):
     has_heat_pump: bool
     has_electric_car: bool
     car_charger_kw: float
+
+
+# DryRunOut refers to ProposalOut, defined after it.
+DryRunOut.model_rebuild()

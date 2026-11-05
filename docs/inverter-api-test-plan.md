@@ -1,6 +1,6 @@
 # Inverter API: white-box test plan
 
-Status (5 November 2026): the client has moved to Scheduler V3, and D1 to D13 are fixed or
+Status (5 November 2026): the client has moved to Scheduler V3, and D1 to D13 and D15 are fixed or
 settled, each with a test (see "Known defects" below). Layer 1, most of Layer 2, part of Layer 3,
 Layer 4's invariants and Layer 5 are built (see [the trust ladder](inverter-trust-ladder.md),
 which turns this plan into stages with automated, AI and human checks). The defects were found by
@@ -111,6 +111,9 @@ named after it in `backend/tests/test_fox_requests.py`.
 | D11 | `40400`, `40404` and `41201` are retried; `41811` counts as a rejected key; `40256`, `40257` and `44098` are explained in the message |
 | D12 | A user's forced charge or discharge that the plan overlaps is replaced completely, never trimmed, and the dry run fails if any piece of one is kept (`test_merge_replaces_overlapped_force_charge_wholly` in `test_control.py`) |
 | D13 | Every write that leaves the schedule on covers the whole day: times only Fox's all-day default covered are written as copies of it, with all its settings, taken from the inverter or, once dropped, from the copy saved before the first write. Neighbouring copies merge into one period. With no all-day period ever seen, gaps are left to the main work mode as before. Write test steps 3 and 4 and the dry run allow for it (`test_write_test_keeps_the_whole_day_covered_when_fox_drops_its_default`, golden `E9-all-day-default`) |
+| D15 | A read-back that differs from what was written is re-read after 10, 20 and 30 seconds, and only reported as a mismatch if it still differs after a minute (`test_read_back_waits_for_fox_to_catch_up`) |
+
+D14 is still open: see the findings below.
 
 The original findings:
 
@@ -128,6 +131,8 @@ The original findings:
 | D10 | Medium, from the document | **`maxSoc` may go back as the wrong type.** Fox documents it as a string when read and an integer when set. Kept periods are written back as read, so they could send a string | `schedule.py:60` |
 | D12 | **High**, found at stage 2 | **A one-minute forced charge is left behind.** Found in the owner's first live Preview, 5 November 2026. Their own ForceCharge 02:45–05:00 to 67% at 12 kW overlapped the planner's 02:10–05:00. D5's trimming kept the minute the planner's didn't cover, so Apply would have written a ForceCharge 05:00–05:01 to 67%, repeating every night. A leftover at the start of a window could grid charge at the day rate. A user's forced period now goes completely | `schedule.py`, `merge` |
 | D13 | **High**, found at stage 4 | **A write drops Fox's all-day default, leaving times with no period.** Write test step 2 on the owner's inverter, 5 November 2026, wrote their four periods back exactly, but Fox stopped reporting the all-day SelfUse default. 02:00–02:45 and 16:01–19:01 (where a switched-off summer ForceDischarge had been, also lost, as D2 expected) were left with no period, and what the inverter does then isn't documented. The fakes kept the default on a write, so no test caught it | `service.py`, `_run_write`, `propose` |
+| D14 | Low, found at stage 4, **open** | **Read-back doesn't compare the limits.** After step 2 Fox reported `pvLimit` 20,000 and 24,000 W swapped between periods, and after step 4 it read back as sent. Read-back compares only `fdSoc`, `fdPwr`, `minSocOnGrid` and `maxSoc`, so a change to `pvLimit`, `importLimit`, `exportLimit` or `reactivePower` passes silently. Harmless with 10 kWp of panels | `schedule.py`, `matches` |
+| D15 | Medium, found at stage 5 | **A good write is logged as a mismatch.** Twice on 5 November 2026 (steps 5 and 6) the read straight after the write showed Fox's old schedule, while a read a minute later showed it exactly as sent. Step 6 stayed unticked though it had worked | `service.py`, `_verify` |
 
 ## Test layers
 

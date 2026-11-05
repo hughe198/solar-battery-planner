@@ -404,6 +404,23 @@ button.destructive {
   margin: 0 0 0.75rem;
 }
 
+/* A dry-run night's morning verdict, on the Automation page. */
+.night-verdict {
+  margin: 0.25rem 0 0;
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+
+  &.rating-good {
+    background: var(--rating-good);
+    color: var(--rating-text);
+  }
+
+  &.rating-fair {
+    background: var(--rating-fair);
+    color: var(--rating-text);
+  }
+}
+
 .calendar {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));

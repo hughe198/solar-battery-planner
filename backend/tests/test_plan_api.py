@@ -228,6 +228,47 @@ def test_replay_matches_metered_days_and_reviews_over_charging(client, headers):
     assert body["missed_saving_pence"] > 50
 
 
+def replayer():
+    from app.database import get_session_factory
+    from app.main import app
+    from app.models import System
+    from app.planner.replay import Replayer
+
+    db = app.dependency_overrides[get_session_factory]()()
+    return Replayer(db, db.query(System).one())
+
+
+def test_judges_a_suggested_charge_against_what_really_happened(client, headers):
+    # The morning verdict on a dry run (owner's request, 5 November 2026): what the planner
+    # suggested, against the charge made and the best with hindsight, on the real day.
+    upload(client, headers, metered_days(charge_to_percent=100))
+    day = FIRST_DAY + timedelta(days=DAYS - 1)
+    r = replayer()
+    replayed = r.detail(day, r.system.planning_mode).day
+
+    too_much = r.judge(day, 100.0)
+    assert too_much.charged_percent == pytest.approx(100, abs=0.1)
+    # The yardstick is the least charge within a penny of the cheapest.
+    assert too_much.enough_percent <= replayed.best_soc_percent + 0.5
+    assert too_much.verdict == "more than needed"
+    assert too_much.lost_pence == pytest.approx(replayed.missed_saving_pence, abs=0.5)
+    assert too_much.peak_import_kwh == 0
+    assert "the suggestion cost" in too_much.summary
+
+    for enough in (replayed.best_soc_percent, too_much.enough_percent):
+        right = r.judge(day, enough)
+        assert right.verdict == "about right" and right.lost_pence < 1
+        assert "Verdict: about right" in right.summary
+
+    none = r.judge(day, None)  # a night it suggested no charge
+    assert none.suggested_percent == pytest.approx(none.before_percent, abs=0.1)
+    assert none.summary.startswith("No charge was suggested")
+    below = r.judge(day, max(none.before_percent - 5, 0))
+    assert "so no charge, as the battery already had" in below.summary
+
+    assert r.judge(day + timedelta(days=1), 50.0) is None  # no readings yet
+
+
 def test_replay_of_one_day_has_its_half_hours_and_the_best_charge(client, headers):
     upload(client, headers, metered_days(charge_to_percent=100))
     day = FIRST_DAY + timedelta(days=4)
