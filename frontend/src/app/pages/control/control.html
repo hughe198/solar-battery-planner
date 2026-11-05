@@ -1,4 +1,4 @@
-<h1>Inverter control</h1>
+<h1>Automation</h1>
 <p class="muted">
   Let the planner set your Fox ESS inverter's overnight force charge for you. It's off unless you
   turn it on, every change is shown before it's made and checked afterwards, and you can undo it at
@@ -98,10 +98,12 @@
     </section>
 
     <section class="card">
-      <h2>2. Apply the next charge</h2>
+      <h2>2. Review and authorise tonight's schedule</h2>
       <p>
-        Preview reads your inverter's schedule and works out tonight's plan. Nothing is written
-        until you press Apply, and Apply writes exactly what the preview shows.
+        For applying the suggested schedule yourself, one night at a time, without automatic apply.
+        Preview reads your inverter's schedule and works out tonight's plan, then lists every call
+        that would be made to Fox ESS. Nothing is written until you authorise them, and only the
+        calls listed are sent.
       </p>
       <button type="button" class="secondary" [disabled]="busy()" (click)="loadPreview()">
         Preview
@@ -165,17 +167,49 @@
               <li>{{ n }}</li>
             }
           </ul>
-          <details>
-            <summary>Exact request sent to Fox ESS</summary>
-            <pre>{{ p.request | json }}</pre>
-          </details>
-          <button
-            type="button"
-            [disabled]="busy() || !s.can_apply || !s.writes_allowed"
-            (click)="apply(p)"
-          >
-            Apply to inverter
-          </button>
+          <h3>Calls to Fox ESS</h3>
+          @if (writeCount()) {
+            <p>
+              Authorising sends these {{ p.calls.length }} calls, in this order.
+              {{ writeCount() }} of them {{ writeCount() === 1 ? 'changes' : 'change' }} your
+              inverter. If your schedule or the plan has changed since this preview, the first call
+              stops it and nothing is written.
+            </p>
+            <ol class="api-calls">
+              @for (c of p.calls; track $index) {
+                <li [class.writes]="c.writes">
+                  <span class="badge">{{ c.writes ? 'Changes inverter' : 'Read only' }}</span>
+                  {{ c.purpose }}
+                  <details>
+                    <summary>
+                      <code>{{ c.method }} {{ c.path }}</code>
+                    </summary>
+                    <pre>{{ c.body | json }}</pre>
+                  </details>
+                </li>
+              }
+            </ol>
+            <label class="choice">
+              <input
+                type="checkbox"
+                [checked]="authorised()"
+                [disabled]="busy() || !s.can_apply || !s.writes_allowed"
+                (change)="authorised.set(!authorised())"
+              />
+              I've checked these calls and authorise them to be sent once, now
+            </label>
+            <button
+              type="button"
+              [disabled]="busy() || !authorised() || !s.can_apply || !s.writes_allowed"
+              (click)="apply(p)"
+            >
+              Authorise and send
+            </button>
+          } @else {
+            <p class="muted">
+              Nothing needs changing tonight, so no call would change your inverter.
+            </p>
+          }
           @if (!s.can_apply) {
             <p class="muted">Pass the write test up to step 4 to unlock this.</p>
           }

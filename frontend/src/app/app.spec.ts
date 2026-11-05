@@ -48,7 +48,7 @@ describe('App', () => {
       'Home',
       'Tonight',
       'History',
-      'Inverter',
+      'Automation',
       'System',
       'Data',
       'Sign out',

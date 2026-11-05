@@ -1,9 +1,11 @@
 # Inverter API: white-box test plan
 
-Status: Layer 1, part of Layers 2 and 4, and Layer 5 are built (see
-[the trust ladder](inverter-trust-ladder.md), which turns this plan into stages with automated,
-AI and human checks). The defects below were found by reading the code and confirmed against
-an in-memory fake inverter on 1 November 2026. No live write has been made by the app.
+Status (5 November 2026): the client has moved to Scheduler V3, and D1 to D11 are fixed or
+settled, each with a test (see "Known defects" below). Layer 1, most of Layer 2, part of Layer 3,
+Layer 4's invariants and Layer 5 are built (see [the trust ladder](inverter-trust-ladder.md),
+which turns this plan into stages with automated, AI and human checks). The defects were found by
+reading the code and confirmed against an in-memory fake inverter on 1 November 2026. No live
+write has been made by the app.
 
 The goal is to prove, one call type at a time, that every request sent to Fox ESS is the request we
 intended, and that nothing else can be sent. `docs/inverter-control-test-protocol.md` is the
@@ -11,19 +13,22 @@ user-facing ladder for a real inverter; this plan covers what has to be true bef
 
 ## How a change reaches the inverter
 
-This describes today's code, which uses V1. See "Move to Scheduler V3 first" below.
-
 A multi-stage plan isn't several requests. All of its stages go in **one** request, as periods in
 one list, and that list **replaces the whole schedule**.
 
 | Order | Call | Purpose |
 | --- | --- | --- |
-| 1 | `POST /op/v1/device/scheduler/get` | Read the current schedule |
-| 2 | `POST /op/v1/device/scheduler/enable` | Replace every period. Despite its name, this doesn't switch anything on |
-| 3 | `POST /op/v1/device/scheduler/set/flag` | Switch the whole schedule on or off |
-| 4 | `POST /op/v1/device/scheduler/get` | Read back and compare |
+| 1 | `POST /op/v3/device/scheduler/get` | Read the current schedule |
+| 2 | `POST /op/v3/device/scheduler/enable` | Replace every period, with `isDefault: false`. An empty list removes them all (D3). Despite its name, this doesn't switch anything on |
+| 3 | `POST /op/v1/device/scheduler/set/flag` | Only when the schedule is off and must go on, or is to be off. V3 has no switch of its own |
+| 4 | `POST /op/v3/device/scheduler/get` | Read back and compare, including that the all-day default is still there |
 
-If there are no periods to write, step 2 is skipped. See defect D3.
+Fox's all-day period (00:00 to 23:59) is its default for times no other period covers. It's read,
+never written: a Fox community forum thread (foxesscommunity.com) says the Open API can't set it and sending
+it can stop the other periods working. Writes leave it out, and the read-back checks it survived.
+
+The Automation page lists these calls, with their bodies, before the user authorises them, and a
+test checks that what's listed is exactly what's sent.
 
 ### How stages are built
 
@@ -41,17 +46,17 @@ written as `endHour: 4, endMinute: 59`.
 
 ### Example: hold 02:00–02:45, charge to 53% until 05:00, with the user's own 16:00–19:00
 
-Captured from the fake inverter. This is the body of step 2, plus `deviceSN`:
+This is the body of step 2, plus `deviceSN`. The golden files in
+`backend/tests/golden/inverter/` hold the exact bodies for each scenario.
 
 ```json
-[
-  {"enable": 1, "startHour": 2, "startMinute": 0, "endHour": 2, "endMinute": 44,
-   "workMode": "ForceCharge", "fdSoc": 10, "fdPwr": 5000, "minSocOnGrid": 10},
-  {"enable": 1, "startHour": 2, "startMinute": 45, "endHour": 4, "endMinute": 59,
-   "workMode": "ForceCharge", "fdSoc": 53, "fdPwr": 5000, "minSocOnGrid": 10},
-  {"enable": 1, "startHour": 16, "startMinute": 0, "endHour": 18, "endMinute": 59,
-   "workMode": "SelfUse"}
-]
+{"isDefault": false, "groups": [
+  {"startHour": 2, "startMinute": 0, "endHour": 2, "endMinute": 44, "workMode": "ForceCharge",
+   "extraParam": {"fdSoc": 10, "fdPwr": 5000, "minSocOnGrid": 10}},
+  {"startHour": 2, "startMinute": 45, "endHour": 4, "endMinute": 59, "workMode": "ForceCharge",
+   "extraParam": {"fdSoc": 53, "fdPwr": 5000, "minSocOnGrid": 10}},
+  {"startHour": 16, "startMinute": 0, "endHour": 18, "endMinute": 59, "workMode": "SelfUse"}
+]}
 ```
 
 ## What could go wrong
@@ -85,10 +90,27 @@ Each becomes one or more automated tests. A failure blocks live testing.
    gave. Hold periods are never outside the charge window.
 10. After Restore, the inverter matches the saved schedule, including whether it was on.
 
-## Known defects to fix first
+## Known defects, now fixed
 
 D1 to D5 and D8 were reproduced against a fake inverter. D6 and D7 were seen there and judged against
-Fox's document, and D9 and D10 come from comparing the code with that document.
+Fox's document, and D9 and D10 come from comparing the code with that document. Each now has a test
+named after it in `backend/tests/test_fox_requests.py`.
+
+| # | Fix |
+| --- | --- |
+| D1 | The success message is built from the stages written, so a hold-only night reads "Hold 00:30–05:30 written…" (golden `S2-hold-only`) |
+| D2 | V3 hides switched-off periods, so they can't be kept. The owner accepted that. The preview names any that are reported, and otherwise warns that any in the Fox app may be lost |
+| D3 | The empty list is sent through V3, then the schedule is switched off (golden `A3-clear-last-period`) |
+| D4 | If the periods reached the inverter, or a timeout means they may have, the app keeps track of them so Remove and Restore still find them, and says so in the log |
+| D5 | Only the overlapping part of a user's period is replaced; the rest is kept with every setting (golden `E3-partly-overlapped`) |
+| D6 | The minimum written is at least 10% (owner's decision), and no forced period stops below it |
+| D7 | `maxSoc` goes on every forced period when the inverter reports one |
+| D8 | Both ends of a stage round up to the minute, so stages meeting on a second don't overlap, and overlapping stages are refused |
+| D9 | The master switch is read as `"0"`/`"1"` or a number |
+| D10 | Numeric strings in settings are sent back as numbers |
+| D11 | `40400`, `40404` and `41201` are retried; `41811` counts as a rejected key; `40256`, `40257` and `44098` are explained in the message |
+
+The original findings:
 
 | # | Severity | Defect | Where |
 | --- | --- | --- | --- |
@@ -358,10 +380,19 @@ Run on that schedule, the current code would (offline, nothing sent):
 
 ## Suggested order
 
-1. Read the real schedule with both V1 and V3, which writes nothing, to confirm V3 support and settle
-   the real types behind D9 and D10.
-2. If it's supported, move the client to V3. Then fix D1 to D6, D9 to D11, each with a failing test
-   first, dropping any that V3 removes.
-3. Build Layer 1, then Layers 2 and 3 alongside.
-4. Add the write block and dry run (Layer 5), and enforce the invariants (Layer 4).
+1. ~~Read the real schedule with both V1 and V3 to confirm V3 support.~~ Done 1 November 2026.
+2. ~~Move the client to V3 and fix D1 to D6, D9 to D11.~~ Done 5 November 2026.
+3. ~~Build Layer 1, then Layers 2 and 3 alongside.~~ Mostly done; T2 to T4, E6 to E8, R1, R2, R5, A1,
+   A5, A6 and the invalid-JSON fault are still to add.
+4. ~~Add the write block and dry run (Layer 5), and enforce the invariants (Layer 4).~~ Done.
 5. Run a week of dry runs, then the live ladder in order.
+
+## Still open after the move to V3
+
+- Whether a V3 write switches the schedule on by itself. The app assumes not, and calls V1's
+  switch only when it must. If V1's switch is refused on newer hardware, switching on from off
+  fails and is reported; Hugh's schedule is already on, so his nightly writes don't need it.
+- Whether leaving the all-day default out of a write keeps it (L2 answers this).
+- What `importLimit`, `exportLimit`, `pvLimit` and `reactivePower` become on a **new** period that
+  doesn't send them. The app doesn't send them, so as not to set an export limit it can't know,
+  and the preview can't show their values. Check them in the Fox app at L4.

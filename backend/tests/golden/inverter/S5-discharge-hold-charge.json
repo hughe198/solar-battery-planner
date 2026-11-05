@@ -3,106 +3,105 @@
   "requests": [
     {
       "method": "POST",
-      "path": "/op/v1/device/scheduler/get",
+      "path": "/op/v3/device/scheduler/get",
       "body": {
         "deviceSN": "TESTSN0001"
       }
     },
     {
       "method": "POST",
-      "path": "/op/v1/device/scheduler/enable",
+      "path": "/op/v3/device/scheduler/enable",
       "body": {
         "deviceSN": "TESTSN0001",
+        "isDefault": false,
         "groups": [
           {
-            "enable": 1,
             "startHour": 0,
             "startMinute": 0,
             "endHour": 2,
             "endMinute": 59,
             "workMode": "ForceCharge",
-            "fdSoc": 10,
-            "fdPwr": 3600,
-            "minSocOnGrid": 10
+            "extraParam": {
+              "fdSoc": 10,
+              "fdPwr": 3600,
+              "minSocOnGrid": 10
+            }
           },
           {
-            "enable": 1,
             "startHour": 3,
             "startMinute": 0,
             "endHour": 3,
             "endMinute": 59,
             "workMode": "ForceCharge",
-            "fdSoc": 80,
-            "fdPwr": 3600,
-            "minSocOnGrid": 10
+            "extraParam": {
+              "fdSoc": 80,
+              "fdPwr": 3600,
+              "minSocOnGrid": 10
+            }
           },
           {
-            "enable": 1,
             "startHour": 22,
             "startMinute": 30,
             "endHour": 23,
             "endMinute": 59,
             "workMode": "ForceDischarge",
-            "fdSoc": 10,
-            "fdPwr": 3600,
-            "minSocOnGrid": 10
+            "extraParam": {
+              "fdSoc": 10,
+              "fdPwr": 3600,
+              "minSocOnGrid": 10
+            }
           }
         ]
       }
     },
     {
       "method": "POST",
-      "path": "/op/v1/device/scheduler/set/flag",
-      "body": {
-        "deviceSN": "TESTSN0001",
-        "enable": 1
-      }
-    },
-    {
-      "method": "POST",
-      "path": "/op/v1/device/scheduler/get",
+      "path": "/op/v3/device/scheduler/get",
       "body": {
         "deviceSN": "TESTSN0001"
       }
     }
   ],
   "outcome": "ok",
-  "message": "Force charge to 80% written for 22:30–00:00, 00:00–03:00, 03:00–04:00 and read back as written.",
+  "message": "Discharge to 10% 22:30–00:00; hold 00:00–03:00; force charge to 80% 03:00–04:00 written and read back as written.",
   "inverter_after": {
     "enable": 1,
     "groups": [
       {
-        "enable": 1,
         "startHour": 0,
         "startMinute": 0,
         "endHour": 2,
         "endMinute": 59,
         "workMode": "ForceCharge",
-        "fdSoc": 10,
-        "fdPwr": 3600,
-        "minSocOnGrid": 10
+        "extraParam": {
+          "fdSoc": 10,
+          "fdPwr": 3600,
+          "minSocOnGrid": 10
+        }
       },
       {
-        "enable": 1,
         "startHour": 3,
         "startMinute": 0,
         "endHour": 3,
         "endMinute": 59,
         "workMode": "ForceCharge",
-        "fdSoc": 80,
-        "fdPwr": 3600,
-        "minSocOnGrid": 10
+        "extraParam": {
+          "fdSoc": 80,
+          "fdPwr": 3600,
+          "minSocOnGrid": 10
+        }
       },
       {
-        "enable": 1,
         "startHour": 22,
         "startMinute": 30,
         "endHour": 23,
         "endMinute": 59,
         "workMode": "ForceDischarge",
-        "fdSoc": 10,
-        "fdPwr": 3600,
-        "minSocOnGrid": 10
+        "extraParam": {
+          "fdSoc": 10,
+          "fdPwr": 3600,
+          "minSocOnGrid": 10
+        }
       }
     ]
   }

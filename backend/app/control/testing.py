@@ -24,7 +24,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
 
 from app.control.schedule import FORCE_CHARGE, Period, Schedule, without
-from app.control.service import ControlError, _log, _run_write, read_schedule
+from app.control.service import MIN_SOC_FLOOR, ControlError, _log, _run_write, read_schedule
 from app.importers.fox_ess import FoxEssClient, FoxEssError
 from app.models import (
     ControlAction,
@@ -57,7 +57,8 @@ def _test_period(schedule: Schedule, tz: str, earliest: datetime, search: timede
     zone = ZoneInfo(tz)
     power = schedule.clamp("fdpwr", TEST_POWER_W)
     soc = schedule.clamp("fdsoc", 100)
-    min_soc = schedule.clamp("minsocongrid", schedule.ranges["minsocongrid"][0])
+    min_soc = schedule.clamp("minsocongrid", MIN_SOC_FLOOR)
+    max_soc = schedule.ranges["maxsoc"][1] if "maxsoc" in schedule.reported else None
     moment = earliest.astimezone(zone)
     moment = moment.replace(second=0, microsecond=0) + timedelta(minutes=5 - moment.minute % 5)
     end = earliest + search
@@ -71,6 +72,7 @@ def _test_period(schedule: Schedule, tz: str, earliest: datetime, search: timede
                 fd_soc=soc,
                 fd_pwr=power,
                 min_soc_on_grid=min_soc,
+                max_soc=max_soc,
             )
             if not any(candidate.overlaps(p) for p in schedule.periods):
                 return candidate
@@ -122,12 +124,13 @@ def run_step(
             read_back=schedule.to_snapshot(),
         )
     elif step == 2:
-        action = _run_write(
+        action, _ = _run_write(
             db,
             system,
             client,
             ControlActionKind.test,
             ControlTrigger.manual,
+            schedule,
             schedule.periods,
             schedule.enabled,
             "Step 2: your schedule was written back unchanged and read back the same.",
@@ -159,18 +162,19 @@ def run_step(
                 f"{test.fd_pwr:g} W, then stop. Run step 6 afterwards."
             )
         )
-        action = _run_write(
+        action, reached = _run_write(
             db,
             system,
             client,
             ControlActionKind.test,
             ControlTrigger.manual,
+            schedule,
             after,
             True,
             f"Step {step}: test charge period {test.label()} at {test.fd_pwr:g} W added and "
             f"read back as written. {when}",
         )
-        if action.status != ControlStatus.failed:
+        if reached:
             control.test_groups = [*(control.test_groups or []), test.to_fox()]
     else:
         ours = [Period.from_fox(g) for g in control.test_groups or []]
@@ -180,12 +184,13 @@ def run_step(
             action = log(ControlStatus.failed, "No test period was found on the inverter.")
         else:
             baseline = Schedule.from_fox(control.test_baseline or schedule.to_snapshot())
-            action = _run_write(
+            action, _ = _run_write(
                 db,
                 system,
                 client,
                 ControlActionKind.test,
                 ControlTrigger.manual,
+                schedule,
                 after,
                 baseline.enabled,
                 f"Step {step}: test period removed; your schedule reads back exactly as it was.",

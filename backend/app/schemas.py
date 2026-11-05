@@ -563,6 +563,16 @@ class ControlSettingsIn(BaseModel):
     accept: bool = False
 
 
+class ApiCallOut(BaseModel):
+    method: str
+    path: str
+    body: dict
+    # What the call does, in plain words.
+    purpose: str
+    # Whether it changes the inverter.
+    writes: bool
+
+
 class ProposalOut(BaseModel):
     day: date
     mode: PlanningMode
@@ -587,6 +597,8 @@ class ProposalOut(BaseModel):
     after: list[PeriodOut]
     # Exactly what would be sent to Fox ESS.
     request: dict
+    # Every call Apply would make, in order, for the user to authorise.
+    calls: list[ApiCallOut]
     notes: list[str]
     fingerprint: str
 

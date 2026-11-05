@@ -923,3 +923,36 @@ table.control-log {
     max-width: 22rem;
   }
 }
+
+ol.api-calls {
+  padding-left: 1.5rem;
+
+  li {
+    margin: 0.5rem 0;
+    padding-left: 0.5rem;
+    border-left: 3px solid var(--border);
+  }
+
+  li.writes {
+    border-left-color: var(--accent);
+  }
+
+  .badge {
+    display: inline-block;
+    margin-right: 0.4rem;
+    padding: 0 0.4rem;
+    border: 1px solid var(--border);
+    border-radius: 0.6rem;
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
+
+  li.writes .badge {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  code {
+    overflow-wrap: anywhere;
+  }
+}
