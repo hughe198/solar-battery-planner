@@ -404,7 +404,7 @@ describe('Tonight', () => {
 
     it('replaces the date input and shows the day between its arrows', () => {
       const { el, label } = open();
-      expect(el.querySelector('input[type="date"]')).toBeNull();
+      expect(el.querySelector('.day-stepper input[type="date"]')).toBeNull();
       expect(label()).toBe('Tuesday 2 June Tomorrow');
     });
 
@@ -592,7 +592,9 @@ describe('Tonight', () => {
     expect(el.textContent).toContain('8.1–11.2 kWh');
     expect(el.textContent).toContain('until you import solar data');
     expect(el.textContent).toContain('South (4 kWp) delivers about 82%');
-    expect(el.querySelector('details summary')?.textContent).toBe('How this was predicted');
+    expect(el.querySelector('section.card details summary')?.textContent).toBe(
+      'How this was predicted',
+    );
     expect(el.textContent).toContain('9 kWh usable');
     expect(el.textContent).toContain('7.5p');
     expect(el.querySelectorAll('svg path').length).toBe(4);
@@ -640,5 +642,35 @@ describe('Tonight', () => {
     expect(req.request.params.get('day')).toBe('2026-06-02');
     req.flush(PLAN);
     fixture.detectChanges();
+  });
+
+  it('shows the usage mark for the day on the tile and explains it', () => {
+    const fixture = TestBed.createComponent(Tonight);
+    fixture.detectChanges();
+    http.expectOne('/api/system').flush(SYSTEM);
+    http.expectOne('/api/forecast').flush(FORECAST);
+    http
+      .expectOne((r) => r.url === '/api/plan')
+      .flush({
+        ...PLAN,
+        usage_notes: [
+          "You've marked Tuesday 2 June as away, so usage is based on your 4.2 kWh a day base load.",
+        ],
+      });
+    fixture.detectChanges();
+    http
+      .expectOne((r) => r.url === '/api/usage-expectations')
+      .flush({
+        days: [{ day: '2026-06-02', level: 'away', car_kwh: null }],
+        profile: { base_daily_kwh: 4.2, low_factor: 0.7, high_factor: 1.35, learned: true },
+        has_heat_pump: false,
+        has_electric_car: false,
+        car_charger_kw: 7,
+      });
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+    expect(el.querySelector('.tile strong')?.textContent).toContain('kWh, away');
+    expect(el.querySelector('.usage-note')?.textContent).toContain('as away');
+    expect(el.querySelector('[aria-pressed="true"]')?.textContent?.trim()).toBe('Away');
   });
 });

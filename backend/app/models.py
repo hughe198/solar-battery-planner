@@ -20,6 +20,7 @@ from sqlalchemy import (
     String,
     Time,
     UniqueConstraint,
+    false,
     update,
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
@@ -70,6 +71,12 @@ class System(Base):
     data_source: Mapped[DataSourceKind] = mapped_column(
         Enum(DataSourceKind), default=DataSourceKind.none
     )
+    # Big loads the usage model allows for (see app.forecasting.usage). A heat pump lets the
+    # model learn a strong response to cold weather; an electric car's charging is taken out
+    # of the history and added back only on nights the user says the car will charge.
+    has_heat_pump: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    has_electric_car: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    car_charger_kw: Mapped[float] = mapped_column(Float, default=7.0, server_default="7")
     updated_at: Mapped[datetime] = mapped_column(default=_now, onupdate=_now)
 
     user: Mapped[User] = relationship(back_populates="system")
@@ -102,6 +109,9 @@ class System(Base):
     )
     control_actions: Mapped[list["ControlAction"]] = relationship(
         back_populates="system", cascade="all, delete-orphan"
+    )
+    usage_expectations: Mapped[list["UsageExpectation"]] = relationship(
+        back_populates="system", cascade="all, delete-orphan", order_by="UsageExpectation.day"
     )
 
 
@@ -393,3 +403,34 @@ class ControlAction(Base):
     read_back: Mapped[dict | None] = mapped_column(JSON, default=None)
 
     system: Mapped[System] = relationship(back_populates="control_actions")
+
+
+class UsageLevel(str, enum.Enum):
+    away = "away"
+    low = "low"
+    normal = "normal"
+    high = "high"
+
+
+class UsageExpectation(Base):
+    """How the user expects a local day's usage to go, and any car charge planned for it.
+
+    Only days that differ from normal have a row. `day` is a local date: the level applies to
+    that date's half hours, and the car charge to the cheap window that leads into that day
+    (the night before it, for a window that opens before midnight). Rows for past days are
+    kept, so those days stay out of the usage model's training.
+    """
+
+    __tablename__ = "usage_expectations"
+    __table_args__ = (UniqueConstraint("system_id", "day"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    system_id: Mapped[int] = mapped_column(
+        ForeignKey("systems.id", ondelete="CASCADE"), index=True
+    )
+    day: Mapped[date] = mapped_column(Date)
+    level: Mapped[UsageLevel] = mapped_column(Enum(UsageLevel), default=UsageLevel.normal)
+    # kWh the car will take from the grid in the cheap window before `day`, or None.
+    car_kwh: Mapped[float | None] = mapped_column(Float, default=None)
+
+    system: Mapped[System] = relationship(back_populates="usage_expectations")

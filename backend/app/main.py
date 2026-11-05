@@ -7,7 +7,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app import migrations, models  # noqa: F401  (registers tables)
-from app.api import auth, control, forecast, history, imports, plan, system
+from app.api import auth, control, forecast, history, imports, plan, system, usage
 from app.config import settings
 from app.control import nightly
 from app.database import Base, SessionLocal, engine, get_db
@@ -39,6 +39,7 @@ app.include_router(forecast.router)
 app.include_router(plan.router)
 app.include_router(history.router)
 app.include_router(control.router)
+app.include_router(usage.router)
 
 
 @app.get("/api/health")

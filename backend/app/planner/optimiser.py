@@ -605,4 +605,5 @@ def plan(
         load_method=forecast.load_method,
         solar_method=forecast.solar_method,
         history_days=forecast.history_days,
+        usage_notes=list(forecast.usage_notes),
     )

@@ -4,10 +4,18 @@ import { toSignal } from '@angular/core/rxjs-interop';
 import { RouterLink } from '@angular/router';
 import { errorMessage } from '../../core/errors';
 import { ForecastService } from '../../core/forecast.service';
-import { ChargePlan, DayForecast, ForecastMethod, IntervalForecast } from '../../core/models';
+import {
+  ChargePlan,
+  DayForecast,
+  ForecastMethod,
+  IntervalForecast,
+  UsageLevel,
+} from '../../core/models';
 import { MODE_LABELS, PlanService, formatPence } from '../../core/plan.service';
 import { SystemService } from '../../core/system.service';
 import { cheapestImport, rateRange } from '../../core/tariff';
+import { USAGE_LABELS } from '../../core/usage.service';
+import { UsageSelector } from '../../shared/usage-selector';
 
 const WIDTH = 720;
 const HEIGHT = 280;
@@ -52,7 +60,7 @@ interface Slot {
  */
 @Component({
   selector: 'app-tonight',
-  imports: [DecimalPipe, RouterLink],
+  imports: [DecimalPipe, RouterLink, UsageSelector],
   templateUrl: './tonight.html',
 })
 export class Tonight implements OnInit {
@@ -73,6 +81,13 @@ export class Tonight implements OnInit {
   readonly loading = signal(false);
   readonly error = signal<string | null>(null);
   readonly methodLabels = METHOD_LABELS;
+  readonly usageLabels = USAGE_LABELS;
+  /** How the user expects the shown day's usage to go. */
+  readonly usageLevel = signal<UsageLevel>('normal');
+  /** Why the usage forecast differs from usual: day marks and car charges. */
+  readonly usageNotes = computed(
+    () => this.plan()?.usage_notes ?? this.forecast()?.usage_notes ?? [],
+  );
   readonly modeLabels = MODE_LABELS;
   readonly pence = formatPence;
   readonly width = WIDTH;

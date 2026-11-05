@@ -113,6 +113,8 @@ class ChargePlan:
     reading_at: datetime | None = None
     reading_soc_percent: float | None = None
     lead_in: list[TimelinePoint] = field(default_factory=list)
+    # How the user's day marks and car charges shaped the usage forecast.
+    usage_notes: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

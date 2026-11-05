@@ -29,6 +29,7 @@
       ›
     </button>
   </nav>
+  <app-usage-selector [day]="day" (levelChange)="usageLevel.set($event)" (changed)="load(day)" />
 }
 
 @if (error()) {
@@ -124,7 +125,11 @@
   <div class="tiles">
     <div class="card tile">
       <span class="muted">Usage</span>
-      <strong>{{ f.load.expected | number: '1.1-1' }} kWh</strong>
+      <strong
+        >{{ f.load.expected | number: '1.1-1' }} kWh{{
+          usageLevel() !== 'normal' ? ', ' + usageLabels[usageLevel()].toLowerCase() : ''
+        }}</strong
+      >
       <span class="muted"
         >likely {{ f.load.low | number: '1.1-1' }}–{{ f.load.high | number: '1.1-1' }} kWh</span
       >
@@ -158,8 +163,14 @@
       @if (verdict(); as v) {
         <p class="verdict">{{ v }}</p>
       }
+      @for (note of usageNotes(); track $index) {
+        <p class="usage-note">{{ note }}</p>
+      }
     } @else {
       <h2>Half-hourly forecast</h2>
+      @for (note of usageNotes(); track $index) {
+        <p class="usage-note">{{ note }}</p>
+      }
     }
     <svg
       class="forecast-chart"

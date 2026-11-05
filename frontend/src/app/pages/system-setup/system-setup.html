@@ -133,6 +133,40 @@
   </fieldset>
 
   <fieldset class="card">
+    <legend>Big loads</legend>
+    <p class="muted">
+      Tell the forecast about loads that change how much electricity your home uses. Leave both off
+      if you don't have them.
+    </p>
+    <label class="choice">
+      <input type="checkbox" formControlName="has_heat_pump" />
+      <span>
+        <strong>Heat pump</strong>
+        <span class="muted"
+          >Usage rises on cold days, so the forecast learns how strongly your home responds to the
+          temperature. Days marked away keep the heating.</span
+        >
+      </span>
+    </label>
+    <label class="choice">
+      <input type="checkbox" formControlName="has_electric_car" />
+      <span>
+        <strong>Electric car</strong>
+        <span class="muted"
+          >Past charging sessions are taken out of your history, so they don't inflate everyday
+          usage. On the Tonight page you say which nights the car will charge, and how much.</span
+        >
+      </span>
+    </label>
+    @if (form.controls.has_electric_car.value) {
+      <label>
+        Car charger power (kW)
+        <input type="number" step="0.1" min="0.1" max="22" formControlName="car_charger_kw" />
+      </label>
+    }
+  </fieldset>
+
+  <fieldset class="card">
     <legend>Planning</legend>
     <label class="choice">
       <input type="radio" formControlName="planning_mode" value="maximise_own_usage" />

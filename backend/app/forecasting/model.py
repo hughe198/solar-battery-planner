@@ -26,6 +26,12 @@ PRIOR_DAYS = 3.0
 RECENCY_HALF_LIFE_DAYS = 60.0
 HEATING_BASE_C = 15.5
 HEATING_BLOCKS = 4
+# With a heat pump: kWh per half hour per heating degree to start from, about 1.7 kWh a
+# degree-day (a typical UK heat pump's 3,500 kWh a year over some 2,000 degree-days), and a
+# far weaker pull towards it, so the home's own response to the cold is learned quickly.
+HEAT_PUMP_PRIOR_KWH = 0.036
+HEAT_PUMP_STRENGTH_SCALE = 1.0
+NO_HEAT_PUMP_STRENGTH_SCALE = 25.0
 # Ofgem's typical domestic electricity use (medium, profile class 1): 2,700 kWh a year.
 TYPICAL_DAILY_KWH = 2700 / 365
 
@@ -104,23 +110,34 @@ class LoadModel:
         heating: np.ndarray,
         load_kwh: np.ndarray,
         newest_day_ordinal: int | None = None,
+        heat_pump: bool = False,
     ) -> "LoadModel":
+        """Without a heat pump the heating terms are held close to zero, so only a clear and
+        lasting response to the cold moves them; with one they start from a typical heat pump
+        and follow the home's own data."""
         days = np.array([d.toordinal() for d in cal.local_day])
         trained_days = len(np.unique(days))
-        # The prior keeps the typical shape but is scaled to this home's average if known.
-        daily = load_kwh.sum() / trained_days if trained_days else TYPICAL_DAILY_KWH
+        heat_prior = HEAT_PUMP_PRIOR_KWH if heat_pump else 0.0
+        # The prior keeps the typical shape but is scaled to this home's average if known, less
+        # what the heat pump prior already accounts for.
+        daily = (
+            (load_kwh.sum() - heat_prior * heating.sum()) / trained_days
+            if trained_days
+            else TYPICAL_DAILY_KWH
+        )
         base = typical_profile(daily if daily > 0 else TYPICAL_DAILY_KWH)
-        prior = np.concatenate([base, base, np.zeros(HEATING_BLOCKS)])
+        prior = np.concatenate([base, base, np.full(HEATING_BLOCKS, heat_prior)])
         if not trained_days:
             return cls(prior, 0)
 
         newest = newest_day_ordinal if newest_day_ordinal is not None else days.max()
         w = 0.5 ** ((newest - days) / RECENCY_HALF_LIFE_DAYS)
         x = cls.design(cal, heating)
+        scale = HEAT_PUMP_STRENGTH_SCALE if heat_pump else NO_HEAT_PUMP_STRENGTH_SCALE
         # Each slot coefficient sees about one observation per day, so PRIOR_DAYS of prior
         # weight per slot. Heating terms see a whole block of a day per observation.
         slot_strength = np.full(2 * SLOTS, PRIOR_DAYS)
-        heat_strength = np.full(HEATING_BLOCKS, PRIOR_DAYS * SLOTS / HEATING_BLOCKS * 25.0)
+        heat_strength = np.full(HEATING_BLOCKS, PRIOR_DAYS * SLOTS / HEATING_BLOCKS * scale)
         coef = _ridge_to_prior(
             x, load_kwh, w, prior, np.concatenate([slot_strength, heat_strength])
         )
@@ -128,6 +145,11 @@ class LoadModel:
 
     def predict(self, cal: Calendar, heating: np.ndarray) -> np.ndarray:
         return np.clip(self.design(cal, heating) @ self.coef, 0.0, None)
+
+    def heating_part(self, cal: Calendar, heating: np.ndarray) -> np.ndarray:
+        """The share of each predicted half hour that comes from the cold-weather terms."""
+        x = self.design(cal, heating)[:, 2 * SLOTS :]
+        return np.clip(x @ self.coef[2 * SLOTS :], 0.0, None)
 
 
 class SolarModel:

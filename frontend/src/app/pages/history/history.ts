@@ -5,11 +5,19 @@ import { RouterLink } from '@angular/router';
 import { chargeLabel, dayLabel, describeInProgress, localDate } from '../../core/charge-summary';
 import { errorMessage } from '../../core/errors';
 import { ForecastService } from '../../core/forecast.service';
-import { Backtest, History as WeekHistory, Replay, ReplayDetail } from '../../core/models';
+import {
+  Backtest,
+  History as WeekHistory,
+  Replay,
+  ReplayDetail,
+  UsageLevel,
+} from '../../core/models';
 import { PlanService, formatPence } from '../../core/plan.service';
 import { SystemService } from '../../core/system.service';
 import { ChargeCalendar } from '../../shared/charge-calendar';
 import { FlowChart } from '../../shared/flow-chart';
+import { UsageService } from '../../core/usage.service';
+import { UsageSelector } from '../../shared/usage-selector';
 import { WeekChart } from '../../shared/week-chart';
 
 /** As far back as the API replays. */
@@ -21,12 +29,15 @@ const LOOK_BACK_DAYS = 120;
  */
 @Component({
   selector: 'app-history',
-  imports: [DecimalPipe, RouterLink, ChargeCalendar, FlowChart, WeekChart],
+  imports: [DecimalPipe, RouterLink, ChargeCalendar, FlowChart, WeekChart, UsageSelector],
   templateUrl: './history.html',
 })
 export class History implements OnInit {
   private readonly plans = inject(PlanService);
   private readonly forecasts = inject(ForecastService);
+  private readonly usage = inject(UsageService);
+  /** Days marked as other than normal usage, for the calendar. */
+  readonly marks = signal<Record<string, UsageLevel>>({});
   readonly system = toSignal(inject(SystemService).get());
   readonly pence = formatPence;
   clock: () => number = () => Date.now();
@@ -87,6 +98,7 @@ export class History implements OnInit {
   });
 
   ngOnInit(): void {
+    this.loadMarks();
     this.plans.history().subscribe({ next: (h) => this.history.set(h), error: () => {} });
     this.plans.replay(LOOK_BACK_DAYS).subscribe({
       next: (r) => {
@@ -102,6 +114,22 @@ export class History implements OnInit {
         this.backtestLoaded.set(true);
       },
       error: () => this.backtestLoaded.set(true),
+    });
+  }
+
+  loadMarks(): void {
+    const start = new Date(Date.now() - (LOOK_BACK_DAYS + 31) * 86_400_000)
+      .toISOString()
+      .slice(0, 10);
+    this.usage.list({ start }).subscribe({
+      next: (data) =>
+        this.marks.set(
+          Object.fromEntries(
+            data.days.filter((d) => d.level !== 'normal').map((d) => [d.day, d.level]),
+          ),
+        ),
+      // The calendar works without them.
+      error: () => {},
     });
   }
 
