@@ -24,9 +24,12 @@ from app.control.schedule import (
 )
 from app.importers.fox_ess import (
     SCHEDULER_FLAG_PATH,
+    SCHEDULER_PATH,
     SCHEDULER_SET_PATH,
     FoxEssClient,
     FoxEssError,
+    FoxEssWritesBlocked,
+    scheduler_set_body,
 )
 from app.models import (
     ControlAction,
@@ -38,6 +41,11 @@ from app.models import (
     System,
 )
 from app.planner.base import ChargePlan
+
+
+# The lowest minimum charge the planner writes, whatever the inverter accepts. The owner chose
+# to keep it at 10% for safety (1 November 2026), as the true lower limit is uncertain.
+MIN_SOC_FLOOR = 10.0
 
 
 class ControlError(Exception):
@@ -70,6 +78,11 @@ class Proposal:
     removed: list[Period]
     after: list[Period]
     notes: list[str] = field(default_factory=list)
+    # What's left of the user's periods that the new ones partly overlap.
+    trimmed: list[Period] = field(default_factory=list)
+    max_soc: float | None = None
+    # What's written, in words, e.g. "hold 00:30–03:40; force charge to 80% 03:40–05:30".
+    summary: str = ""
 
     @property
     def fingerprint(self) -> str:
@@ -94,38 +107,43 @@ def propose(
 
     start, stop = rec.force_charge_start, rec.force_charge_stop
     hold_start, hold_stop = getattr(rec, "hold_start", None), getattr(rec, "hold_stop", None)
-    target = power = min_soc = None
+    target = None
     added: list[Period] = []
     power = schedule.clamp("fdpwr", round(battery.max_charge_kw * 1000))
-    min_soc = schedule.clamp("minsocongrid", round(battery.min_soc_percent))
+    wanted_min = max(round(battery.min_soc_percent), MIN_SOC_FLOOR)
+    min_soc = schedule.clamp("minsocongrid", wanted_min)
+    # Fox: fdSoc "must be equal or greater than minSocOnGrid" (D6). No forced period stops below
+    # the minimum written with it, nor below what the inverter accepts.
+    floor = max(schedule.ranges["fdsoc"][0], min_soc)
+    # A setting left out of a V3 period keeps an old value, so every setting a stage depends on
+    # is sent, maxSoc included when the inverter has one, at its top so it never stops a
+    # charge (D7).
+    max_soc = schedule.ranges["maxsoc"][1] if "maxsoc" in schedule.reported else None
+
+    def stop_level(level: float) -> float:
+        return min(max(level, floor), schedule.ranges["fdsoc"][1])
+
     hold: list[Period] = []
     if hold_start is not None and hold_stop is not None and hold_stop > hold_start:
-        # A forced charge to the lowest level the inverter accepts charges nothing once the
-        # battery is above it, but keeps the house on the grid: the battery is held.
-        floor = schedule.ranges["fdsoc"][0]
-        hold = charge_periods(hold_start, hold_stop, system.timezone, floor, power, min_soc)
+        # A forced charge to the lowest level allowed charges nothing once the battery is above
+        # it, but keeps the house on the grid: the battery is held.
+        hold = charge_periods(
+            hold_start, hold_stop, system.timezone, floor, power, min_soc, max_soc=max_soc
+        )
         notes.append(
             "Until the charge, the battery is held: a forced charge to "
             f"{floor:g}% keeps the house on the cheap grid without charging, so stored energy "
             "isn't used overnight only to be bought back."
         )
     if rec.charge_kwh > 0 and start is not None and stop is not None and stop > start:
-        target = schedule.clamp("fdsoc", ceil(rec.target_soc_percent))
-        added = charge_periods(start, stop, system.timezone, target, power, min_soc)
-        if "maxsoc" in schedule.reported:
-            top = schedule.ranges["maxsoc"][1]
-            added = [Period(**{**p.__dict__, "raw": {"maxSoc": int(top)}}) for p in added]
-            notes.append(f"Maximum charge is written as {top:g}% so it doesn't stop the charge.")
+        target = stop_level(ceil(rec.target_soc_percent))
+        added = charge_periods(
+            start, stop, system.timezone, target, power, min_soc, max_soc=max_soc
+        )
         if target != ceil(rec.target_soc_percent):
             notes.append(
-                f"The inverter accepts charge levels from "
-                f"{schedule.ranges['fdsoc'][0]:g}%, so {target:g}% is written."
-            )
-        if min_soc != round(battery.min_soc_percent):
-            low = schedule.ranges["minsocongrid"][0]
-            notes.append(
-                f"Your minimum charge is {battery.min_soc_percent:g}%, but the inverter's schedule "
-                f"accepts {low:g}% or more, so the charge periods use {min_soc:g}%."
+                f"The charge level is written as {target:g}%, as it must be at least the "
+                f"{floor:g}% minimum and no more than {schedule.ranges['fdsoc'][1]:g}%."
             )
         if not rec.force_charge_reaches_target:
             notes.append("The charge may not reach the target before the cheap rate ends.")
@@ -137,7 +155,7 @@ def propose(
     drain_soc = drain_power = None
     if drain_start is not None and drain_stop is not None and drain_stop > drain_start:
         wanted = ceil(getattr(rec, "discharge_to_percent", None) or battery.min_soc_percent)
-        drain_soc = schedule.clamp("fdsoc", wanted)
+        drain_soc = stop_level(wanted)
         drain_power = schedule.clamp("fdpwr", round(battery.max_discharge_kw * 1000))
         drain = charge_periods(
             drain_start,
@@ -147,6 +165,7 @@ def propose(
             drain_power,
             min_soc,
             work_mode=FORCE_DISCHARGE,
+            max_soc=max_soc,
         )
         notes.append(
             f"Before the free window the battery is force discharged to {drain_soc:g}% at "
@@ -154,14 +173,29 @@ def propose(
         )
         if drain_soc != wanted:
             notes.append(
-                f"The inverter accepts discharge levels from {schedule.ranges['fdsoc'][0]:g}%, "
-                f"so it stops at {drain_soc:g}% rather than {wanted:g}%."
+                f"The discharge stops at {drain_soc:g}% rather than {wanted:g}%, as it can't go "
+                "below the minimum charge."
             )
     added = drain + hold + added
+    for i, a in enumerate(added):
+        for b in added[i + 1 :]:
+            if a.overlaps(b):
+                # D8: stages should meet, never overlap. Refuse rather than guess.
+                raise ControlError(
+                    f"The {a.work_mode} {a.label()} and {b.work_mode} {b.label()} stages overlap, "
+                    "so nothing can be written. This is a bug in the planner."
+                )
+    if added and min_soc != round(battery.min_soc_percent):
+        notes.append(
+            f"Your minimum charge is {battery.min_soc_percent:g}%, but the planner's periods "
+            f"use {min_soc:g}%, the lowest it writes."
+        )
+    if added and max_soc is not None:
+        notes.append(f"Maximum charge is written as {max_soc:g}% so it doesn't stop the charge.")
     if not added:
         power = min_soc = None
 
-    after, overlapping = merge(current, added)
+    after, overlapping, trimmed = merge(current, added)
     removed = replaced + overlapping
     if len(after) > schedule.max_groups:
         raise ControlError(
@@ -180,8 +214,40 @@ def propose(
             + ", ".join(f"{p.work_mode} {p.label()}" for p in current)
             + "."
         )
-    if removed and any(p.work_mode not in ("ForceCharge", FORCE_DISCHARGE) for p in removed):
-        notes.append("Some of your own schedule periods overlap the charge and are replaced.")
+    for p in overlapping:
+        rest = [t.label() for t in trimmed if t.raw is p.raw]
+        notes.append(
+            f"Your {p.work_mode} period {p.label()} overlaps the planner's, so "
+            + (
+                f"only the overlapping part is replaced; it's kept for {', '.join(rest)}."
+                if rest
+                else "it's replaced."
+            )
+        )
+    if schedule.default is not None and (added or removed):
+        notes.append(
+            f"Your all-day {schedule.default.work_mode} period is Fox's default for times no "
+            "other period covers. It isn't sent, as the API can't set it, and it's checked "
+            "for after the write."
+        )
+    if schedule.switched_off and (added or removed):
+        notes.append(
+            "These switched-off periods will be lost, as the write replaces the whole list: "
+            + ", ".join(f"{p.work_mode} {p.label()}" for p in schedule.switched_off)
+            + "."
+        )
+    elif added or removed:
+        notes.append(
+            "Fox's current schedule API doesn't show switched-off periods. If you have any in "
+            "the Fox app, this write may remove them."
+        )
+    stages = []
+    if drain:
+        stages.append(f"discharge to {drain_soc:g}% {_labels(drain)}")
+    if hold:
+        stages.append(f"hold {_labels(hold)}")
+    if target is not None:
+        stages.append(f"force charge to {target:g}% {_labels(added[len(drain) + len(hold):])}")
     return Proposal(
         day=plan.day,
         mode=rec.mode,
@@ -203,21 +269,34 @@ def propose(
         removed=removed,
         after=after,
         notes=notes,
+        trimmed=trimmed,
+        max_soc=max_soc if added else None,
+        summary="; ".join(stages),
     )
+
+
+def _labels(periods: list[Period]) -> str:
+    return ", ".join(p.label() for p in periods)
 
 
 def read_schedule(client: FoxEssClient, sn: str) -> Schedule:
     return Schedule.from_fox(client.scheduler(sn))
 
 
-def write_requests(sn: str, periods: list[Period], enable: bool) -> list[tuple[str, dict]]:
+def write_requests(
+    sn: str, periods: list[Period], enable: bool, was_enabled: bool
+) -> list[tuple[str, dict]]:
     """The exact write requests, as (path, JSON body), in the order they're sent. The dry run
-    prints these, and the request tests check the real client sends exactly these."""
+    prints these, and the request tests check the real client sends exactly these.
+
+    The periods always go in one V3 write, and an empty list removes them all (D3). V3 has no
+    master switch, so the V1 flag call follows only when the schedule must be switched on from
+    off, or is to be off: switching off is always confirmed, as it's the safe state."""
     groups = [p.to_fox() for p in periods]
-    requests: list[tuple[str, dict]] = []
-    if groups:
-        requests.append((SCHEDULER_SET_PATH, {"deviceSN": sn, "groups": groups}))
-    requests.append((SCHEDULER_FLAG_PATH, {"deviceSN": sn, "enable": int(bool(enable and groups))}))
+    on = bool(enable and groups)
+    requests: list[tuple[str, dict]] = [(SCHEDULER_SET_PATH, scheduler_set_body(sn, groups))]
+    if not (on and was_enabled):
+        requests.append((SCHEDULER_FLAG_PATH, {"deviceSN": sn, "enable": int(on)}))
     return requests
 
 
@@ -225,26 +304,105 @@ def apply_requests(sn: str, proposal: Proposal) -> list[tuple[str, dict]]:
     """What `apply` would send for this proposal: nothing when there's nothing to change."""
     if not proposal.added and not proposal.removed:
         return []
-    return write_requests(sn, proposal.after, proposal.enable_after)
+    return write_requests(sn, proposal.after, proposal.enable_after, proposal.schedule.enabled)
 
 
-def _write(client: FoxEssClient, sn: str, periods: list[Period], enable: bool) -> None:
-    """Write the periods, then switch the schedule on or off. With no periods the schedule is
-    switched off, which returns the inverter to its own work mode."""
-    groups = [p.to_fox() for p in periods]
-    if groups:
-        client.set_scheduler_groups(sn, groups)
-    client.set_scheduler_enabled(sn, bool(enable and groups))
+class PartialWrite(FoxEssError):
+    """A write failed after the periods reached, or may have reached, the inverter."""
+
+    def __init__(self, message: str, periods_sent: bool) -> None:
+        super().__init__(message)
+        self.periods_sent = periods_sent
 
 
-def _verify(client: FoxEssClient, sn: str, periods: list[Period], enable: bool):
+@dataclass(frozen=True)
+class ApiCall:
+    """One call Apply makes to Fox ESS, in order, for a person to read before authorising."""
+
+    method: str
+    path: str
+    body: dict
+    purpose: str
+    writes: bool
+
+
+def apply_calls(sn: str, proposal: Proposal) -> list[ApiCall]:
+    """Every call Apply would make for this proposal, reads included, in order."""
+    read = {"deviceSN": sn}
+    calls = [
+        ApiCall(
+            "POST",
+            SCHEDULER_PATH,
+            read,
+            "Read your schedule again, and stop if it has changed since this preview.",
+            False,
+        )
+    ]
+    writes = apply_requests(sn, proposal)
+    for path, body in writes:
+        if path == SCHEDULER_SET_PATH:
+            n = len(body["groups"])
+            purpose = (
+                f"Replace your inverter's schedule with the {n} period{'s' if n != 1 else ''} "
+                "shown above. Fox replaces the whole list with what's sent."
+                if n
+                else "Remove every period from your inverter's schedule."
+            )
+        else:
+            purpose = (
+                "Switch your inverter's schedule on, so the periods run."
+                if body["enable"]
+                else "Switch your inverter's schedule off."
+            )
+        calls.append(ApiCall("POST", path, body, purpose, True))
+    if writes:
+        calls.append(
+            ApiCall(
+                "POST",
+                SCHEDULER_PATH,
+                read,
+                "Read the schedule back and check it matches what was sent.",
+                False,
+            )
+        )
+    return calls
+
+
+def _write(
+    client: FoxEssClient, sn: str, periods: list[Period], enable: bool, was_enabled: bool
+) -> None:
+    """Send the write requests in order. A failure partway raises `PartialWrite` when the
+    periods did or may have reached the inverter."""
+    reached = False
+    for path, body in write_requests(sn, periods, enable, was_enabled):
+        try:
+            if path == SCHEDULER_SET_PATH:
+                client.set_scheduler_groups(sn, body["groups"])
+                reached = True
+            else:
+                client.set_scheduler_enabled(sn, bool(body["enable"]))
+        except FoxEssWritesBlocked:
+            raise
+        except FoxEssError as exc:
+            # No errno means the reply was lost on the way, so Fox may have acted on it.
+            if reached or exc.errno is None:
+                raise PartialWrite(str(exc), periods_sent=reached) from exc
+            raise
+
+
+def _verify(client: FoxEssClient, sn: str, before: Schedule, periods: list[Period], enable: bool):
     back = read_schedule(client, sn)
-    problems = matches(periods, back.periods) if enable and periods else []
+    problems = matches(periods, back.periods)
     expected_on = bool(enable and periods)
     if back.enabled != expected_on:
         problems.append(
             f"The inverter reports its schedule is {'on' if back.enabled else 'off'}, "
             f"not {'on' if expected_on else 'off'}."
+        )
+    if before.default is not None and back.default is None:
+        problems.append(
+            f"Your all-day {before.default.work_mode} period, Fox's default, is no longer "
+            "reported. Check it in the Fox app."
         )
     return back, problems
 
@@ -271,18 +429,39 @@ def _run_write(
     client: FoxEssClient,
     kind: ControlActionKind,
     trigger: ControlTrigger,
+    before: Schedule,
     periods: list[Period],
     enable: bool,
     done: str,
     **values: Any,
-) -> ControlAction:
+) -> tuple[ControlAction, bool]:
+    """Write, read back and log. Returns the log entry, and whether the periods did or may
+    have reached the inverter, so the caller can keep track of them even after a failure (D4)."""
     sn = system.fox_ess.device_sn
     sent = {"groups": [p.to_fox() for p in periods], "enable": int(bool(enable and periods))}
     try:
-        _write(client, sn, periods, enable)
-        back, problems = _verify(client, sn, periods, enable)
+        _write(client, sn, periods, enable, before.enabled)
+        back, problems = _verify(client, sn, before, periods, enable)
+    except PartialWrite as exc:
+        where = (
+            "The periods were written, but the next step failed"
+            if exc.periods_sent
+            else "The reply was lost, so the periods may have been written"
+        )
+        action = _log(
+            db,
+            system,
+            kind,
+            trigger,
+            ControlStatus.failed,
+            f"{where}: {exc}. Check the schedule in the Fox app; Remove and Restore still "
+            "know about these periods.",
+            sent=sent,
+            **values,
+        )
+        return action, True
     except FoxEssError as exc:
-        return _log(
+        action = _log(
             db,
             system,
             kind,
@@ -292,9 +471,10 @@ def _run_write(
             sent=sent,
             **values,
         )
+        return action, False
     status = ControlStatus.mismatch if problems else ControlStatus.ok
     message = " ".join(problems) if problems else done
-    return _log(
+    action = _log(
         db,
         system,
         kind,
@@ -302,9 +482,12 @@ def _run_write(
         status,
         message,
         sent=sent,
-        read_back=back.to_snapshot() | {"enable": int(back.enabled)},
+        read_back=back.to_snapshot(),
         **values,
     )
+    return action, True
+
+
 
 
 def apply(
@@ -330,27 +513,31 @@ def apply(
         control.original_schedule = proposal.schedule.to_snapshot()
         control.original_saved_at = datetime.now(timezone.utc)
     if proposal.added:
-        done = (
-            f"Force charge to {proposal.target_soc_percent:g}% written for "
-            f"{', '.join(p.label() for p in proposal.added)} and read back as written."
-        )
+        what = proposal.summary
+        done = f"{what[0].upper()}{what[1:]} written and read back as written."
     else:
         done = "No charge needed; the planner's force charge periods were removed."
-    enable = proposal.enable_after
-    action = _run_write(
+    action, reached = _run_write(
         db,
         system,
         client,
         ControlActionKind.apply,
         trigger,
+        proposal.schedule,
         proposal.after,
-        enable,
+        proposal.enable_after,
         done,
         day=proposal.day,
         target_soc_percent=proposal.target_soc_percent,
     )
+    added = [p.to_fox() for p in proposal.added]
     if action.status != ControlStatus.failed:
-        control.written_groups = [p.to_fox() for p in proposal.added]
+        control.written_groups = added
+    elif reached:
+        # The new periods may be there, and last night's may not have gone: remember both, so
+        # Remove takes out whichever the inverter has (D4).
+        earlier = [g for g in control.written_groups or [] if g not in added]
+        control.written_groups = earlier + added
     return action
 
 
@@ -385,12 +572,13 @@ def clear(
             ControlStatus.skipped,
             "The inverter has no force charge periods from the planner, so nothing was changed.",
         )
-    action = _run_write(
+    action, _ = _run_write(
         db,
         system,
         client,
         ControlActionKind.clear,
         ControlTrigger.manual,
+        schedule,
         after,
         schedule.enabled,
         "The planner's force charge periods were removed.",
@@ -414,13 +602,26 @@ def restore(
             ControlStatus.skipped,
             "The planner hasn't changed the inverter, so there is nothing to restore.",
         )
+    try:
+        # Read first, as before every write, to know whether the schedule must be switched.
+        schedule = read_schedule(client, system.fox_ess.device_sn)
+    except FoxEssError as exc:
+        return _log(
+            db,
+            system,
+            ControlActionKind.restore,
+            ControlTrigger.manual,
+            ControlStatus.failed,
+            f"Couldn't read the inverter's schedule: {exc}",
+        )
     original = Schedule.from_fox(control.original_schedule)
-    action = _run_write(
+    action, _ = _run_write(
         db,
         system,
         client,
         ControlActionKind.restore,
         ControlTrigger.manual,
+        schedule,
         original.periods,
         original.enabled,
         "Your original schedule was put back and read back as saved.",

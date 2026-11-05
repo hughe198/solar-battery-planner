@@ -24,9 +24,13 @@ from app.importers.base import INTERVAL, UsageInterval, interval_start
 HISTORY_PATH = "/op/v0/device/history/query"
 DEVICE_LIST_PATH = "/op/v0/device/list"
 MIN_SOC_PATH = "/op/v0/device/battery/soc/get"
-SCHEDULER_PATH = "/op/v1/device/scheduler/get"
+# Fox's Scheduler V3. V1 is deprecated, "retained only for older hardware". V3 nests each
+# period's settings in `extraParam`, and a setting left out keeps its previous value unless
+# `isDefault` is true. V3 has no master switch of its own, so the V1 flag call is still used to
+# switch the schedule on or off, and only when that has to change.
+SCHEDULER_PATH = "/op/v3/device/scheduler/get"
 # Writes (opt-in inverter control only). Fox allows one call every 2 seconds per write endpoint.
-SCHEDULER_SET_PATH = "/op/v1/device/scheduler/enable"
+SCHEDULER_SET_PATH = "/op/v3/device/scheduler/enable"
 SCHEDULER_FLAG_PATH = "/op/v1/device/scheduler/set/flag"
 WRITE_GAP_SECONDS = 2.1
 # Every path that changes an inverter. Nothing else the client calls writes.
@@ -41,13 +45,30 @@ POWER_VARIABLES = {
 }
 SOC_VARIABLE = "SoC"
 
-ERRNO_TOO_FREQUENT = 40400
-# Invalid, expired or unauthorised token (as seen by community clients; not all documented).
-AUTH_ERRNOS = {41807, 41808, 41809}
+# Too frequent: 40400 in Fox's older document, 40404 in the newer one. Both are retried.
+TOO_FREQUENT_ERRNOS = {40400, 40404}
+# Fox's newer document says only a system error is worth retrying.
+ERRNO_SYSTEM = 41201
+RETRY_ERRNOS = TOO_FREQUENT_ERRNOS | {ERRNO_SYSTEM}
+# Invalid, expired or unauthorised token, and 41811 permission denied.
+AUTH_ERRNOS = {41807, 41808, 41809, 41811}
+# Plain words for the errors Fox documents, added to its own message.
+ERRNO_MEANINGS = {
+    40256: "the request was malformed",
+    40257: "a value in the request was invalid",
+    41201: "Fox ESS had a system error",
+    44098: "the inverter didn't accept the write",
+}
 
 
 class FoxEssError(Exception):
-    pass
+    """A Fox ESS call failed. `errno` is Fox's error code when Fox answered and refused, so
+    nothing was changed; it's None when the call failed on the way, such as a timeout, when Fox
+    may have acted on it without the reply arriving."""
+
+    def __init__(self, message: str, errno: int | None = None) -> None:
+        super().__init__(message)
+        self.errno = errno
 
 
 class FoxEssAuthError(FoxEssError):
@@ -134,14 +155,17 @@ class FoxEssClient:
             errno = payload.get("errno")
             if errno == 0:
                 return payload.get("result")
-            if errno == ERRNO_TOO_FREQUENT and attempt < self.max_retries:
+            if errno in RETRY_ERRNOS and attempt < self.max_retries:
                 self.sleep(5 * 2**attempt)
                 continue
             msg = payload.get("msg") or "unknown error"
             if errno in AUTH_ERRNOS:
-                raise FoxEssAuthError(f"Fox ESS rejected the API key ({errno}: {msg})")
-            raise FoxEssError(f"Fox ESS error {errno}: {msg}")
-        raise FoxEssError("Fox ESS kept rate limiting the request")  # pragma: no cover
+                raise FoxEssAuthError(f"Fox ESS rejected the API key ({errno}: {msg})", errno)
+            meaning = ERRNO_MEANINGS.get(errno)
+            raise FoxEssError(
+                f"Fox ESS error {errno}: {msg}" + (f" ({meaning})" if meaning else ""), errno
+            )
+        raise FoxEssError("Fox ESS kept rate limiting the request", errno)  # pragma: no cover
 
     def device_serials(self) -> list[str]:
         result = self.post(DEVICE_LIST_PATH, {"currentPage": 1, "pageSize": 100})
@@ -162,9 +186,10 @@ class FoxEssClient:
         charge period (the highest, if several). Read-only."""
         result = self.scheduler(sn)
         powers = [
-            g.get("fdPwr")
+            # V3 puts the power in extraParam; V1 had it on the period itself.
+            (g.get("extraParam") or {}).get("fdPwr", g.get("fdPwr"))
             for g in result.get("groups") or []
-            if g.get("workMode") == "ForceCharge" and g.get("enable", 1)
+            if g.get("workMode") == "ForceCharge" and g.get("enable", 1) not in (0, "0", False)
         ]
         watts = [p for p in powers if isinstance(p, (int, float)) and p > 0]
         return max(watts) / 1000 if watts else None
@@ -174,8 +199,10 @@ class FoxEssClient:
         return self.post(SCHEDULER_PATH, {"deviceSN": sn}) or {}
 
     def set_scheduler_groups(self, sn: str, groups: list[dict[str, Any]]) -> None:
-        """Replace every period in the inverter's mode schedule. Writes to the inverter."""
-        self.post(SCHEDULER_SET_PATH, {"deviceSN": sn, "groups": groups})
+        """Replace every period in the inverter's mode schedule; an empty list removes them all.
+        `isDefault` is false, so a setting left out of a period's extraParam keeps its previous
+        value rather than being reset. Writes to the inverter."""
+        self.post(SCHEDULER_SET_PATH, scheduler_set_body(sn, groups))
 
     def set_scheduler_enabled(self, sn: str, enabled: bool) -> None:
         """Turn the mode schedule on or off; off returns the inverter to its own work mode.
@@ -192,6 +219,11 @@ class FoxEssClient:
         }
         result = self.post(HISTORY_PATH, body) or []
         return result[0].get("datas", []) if result else []
+
+
+def scheduler_set_body(sn: str, groups: list[dict[str, Any]]) -> dict[str, Any]:
+    """The body of a V3 schedule write."""
+    return {"deviceSN": sn, "isDefault": False, "groups": groups}
 
 
 def parse_fox_time(value: str) -> datetime:

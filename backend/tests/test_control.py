@@ -23,7 +23,27 @@ PROPERTIES = {
 }
 
 
+SETTINGS = {"fdSoc", "fdPwr", "minSocOnGrid", "maxSoc", "importLimit", "exportLimit", "pvLimit"}
+
+
 def group(start, end, mode="SelfUse", **extra):
+    """A period as Fox's Scheduler V3 reports it: settings in extraParam, no `enable`."""
+    settings_ = {k: v for k, v in extra.items() if k in SETTINGS}
+    g = {
+        "startHour": start[0],
+        "startMinute": start[1],
+        "endHour": end[0],
+        "endMinute": end[1],
+        "workMode": mode,
+        **{k: v for k, v in extra.items() if k not in SETTINGS},
+    }
+    if settings_:
+        g["extraParam"] = settings_
+    return g
+
+
+def v1_group(start, end, mode="SelfUse", **extra):
+    """A period as Fox's deprecated V1 reported it, as stored before the move to V3."""
     return {
         "enable": 1,
         "startHour": start[0],
@@ -49,11 +69,10 @@ class FakeInverter:
         return self
 
     def scheduler(self, sn):
-        filler = [group((0, 0), (0, 0)) | {"enable": 0}] * (8 - len(self.groups))
         return {
             "enable": self.enable,
             "maxGroupCount": 8,
-            "groups": copy.deepcopy(self.groups) + filler,
+            "groups": copy.deepcopy(self.groups),
             "properties": self.properties,
         }
 
@@ -84,16 +103,13 @@ def test_charge_period_splits_at_midnight_with_inclusive_ends():
     assert (first.start, first.end) == (23 * 60 + 40, 23 * 60 + 59)
     assert (second.start, second.end) == (0, 5 * 60 + 29)
     assert first.label() == "23:40–00:00"
-    assert second.to_fox() | {} == {
-        "enable": 1,
+    assert second.to_fox() == {
         "startHour": 0,
         "startMinute": 0,
         "endHour": 5,
         "endMinute": 29,
         "workMode": "ForceCharge",
-        "fdSoc": 80,
-        "fdPwr": 3600,
-        "minSocOnGrid": 10,
+        "extraParam": {"fdSoc": 80, "fdPwr": 3600, "minSocOnGrid": 10},
     }
 
 
@@ -108,15 +124,17 @@ def test_charge_period_uses_local_time():
 def test_merge_replaces_only_overlapping_periods():
     own = [Period.from_fox(group((0, 0), (1, 59))), Period.from_fox(group((16, 0), (18, 59)))]
     added = charge_periods(utc(2026, 1, 10, 1, 0), utc(2026, 1, 10, 5, 0), "UTC", 80, 3000, 10)
-    after, removed = merge(own, added)
+    after, removed, trimmed = merge(own, added)
     assert removed == [own[0]]
-    assert [p.label() for p in after] == ["01:00–05:00", "16:00–19:00"]
+    # D5: what's left of the overlapped period outside the charge is kept.
+    assert [p.label() for p in trimmed] == ["00:00–01:00"]
+    assert [p.label() for p in after] == ["00:00–01:00", "01:00–05:00", "16:00–19:00"]
 
 
 def test_matches_reports_differences():
     written = charge_periods(utc(2026, 1, 10, 1, 0), utc(2026, 1, 10, 5, 0), "UTC", 80, 3000, 10)
     assert matches(written, written) == []
-    changed = Period.from_fox(written[0].to_fox() | {"fdSoc": 100})
+    changed = Period.from_fox(written[0].to_fox() | {"extraParam": {"fdSoc": 100}})
     assert "charge level" in matches(written, [changed])[0]
     assert "missing" in matches(written, [])[0]
 
@@ -155,7 +173,7 @@ def test_propose_clamps_to_the_inverters_ranges_and_explains():
     )
     (added,) = proposal.added
     assert (added.fd_soc, added.fd_pwr, added.min_soc_on_grid) == (80, 3600, 10)
-    assert any("accepts 10% or more" in n for n in proposal.notes)
+    assert any("use 10%, the lowest it writes" in n for n in proposal.notes)
     assert any("repeat every day" in n for n in proposal.notes)
     assert [p.label() for p in proposal.after] == ["02:00–05:30", "16:00–19:00"]
 
@@ -317,7 +335,7 @@ def test_write_test_ladder_then_apply_clear_restore(client, headers, inverter):
     assert added["status"] == "ok", added["message"]
     assert len(inverter.groups) == 2
     test_group = next(g for g in inverter.groups if g["workMode"] == "ForceCharge")
-    assert test_group["fdPwr"] == testing.TEST_POWER_W
+    assert test_group["extraParam"]["fdPwr"] == testing.TEST_POWER_W
     assert (test_group["endHour"] * 60 + test_group["endMinute"]) - (
         test_group["startHour"] * 60 + test_group["startMinute"]
     ) == testing.TEST_MINUTES - 1
@@ -344,6 +362,10 @@ def test_write_test_ladder_then_apply_clear_restore(client, headers, inverter):
     assert done.status_code == 200, done.text
     assert done.json()["status"] == "ok", done.json()["message"]
     assert inverter.groups == preview["request"]["groups"]
+    # The calls shown for authorising name the same write, and read before and after.
+    calls = preview["calls"]
+    assert [c["writes"] for c in calls][0] is False and calls[-1]["writes"] is False
+    assert next(c for c in calls if c["writes"])["body"]["groups"] == inverter.groups
     assert done.json()["sent"]["groups"] == preview["request"]["groups"]
 
     resp = client.put("/api/control", json={"enabled": True, "auto_apply": True}, headers=headers)
@@ -379,7 +401,15 @@ def test_read_back_mismatch_is_reported(client, headers, inverter):
     real_set = inverter.set_scheduler_groups
 
     def ignores_power(sn, groups):
-        real_set(sn, [g | {"fdPwr": 0} if g["workMode"] == "ForceCharge" else g for g in groups])
+        real_set(
+            sn,
+            [
+                g | {"extraParam": g["extraParam"] | {"fdPwr": 0}}
+                if g["workMode"] == "ForceCharge"
+                else g
+                for g in groups
+            ],
+        )
 
     inverter.set_scheduler_groups = ignores_power
     result = step(client, headers, 3)

@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo
 from app.control.invariants import Check, check
 from app.control.schedule import Period, Schedule
 from app.control.service import Proposal, apply_requests, propose
-from app.importers.fox_ess import FoxEssClient
+from app.importers.fox_ess import SCHEDULER_PATH, FoxEssClient
 from app.models import InverterControl, System
 
 MARK = {"pass": "PASS", "fail": "FAIL", "warn": "NOTE"}
@@ -147,7 +147,7 @@ def render(dry: DryRun, system: System, show_serial: bool = False) -> str:
             "",
         ]
     lines += [
-        "Each write is followed by `POST /op/v1/device/scheduler/get` to read it back.",
+        f"Each write is followed by `POST {SCHEDULER_PATH}` to read it back.",
         "",
         "## For you to check",
         "",
@@ -161,8 +161,10 @@ def render(dry: DryRun, system: System, show_serial: bool = False) -> str:
         "Paste this whole file into Claude with the prompt below.",
         "",
         "> You're reviewing a request that will change a home battery inverter's schedule through",
-        "> the Fox ESS Open API (v1 scheduler). Fox replaces the whole list of periods with the",
-        "> `groups` sent. Ends are inclusive to the minute. Check, and answer each with yes or no",
+        "> the Fox ESS Open API (Scheduler V3). Fox replaces the whole list of periods with the",
+        "> `groups` sent; each period's settings are in `extraParam`, and a setting left out",
+        "> keeps its old value. An all-day 00:00–23:59 period is Fox's default and must not be",
+        "> sent. Ends are inclusive to the minute. Check, and answer each with yes or no",
         '> and a reason: (1) Does each request body match "Schedule after" exactly, field for',
         '> field? (2) Are any of the user\'s periods in "Schedule now" changed or missing in the',
         "> request, other than ones listed as replaced? (3) Is every ForceCharge or",

@@ -418,15 +418,20 @@ days are skipped). The Tonight page (`/tonight`) shows the full plan, and the Hi
 ## Inverter control (opt-in)
 
 Users can let the planner write the next overnight charge to their Fox ESS inverter. It is off
-by default and needs explicit consent on the **Inverter** page (`/inverter`, API `/api/control`).
+by default and needs explicit consent on the **Automation** page (`/automation`, API `/api/control`;
+the old `/inverter` link redirects there).
 
-- Writes go to the inverter's mode schedule (Open API v1 scheduler: `/op/v1/device/scheduler/get`,
-  `/enable` and `/set/flag`) as a `ForceCharge` period from the recommendation's force charge
-  start to stop, with `fdSoc` = target %, `fdPwr` = the battery's charge power and
-  `minSocOnGrid` = its minimum charge, clamped to the ranges the inverter reports. Periods that
-  cross midnight are split; the user's other periods are kept as Fox returned them.
-- Preview shows exactly what would be sent. Apply recomputes it and refuses if it differs from
-  the preview. Every write is read back and compared, the schedule from before the first write is
+- Writes go to the inverter's mode schedule through Fox's Scheduler V3
+  (`/op/v3/device/scheduler/get` and `/enable`, with each period's settings in `extraParam` and
+  `isDefault: false`). V3 has no master switch, so V1's `/op/v1/device/scheduler/set/flag` is
+  called only when the schedule must be switched on from off, or off. The plan is written as
+  `ForceCharge` and `ForceDischarge` periods with `fdSoc`, `fdPwr`, `minSocOnGrid` (never below
+  10%) and `maxSoc` when the inverter has one, clamped to the ranges it reports. Periods that
+  cross midnight are split. The user's other periods are kept with every setting, and one that's
+  partly overlapped keeps the part outside. Fox's all-day default period is never sent.
+- Preview lists every call Apply would make, in order, with its body and which ones change the
+  inverter, and the user ticks to authorise them before **Authorise and send**. Apply recomputes
+  the proposal and refuses if it differs from the preview. Every write is read back and compared, the schedule from before the first write is
   saved for **Restore**, and every action (with what was sent and read back) goes in an audit log.
 - A six-step write test must reach step 4 before Apply unlocks, and auto-apply also needs one good
   manual apply. See [the test protocol](docs/inverter-control-test-protocol.md).

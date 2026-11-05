@@ -8,18 +8,34 @@ None of this has been run against a real inverter yet, so your first run is the 
 test. The write calls follow Fox's Open API documentation and community clients, not a tested
 integration.
 
+The app now writes through Fox's **Scheduler V3**, which Fox says new projects must use. The
+first version of this protocol was written for V1, which Fox has deprecated, so don't use any
+results from it. Run the trust ladder's stages 0 to 3 again on this version before stage 1 here.
+
 ## What the planner can and can't change
 
-- It only writes to the inverter's **mode schedule** (Fox Open API v1 scheduler): the list of
+- It only writes to the inverter's **mode schedule** (Fox Open API Scheduler V3): the list of
   timed periods you see under the scheduler / time periods in the Fox app.
-- It adds **ForceCharge** periods with a charge-to level (`fdSoc`), a charge power (`fdPwr`, W)
-  and a minimum charge (`minSocOnGrid`). Your own periods that don't overlap are written back
-  exactly as Fox returned them.
+- It adds **ForceCharge** periods, and before a free window a **ForceDischarge**, each with a
+  stop level (`fdSoc`), a power (`fdPwr`, W), a minimum charge (`minSocOnGrid`, never below 10%)
+  and, if your inverter has one, a maximum charge (`maxSoc`, at its top). V3 keeps a setting
+  that isn't sent at its old value, so every setting a period depends on is sent.
+- Your own periods are written back with every setting as Fox returned them, including ones
+  the app doesn't use, such as `pvLimit` and `exportLimit`. If one of yours is partly
+  overlapped, only the overlapping part is replaced, and the rest is kept as its own period.
+- An **all-day** period (00:00 to 23:59) is Fox's default for times no other period covers. It's
+  never sent, as the API can't set it and community reports say sending it can stop the other
+  periods working. Each write checks it's still there afterwards.
+- **Switched-off periods** aren't shown by V3, and the write replaces the whole list, so any you
+  have may be lost. Note them in your screenshot before you start.
+- The write is one V3 call. V3 has no on/off switch of its own, so the old V1 switch call is used
+  only when the schedule is off and must go on, or is to be off.
 - It never changes the inverter's work mode, export limits, battery settings, firmware or
   anything outside the schedule.
 - Fox schedules **repeat every day**. A period stays until it's changed or removed.
 - Fox limits the API to 1,440 calls per inverter per day (shared with other apps) and one write
-  every 2 seconds per endpoint. A full apply uses about four calls.
+  every 2 seconds per endpoint. A full apply uses three or four calls, all listed before you
+  authorise them.
 
 ## Before you start
 
@@ -37,19 +53,22 @@ back" and copy it.
 
 ## Stage 1: read only (no writes)
 
-On the **Inverter** page, tick the consent box and turn inverter control on. This writes
+On the **Automation** page, tick the consent box and turn inverter control on. This writes
 nothing. Run **step 1**.
 
 - Pass: the log shows your schedule, and it matches your screenshot (periods, times, modes, on or
-  off).
+  off). An all-day period, if you have one, is listed but never written.
 - This also saves the "original schedule" used by Restore.
 
 ## Stage 2: write with no change
 
 Run **step 2**. It writes your schedule back exactly as read, then reads it again.
 
-- Pass: "Done", and the Fox app shows the schedule unchanged.
-- This proves the key can write, the request is signed correctly and Fox accepts the format.
+- Pass: "Done", and the Fox app shows the schedule unchanged, including any all-day period and
+  each period's export and PV limits.
+- This proves the key can write, the request is signed correctly and Fox accepts V3's format.
+- If you had switched-off periods, check whether they're still in the Fox app, and tell me. That
+  answers one of the open questions below.
 
 ## Stage 3: add a harmless test period
 
@@ -80,13 +99,19 @@ Run **step 5**. It adds a 10-minute force charge at 500 W starting about 5 minut
 
 ## Stage 6: apply a real plan by hand, and check it overnight
 
+This is also how to use the planner without automatic apply: each evening, review and authorise
+that night's schedule yourself.
+
 1. Press **Preview**. Check the plan (target %, start and stop times, power) and the table of
-   what will be added, kept and removed. "Exact request sent to Fox ESS" shows the request body.
-2. Press **Apply**. It's refused if the plan or your schedule changed since the preview.
-3. Check the Fox app shows the force charge period.
-4. Next morning, compare the battery level at the end of the cheap window with the target, and
+   what will be added, kept and removed.
+2. Read **Calls to Fox ESS**. It lists every call, in order, saying what each does and whether
+   it changes the inverter. Open any of them to see the exact body sent.
+3. Tick "I've checked these calls and authorise them", then press **Authorise and send**. It's
+   refused if the plan or your schedule changed since the preview, and nothing is written.
+4. Check the Fox app shows the periods.
+5. Next morning, compare the battery level at the end of the cheap window with the target, and
    check the History page's review of the night.
-5. Repeat for a few nights before trusting it.
+6. Repeat for a few nights before trusting it.
 
 ## Stage 7: automatic nightly apply
 
@@ -108,9 +133,16 @@ The server only runs this with `SBP_AUTO_APPLY=true` on one server process, or w
 
 ## Known unknowns
 
-- Whether your inverter model and firmware accept the v1 scheduler write. Some community reports
-  mention `44098 Write Failed` on ForceCharge for some models, and a history of v0 scheduler
-  writes upsetting the cloud's copy of the schedule. The planner only uses v1.
+- Whether your inverter accepts the V3 write. One owner's inverter reads through V3 with a
+  personal API key, reporting up to 96 periods, but no V3 write has been made. Some community
+  reports mention `44098 Write Failed` on ForceCharge for some models, and one says an invalid
+  V3 upload returned success but locked the Fox app's scheduler until every period was deleted
+  in the Fox web client. That's the manual recovery if it happens.
+- Whether the V3 write switches the schedule on by itself. The app only calls V1's switch when
+  it must, and the read-back reports if the schedule ends up on or off unexpectedly.
+- Whether the all-day default period survives a write that doesn't include it. Stage 2 shows
+  this, and the read-back reports it.
+- Whether switched-off periods survive a V3 write (stage 2).
 - What the inverter does outside the scheduled periods when the scheduler is on. Fox normally
   falls back to the inverter's own work mode. Stage 5 lets you see this.
 - Whether the hold works on your inverter. The planner relies on it, since Fox has no grid-only
@@ -120,6 +152,6 @@ The server only runs this with `SBP_AUTO_APPLY=true` on one server process, or w
   points below the battery, not written by the planner at the lowest level, and the write test
   doesn't cover it, as its periods charge to 100%. To check yours, set one by hand in the Fox app
   with the battery above the level, and confirm the battery neither charges nor discharges.
-- The minimum charge range. Fox documents 10–100%. If your system's minimum is lower (for
-  example 5%), periods are written with the inverter's lowest accepted value and the preview
-  says so.
+- The minimum charge range. Fox documents 10–100%, and one inverter reports 5–100%. The app
+  writes at least 10% whatever the inverter accepts, and no forced period stops below the minimum
+  written with it, as Fox requires. The preview says when your minimum is lower.

@@ -1,0 +1,42 @@
+{
+  "scenario": "Remove the only period: empty list (D3)",
+  "requests": [
+    {
+      "method": "POST",
+      "path": "/op/v3/device/scheduler/get",
+      "body": {
+        "deviceSN": "TESTSN0001"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/op/v3/device/scheduler/enable",
+      "body": {
+        "deviceSN": "TESTSN0001",
+        "isDefault": false,
+        "groups": []
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/op/v1/device/scheduler/set/flag",
+      "body": {
+        "deviceSN": "TESTSN0001",
+        "enable": 0
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/op/v3/device/scheduler/get",
+      "body": {
+        "deviceSN": "TESTSN0001"
+      }
+    }
+  ],
+  "outcome": "ok",
+  "message": "The planner's force charge periods were removed.",
+  "inverter_after": {
+    "enable": 0,
+    "groups": []
+  }
+}

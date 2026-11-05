@@ -119,9 +119,10 @@ def test_client_reads_battery_min_soc():
 def test_client_reads_force_charge_power():
     seen = []
     groups = [
-        {"enable": 1, "workMode": "SelfUse", "fdPwr": 0},
-        {"enable": 1, "workMode": "ForceCharge", "fdPwr": 3000},
-        {"enable": 0, "workMode": "ForceCharge", "fdPwr": 6000},
+        {"workMode": "SelfUse", "extraParam": {"fdPwr": 0}},
+        {"workMode": "ForceCharge", "extraParam": {"fdPwr": 3000.0}},
+        # V1's shape, and a switched-off period, which doesn't count.
+        {"enable": "0", "workMode": "ForceCharge", "fdPwr": 6000},
     ]
     client = make_client(
         [{"errno": 0, "result": {"groups": groups}}, {"errno": 0, "result": {"groups": []}}],
@@ -130,7 +131,7 @@ def test_client_reads_force_charge_power():
     )
     assert client.force_charge_power_kw("ABC123") == 3.0
     assert client.force_charge_power_kw("ABC123") is None
-    assert seen[0].url.path == "/op/v1/device/scheduler/get"
+    assert seen[0].url.path == "/op/v3/device/scheduler/get"
 
 
 def test_client_auth_error():
@@ -157,7 +158,7 @@ def test_importer_chunks_by_24_hours():
     assert [i.start for i in intervals] == [utc(2024, 6, 1), utc(2024, 6, 2), utc(2024, 6, 3)]
 
 
-def test_scheduler_writes_use_the_v1_paths_and_bodies(monkeypatch):
+def test_scheduler_writes_use_the_v3_set_and_the_v1_flag(monkeypatch):
     import json
 
     from app.config import settings
@@ -169,8 +170,39 @@ def test_scheduler_writes_use_the_v1_paths_and_bodies(monkeypatch):
     client.set_scheduler_groups("ABC123", groups)
     client.set_scheduler_enabled("ABC123", False)
     assert [r.url.path for r in seen] == [
-        "/op/v1/device/scheduler/enable",
+        "/op/v3/device/scheduler/enable",
         "/op/v1/device/scheduler/set/flag",
     ]
-    assert json.loads(seen[0].content) == {"deviceSN": "ABC123", "groups": groups}
+    # isDefault false: settings left out keep their values rather than being reset.
+    assert json.loads(seen[0].content) == {
+        "deviceSN": "ABC123",
+        "isDefault": False,
+        "groups": groups,
+    }
     assert json.loads(seen[1].content) == {"deviceSN": "ABC123", "enable": 0}
+
+
+@pytest.mark.parametrize("errno", [40400, 40404, 41201])
+def test_too_frequent_and_system_errors_are_retried(errno):
+    seen, sleeps = [], []
+    client = make_client(
+        [{"errno": errno, "msg": "busy"}, {"errno": 0, "result": {"data": []}}], seen, sleeps
+    )
+    assert client.device_serials() == []
+    assert len(seen) == 2 and sleeps
+
+
+def test_permission_denied_counts_as_a_rejected_key():
+    with pytest.raises(FoxEssAuthError):
+        make_client([{"errno": 41811, "msg": "permission denied"}], [], []).device_serials()
+
+
+@pytest.mark.parametrize(
+    "errno, words", [(40257, "invalid"), (40256, "malformed"), (44098, "didn't accept")]
+)
+def test_documented_errors_are_explained_and_keep_their_code(errno, words):
+    from app.importers.fox_ess import FoxEssError
+
+    with pytest.raises(FoxEssError, match=words) as raised:
+        make_client([{"errno": errno, "msg": "x"}], [], []).device_serials()
+    assert raised.value.errno == errno
