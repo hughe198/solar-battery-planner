@@ -66,6 +66,24 @@ const PROPOSAL: ControlProposal = {
       power_w: 3600,
       min_soc_percent: 10,
     },
+    {
+      start: '05:30',
+      end: '00:00',
+      work_mode: 'SelfUse',
+      charge_to_percent: null,
+      power_w: null,
+      min_soc_percent: 10,
+    },
+  ],
+  filled: [
+    {
+      start: '05:30',
+      end: '00:00',
+      work_mode: 'SelfUse',
+      charge_to_percent: null,
+      power_w: null,
+      min_soc_percent: 10,
+    },
   ],
   request: { deviceSN: 'INV1', isDefault: false, groups: [] },
   calls: [
@@ -203,6 +221,8 @@ describe('Control', () => {
     expect(el.textContent).toContain('02:10');
     expect(el.textContent).toContain('force discharge to 10%');
     expect(el.textContent).toContain('Added');
+    // A copy of Fox's all-day period, which a write drops (D13).
+    expect(el.textContent).toContain('Fills a gap');
     const apply = Array.from(el.querySelectorAll('button')).find((b) =>
       b.textContent?.includes('Authorise and send'),
     )!;

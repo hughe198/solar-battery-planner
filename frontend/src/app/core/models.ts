@@ -460,6 +460,8 @@ export interface ControlProposal {
   added: SchedulePeriod[];
   removed: SchedulePeriod[];
   after: SchedulePeriod[];
+  /** Copies of Fox's all-day default for the times no other period covers. */
+  filled: SchedulePeriod[];
   request: Record<string, unknown>;
   /** Every call Apply makes to Fox ESS, in order, for the user to authorise. */
   calls: ApiCall[];

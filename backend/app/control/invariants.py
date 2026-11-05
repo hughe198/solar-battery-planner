@@ -32,8 +32,9 @@ def check(proposal: Any, tz: str, raw_schedule: dict[str, Any] | None = None) ->
     schedule = proposal.schedule
     added: list[Period] = proposal.added
     trimmed: list[Period] = getattr(proposal, "trimmed", [])
+    filled: list[Period] = getattr(proposal, "filled", [])
     kept = [p for p in proposal.after if not any(p is a for a in added)]
-    untouched = [p for p in kept if not any(p is t for t in trimmed)]
+    untouched = [p for p in kept if not any(p is t for t in [*trimmed, *filled])]
 
     # 5. Every value sent is within the range the inverter reports.
     out_of_range = []
@@ -77,9 +78,10 @@ def check(proposal: Any, tz: str, raw_schedule: dict[str, Any] | None = None) ->
     )
 
     # 7. The user's periods that aren't overlapped go back exactly as read, in V3's shape.
-    # What's left of a partly overlapped one keeps every setting, with only its times changed.
+    # What's left of a partly overlapped one keeps every setting, with only its times changed,
+    # and so does each copy of the all-day default (D13).
     changed = [p.label() for p in untouched if p.raw and p.to_fox() != v3_group(p.raw)]
-    for p in trimmed:
+    for p in [*trimmed, *filled]:
         times = ("startHour", "startMinute", "endHour", "endMinute")
         sent = {k: v for k, v in p.to_fox().items() if k not in times}
         read = {k: v for k, v in v3_group(p.raw).items() if k not in times}
@@ -138,6 +140,30 @@ def check(proposal: Any, tz: str, raw_schedule: dict[str, Any] | None = None) ->
             "Forced periods only where the plan put them",
             "fail" if stray else "pass",
             ("Outside the plan: " + ", ".join(stray)) if stray else "All inside the plan's times.",
+        )
+    )
+
+    # D13. Fox drops its all-day default on a write, so with one, every minute needs a period.
+    if schedule.default is not None and (added or proposal.removed):
+        covered = _minutes(proposal.after)
+        gaps = sorted(set(range(DAY_MINUTES)) - covered)
+        checks.append(
+            Check(
+                "Whole day covered once Fox drops its all-day period (defect D13)",
+                "fail" if gaps else "pass",
+                f"{len(gaps)} minute(s) with no period, from minute {gaps[0]}"
+                if gaps
+                else f"{len(filled)} copy(ies) of your all-day period fill the gaps.",
+            )
+        )
+
+    # D12. No piece of the user's own forced period is kept around ours.
+    leftover = [f"{p.work_mode} {p.label()}" for p in trimmed if p.forced]
+    checks.append(
+        Check(
+            "No leftover of your forced periods (defect D12)",
+            "fail" if leftover else "pass",
+            ("Kept: " + ", ".join(leftover)) if leftover else "None kept around the plan's.",
         )
     )
 

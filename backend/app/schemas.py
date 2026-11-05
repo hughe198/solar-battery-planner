@@ -595,6 +595,8 @@ class ProposalOut(BaseModel):
     added: list[PeriodOut]
     removed: list[PeriodOut]
     after: list[PeriodOut]
+    # Copies of Fox's all-day default for the times no other period covers (D13).
+    filled: list[PeriodOut] = []
     # Exactly what would be sent to Fox ESS.
     request: dict
     # Every call Apply would make, in order, for the user to authorise.

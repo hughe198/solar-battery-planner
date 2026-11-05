@@ -151,8 +151,11 @@ export class Control implements OnInit {
     this.run(this.control.restore(), this.afterWrite);
   }
 
-  isAdded(period: SchedulePeriod, p: ControlProposal): boolean {
-    return p.added.some((a) => a.start === period.start && a.end === period.end);
+  /** "Added", "Fills a gap" (a copy of Fox's all-day period, which a write drops) or "Kept". */
+  changeOf(period: SchedulePeriod, p: ControlProposal): string {
+    const same = (a: SchedulePeriod) => a.start === period.start && a.end === period.end;
+    if (p.added.some(same)) return 'Added';
+    return (p.filled ?? []).some(same) ? 'Fills a gap' : 'Kept';
   }
 
   /** "HH:MM" in the system's time zone. */

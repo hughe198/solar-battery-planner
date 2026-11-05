@@ -156,7 +156,7 @@
                     <td>{{ r.work_mode }}</td>
                     <td>{{ r.charge_to_percent ?? '–' }}</td>
                     <td>{{ r.power_w ?? '–' }}</td>
-                    <td>{{ isAdded(r, p) ? 'Added' : 'Kept' }}</td>
+                    <td>{{ changeOf(r, p) }}</td>
                   </tr>
                 }
               </tbody>

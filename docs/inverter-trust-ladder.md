@@ -204,3 +204,11 @@ pack, the AI's answer or a screenshot.
 | | 0 | Automated suite, CI | CI | | |
 | | 0 | Golden files reviewed | Claude | | |
 | | 0 | Three golden files, writes off on server | Hugh | | |
+| 2026-11-05 | 0 | Golden files S1, S5 and E2 reviewed | Claude | SAFE | Matched hand-derived requests. S1's switch-on uses V1's `scheduler/set/flag` alongside V3 |
+| 2026-11-05 | 2 | Write test step 1, read the schedule | Hugh | Pass | Matched the Fox app. Labels show inclusive ends plus a minute, e.g. `05:01` |
+| 2026-11-05 | 2 | Preview for the night of 6 November | Hugh, Claude | NOT SAFE | Defect D12: a one-minute ForceCharge 05:00–05:01 to 67% left from Hugh's own 02:45–05:00 period. Fixed on `claude/fix-d12-force-leftover`; run Preview again before any write |
+| 2026-11-05 | 4 | Write test step 2, schedule written back | Hugh, Claude | Mismatch | Four periods read back exactly, but Fox dropped its all-day SelfUse default and the switched-off ForceDischarge 16:00–19:00 (D2, accepted). Left 02:00–02:45 and 16:01–19:01 with no period: defect D13, fixed on the same branch. Writes switched off again; step 2 to be rerun with the fix |
+| 2026-11-05 | 4 | Write test step 2 rerun with the D13 fix | Hugh, Claude | Pass | Six periods, all 1,440 minutes covered, matching the Fox app. Fox changed `pvLimit` on three periods (20,000/24,000 W swapped), unchecked by read-back: D14, harmless with 10 kWp of panels |
+| 2026-11-05 | 4 | Write test step 3, test period added | Hugh, Claude | Pass | ForceCharge 18:40–18:49 at 500 W to 100%, inside the filled 16:01–19:01, seen in the Fox app. Fox gave the new period import 12,000, export 12,000, PV 24,000 W, reactive 0 |
+| 2026-11-05 | 4 | Write test step 4, test period removed | Hugh, Claude | Pass | Back to the six periods, 16:01–19:01 rejoined, every setting as sent, including `pvLimit` this time. Test level 4 |
+| 2026-11-05 | 4 | Writes switched off again | Hugh, Claude | Pass | `SBP_INVERTER_WRITES=false`, server restarted and confirmed |

@@ -23,8 +23,23 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
-from app.control.schedule import FORCE_CHARGE, Period, Schedule, without
-from app.control.service import MIN_SOC_FLOOR, ControlError, _log, _run_write, read_schedule
+from app.control.schedule import (
+    FORCE_CHARGE,
+    Period,
+    Schedule,
+    fill_gaps,
+    is_copy,
+    merge,
+    without,
+)
+from app.control.service import (
+    MIN_SOC_FLOOR,
+    ControlError,
+    _log,
+    _run_write,
+    all_day_period,
+    read_schedule,
+)
 from app.importers.fox_ess import FoxEssClient, FoxEssError
 from app.models import (
     ControlAction,
@@ -51,9 +66,16 @@ STEPS = {
 }
 
 
-def _test_period(schedule: Schedule, tz: str, earliest: datetime, search: timedelta) -> Period:
+def _test_period(
+    schedule: Schedule,
+    tz: str,
+    earliest: datetime,
+    search: timedelta,
+    all_day: Period | None = None,
+) -> Period:
     """A 10-minute force charge at the test power, in the first free gap from `earliest` that
-    doesn't cross midnight."""
+    doesn't cross midnight. Time covered only by a copy of the all-day default counts as free,
+    as removing the test period fills it again exactly as it was (D13)."""
     zone = ZoneInfo(tz)
     power = schedule.clamp("fdpwr", TEST_POWER_W)
     soc = schedule.clamp("fdsoc", 100)
@@ -74,7 +96,9 @@ def _test_period(schedule: Schedule, tz: str, earliest: datetime, search: timede
                 min_soc_on_grid=min_soc,
                 max_soc=max_soc,
             )
-            if not any(candidate.overlaps(p) for p in schedule.periods):
+            if not any(
+                candidate.overlaps(p) and not is_copy(p, all_day) for p in schedule.periods
+            ):
                 return candidate
         moment += timedelta(minutes=5)
     raise ControlError("There's no free 10-minute gap in your schedule for a test period.")
@@ -142,18 +166,20 @@ def run_step(
                 "Your schedule is switched off but has periods in it. Adding a test period "
                 "would switch them on too, so nothing was written.",
             )
+        all_day = all_day_period(schedule, control)
         try:
             if step == 3:
                 test = _test_period(
-                    schedule, system.timezone, now + FUTURE_FROM, timedelta(hours=18)
+                    schedule, system.timezone, now + FUTURE_FROM, timedelta(hours=18), all_day
                 )
             else:
                 test = _test_period(
-                    schedule, system.timezone, now + LIVE_FROM, timedelta(minutes=30)
+                    schedule, system.timezone, now + LIVE_FROM, timedelta(minutes=30), all_day
                 )
         except ControlError as exc:
             return log(ControlStatus.failed, str(exc))
-        after = sorted([*schedule.periods, test], key=lambda p: p.start)
+        # It overlaps nothing but copies of the all-day default, so merge only trims those.
+        after, _, _ = merge(schedule.periods, [test])
         when = (
             "It won't run before step 4 removes it."
             if step == 3
@@ -199,7 +225,10 @@ def run_step(
                 control.test_groups = []
             if action.status == ControlStatus.ok:
                 back = Schedule.from_fox(action.read_back or {})
-                if back.periods != baseline.periods or back.enabled != baseline.enabled:
+                # As it was in step 1, with the times only Fox's all-day default covered
+                # written as copies of it, since Fox drops the default on a write (D13).
+                expected, _ = fill_gaps(baseline.periods, all_day_period(baseline, control))
+                if back.periods != expected or back.enabled != baseline.enabled:
                     action.status = ControlStatus.mismatch
                     action.message = (
                         f"Step {step}: the test period was removed, but the schedule doesn't "

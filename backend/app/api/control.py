@@ -269,6 +269,7 @@ def preview(
         added=[period_out(x) for x in p.added],
         removed=[period_out(x) for x in p.removed],
         after=[period_out(x) for x in p.after],
+        filled=[period_out(x) for x in p.filled],
         request=scheduler_set_body(system.fox_ess.device_sn, [x.to_fox() for x in p.after]),
         calls=[ApiCallOut(**c.__dict__) for c in service.apply_calls(system.fox_ess.device_sn, p)],
         notes=p.notes,

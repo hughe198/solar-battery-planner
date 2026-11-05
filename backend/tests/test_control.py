@@ -9,7 +9,7 @@ from app.api.imports import get_fox_client_factory
 from app.config import settings
 from app.control import service, testing
 from app.control.nightly import run_once
-from app.control.schedule import Period, Schedule, charge_periods, matches, merge
+from app.control.schedule import Period, Schedule, charge_periods, fill_gaps, matches, merge
 from app.main import app
 from app.models import Battery, ControlStatus, ControlTrigger, InverterControl, PlanningMode
 from tests.conftest import register
@@ -129,6 +129,84 @@ def test_merge_replaces_only_overlapping_periods():
     # D5: what's left of the overlapped period outside the charge is kept.
     assert [p.label() for p in trimmed] == ["00:00–01:00"]
     assert [p.label() for p in after] == ["00:00–01:00", "01:00–05:00", "16:00–19:00"]
+
+
+def test_merge_replaces_overlapped_force_charge_wholly():
+    # D12: the owner's force charge 02:45-05:00 (stored ending 05:00, so through 05:01) and
+    # the planner's 02:10-05:00 (ending 04:59). Trimming left a one-minute force charge to the
+    # owner's 67% at 05:00, repeating every night. A forced period isn't trimmed: it's replaced.
+    mine = Period.from_fox(group((2, 45), (5, 0), "ForceCharge", fdSoc=67, fdPwr=12000))
+    self_use = Period.from_fox(group((5, 1), (16, 0)))
+    added = charge_periods(utc(2026, 11, 6, 2, 10), utc(2026, 11, 6, 5, 0), "UTC", 44, 3000, 10)
+    after, removed, trimmed = merge([mine, self_use], added)
+    assert removed == [mine]
+    assert trimmed == []
+    assert [(p.label(), p.work_mode) for p in after] == [
+        ("02:10–05:00", "ForceCharge"),
+        ("05:01–16:01", "SelfUse"),
+    ]
+
+
+def test_merge_drops_force_discharge_outside_the_charge_too():
+    # A forced period left partly outside the charge would force the battery at a time the
+    # plan didn't choose, e.g. a grid charge at the day rate, so all of it goes.
+    mine = Period.from_fox(group((1, 0), (3, 59), "ForceDischarge", fdSoc=20))
+    added = charge_periods(utc(2026, 1, 10, 2, 0), utc(2026, 1, 10, 5, 0), "UTC", 80, 3000, 10)
+    after, removed, trimmed = merge([mine], added)
+    assert (removed, trimmed) == ([mine], [])
+    assert [p.label() for p in after] == ["02:00–05:00"]
+
+
+ALL_DAY = group((0, 0), (23, 59), "SelfUse", fdSoc=10, fdPwr=0, minSocOnGrid=5, pvLimit=20000)
+
+
+def test_fill_gaps_copies_the_all_day_period_into_every_uncovered_time():
+    # D13: Fox drops its all-day default on any write (owner's inverter, 5 November 2026), so
+    # the times only it covered are written as periods with its settings.
+    periods = [Period.from_fox(group((0, 0), (1, 59))), Period.from_fox(group((19, 1), (23, 59)))]
+    after, filled = fill_gaps(periods, Period.from_fox(ALL_DAY))
+    assert [p.label() for p in filled] == ["02:00–19:01"]
+    assert [p.label() for p in after] == ["00:00–02:00", "02:00–19:01", "19:01–00:00"]
+    sent = filled[0].to_fox()
+    assert sent["workMode"] == "SelfUse"
+    assert sent["extraParam"] == {"fdSoc": 10, "fdPwr": 0, "minSocOnGrid": 5, "pvLimit": 20000}
+
+
+def test_fill_gaps_leaves_gaps_when_no_all_day_period_was_seen():
+    # Gaps then run in the inverter's main work mode, which a write doesn't change.
+    periods = [Period.from_fox(group((16, 0), (18, 59), "Feedin"))]
+    assert fill_gaps(periods, None) == (periods, [])
+    assert fill_gaps([], Period.from_fox(ALL_DAY)) == ([], [])
+
+
+def owners_schedule(with_default=True):
+    """The owner's schedule from step 1 on 5 November 2026."""
+    groups = [
+        group((0, 0), (1, 59)),
+        group((2, 45), (5, 0), "ForceCharge", fdSoc=67, fdPwr=12000, minSocOnGrid=5),
+        group((5, 1), (16, 0)),
+        group((19, 1), (23, 59)),
+    ]
+    return [ALL_DAY, *groups] if with_default else groups
+
+
+def test_propose_covers_the_whole_day_when_fox_reports_an_all_day_period():
+    schedule = Schedule.from_fox(FakeInverter(owners_schedule()).scheduler("x"))
+    plan = plan_for(utc(2026, 11, 6, 2, 10), utc(2026, 11, 6, 5, 0))
+    proposal = service.propose(system_with(), InverterControl(), plan, schedule)
+    covered = {m for p in proposal.after for m in range(p.start, p.end + 1)}
+    assert covered == set(range(24 * 60))
+    assert [p.label() for p in proposal.filled] == ["02:00–02:10", "05:00–05:01", "16:01–19:01"]
+    assert all(p.work_mode == "SelfUse" and p.min_soc_on_grid == 5 for p in proposal.filled)
+
+
+def test_propose_fills_from_the_saved_all_day_period_once_fox_has_dropped_it():
+    schedule = Schedule.from_fox(FakeInverter(owners_schedule(False)).scheduler("x"))
+    saved = Schedule.from_fox(FakeInverter(owners_schedule()).scheduler("x")).to_snapshot()
+    control = InverterControl(original_schedule=saved)
+    plan = plan_for(utc(2026, 11, 6, 2, 10), utc(2026, 11, 6, 5, 0))
+    proposal = service.propose(system_with(), control, plan, schedule)
+    assert [p.label() for p in proposal.filled] == ["02:00–02:10", "05:00–05:01", "16:01–19:01"]
 
 
 def test_matches_reports_differences():
@@ -418,6 +496,36 @@ def test_read_back_mismatch_is_reported(client, headers, inverter):
     assert client.get("/api/control", headers=headers).json()["test_level"] == 2
     # The test period is still recorded, so it can be removed.
     assert client.post("/api/control/clear", headers=headers).json()["status"] == "ok"
+
+
+def test_write_test_keeps_the_whole_day_covered_when_fox_drops_its_default(
+    client, headers, inverter
+):
+    # D13, as on the owner's inverter: step 2 wrote the periods back, Fox dropped its all-day
+    # default, and 02:00-02:45 and 16:01-19:01 were left with no period.
+    inverter.groups = owners_schedule()
+    opt_in(client, headers)
+    step(client, headers, 1)
+    result = step(client, headers, 2)
+    assert result["status"] == "ok", result["message"]
+    assert "02:00–02:45" in result["message"] and "16:01–19:01" in result["message"]
+    periods = [Period.from_fox(g) for g in inverter.groups]
+    assert not any(p.all_day for p in periods)
+    assert {m for p in periods for m in range(p.start, p.end + 1)} == set(range(24 * 60))
+
+    assert step(client, headers, 3)["status"] == "ok"
+    removed = step(client, headers, 4)
+    assert removed["status"] == "ok", removed["message"]
+    # Every minute runs as it did in step 1, though Fox now lists the gaps as periods.
+    by_minute = {m: p for p in (Period.from_fox(g) for g in inverter.groups) for m in range(p.start, p.end + 1)}
+    default = Period.from_fox(ALL_DAY)
+    for m in (2 * 60 + 30, 17 * 60):
+        p = by_minute[m]
+        assert (p.work_mode, p.min_soc_on_grid, p.fd_soc) == (
+            default.work_mode,
+            default.min_soc_on_grid,
+            default.fd_soc,
+        )
 
 
 def test_opt_out_stops_writes_without_touching_the_inverter(client, headers, inverter):

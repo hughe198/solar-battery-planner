@@ -51,8 +51,8 @@ class FoxCloud:
     It's strict where Fox's documents are: a write is refused with 40257 (invalid parameter)
     if periods overlap, a time is out of range, or a forced period stops below its minimum.
     Switched-off periods (`enable: 0`) are hidden from reads, as V3 was seen to do, and lost on
-    the next write. `default` is Fox's all-day default period, which reads include and writes
-    leave alone, as community reports describe."""
+    the next write. `default` is Fox's all-day default period, which reads include and any
+    write drops, as the owner's inverter did on 5 November 2026 (D13)."""
 
     def __init__(
         self, groups=(), enable=1, properties=PROPERTIES, max_groups=96, default=None
@@ -92,6 +92,7 @@ class FoxCloud:
             if problem:
                 return httpx.Response(200, json={"errno": 40257, "msg": problem})
             self.groups = copy.deepcopy(body["groups"])
+            self.default = None
         elif path == SCHEDULER_FLAG_PATH:
             self.enable = body["enable"]
         else:
@@ -640,12 +641,26 @@ def test_all_day_default_period_is_never_sent_and_is_checked(writes_on, logged):
     plan = plan_for(utc(2026, 1, 11, 2, 0), utc(2026, 1, 11, 5, 0))
     proposal, outcome, _ = apply_scenario(cloud, plan)
     assert outcome.status == ControlStatus.ok, outcome.message
-    assert all(not Period.from_fox(g).all_day for g in cloud.groups)
-    assert any("all-day SelfUse period is Fox's default" in n for n in proposal.notes)
-    golden("E9-all-day-default", cloud, outcome, "Fox's all-day default is left alone")
+    sent = [Period.from_fox(g) for g in cloud.groups]
+    assert all(not p.all_day for p in sent)
+    # D13: Fox dropped the default, and copies of it cover the times nothing else does.
+    assert cloud.default is None
+    assert [(p.label(), p.work_mode) for p in sent] == [
+        ("00:00–02:00", "SelfUse"),
+        ("02:00–05:00", "ForceCharge"),
+        ("05:00–16:00", "SelfUse"),
+        ("16:00–19:00", "Feedin"),
+        ("19:00–00:00", "SelfUse"),
+    ]
+    assert any("all-day SelfUse period when the schedule is written" in n for n in proposal.notes)
+    golden(
+        "E9-all-day-default",
+        cloud,
+        outcome,
+        "Fox's all-day default isn't sent; copies of it fill the times nothing else covers",
+    )
 
-    # If Fox drops it after a write, that's reported, not passed.
-    cloud.default = None
+    # A write that still leaves a time with no period is reported, not passed.
     cloud.requests.clear()
     control = InverterControl(written_groups=[a.to_fox() for a in proposal.added])
     schedule_with_default = proposal.schedule
