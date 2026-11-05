@@ -57,6 +57,9 @@ export class Control implements OnInit {
   readonly busy = signal(false);
   readonly error = signal<string | null>(null);
   readonly accepted = signal(false);
+  /** The user has read the calls in the current preview and authorised them. */
+  readonly authorised = signal(false);
+  readonly writeCount = computed(() => this.proposal()?.calls.filter((c) => c.writes).length ?? 0);
   readonly modeLabels = MODE_LABELS;
   readonly stepDetails = STEP_DETAILS;
   readonly statusLabels = STATUS_LABELS;
@@ -128,10 +131,13 @@ export class Control implements OnInit {
   }
 
   loadPreview(): void {
+    this.authorised.set(false);
     this.run(this.control.preview(), (p) => this.proposal.set(p));
   }
 
   apply(p: ControlProposal): void {
+    if (!this.authorised()) return;
+    this.authorised.set(false);
     this.run(this.control.apply(p.fingerprint), this.afterWrite);
   }
 

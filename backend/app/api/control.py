@@ -14,10 +14,10 @@ from app.api.plan import make_plan, next_day
 from app.config import settings
 from app.control import service, testing
 from app.control.nightly import control_client
-from app.control.schedule import Period
+from app.control.schedule import Period, flag
 from app.crypto import decrypt
 from app.database import get_db
-from app.importers.fox_ess import FoxEssClient, FoxEssError
+from app.importers.fox_ess import FoxEssClient, FoxEssError, scheduler_set_body
 from app.models import (
     ControlAction,
     ControlActionKind,
@@ -28,6 +28,7 @@ from app.models import (
     User,
 )
 from app.schemas import (
+    ApiCallOut,
     ApplyIn,
     ControlActionOut,
     ControlSettingsIn,
@@ -146,7 +147,7 @@ def _status(db: Session, system: System) -> ControlStatusOut:
         has_original=original is not None,
         original_saved_at=control.original_saved_at if control else None,
         original=_periods(original.get("groups") if original else None),
-        original_enabled=bool(original.get("enable")) if original else None,
+        original_enabled=flag(original.get("enable")) if original else None,
         planner_periods=_periods(control.written_groups if control else None),
         test_periods=_periods(control.test_groups if control else None),
         actions=[ControlActionOut.model_validate(a) for a in actions],
@@ -268,10 +269,8 @@ def preview(
         added=[period_out(x) for x in p.added],
         removed=[period_out(x) for x in p.removed],
         after=[period_out(x) for x in p.after],
-        request={
-            "deviceSN": system.fox_ess.device_sn,
-            "groups": [x.to_fox() for x in p.after],
-        },
+        request=scheduler_set_body(system.fox_ess.device_sn, [x.to_fox() for x in p.after]),
+        calls=[ApiCallOut(**c.__dict__) for c in service.apply_calls(system.fox_ess.device_sn, p)],
         notes=p.notes,
         fingerprint=p.fingerprint,
     )

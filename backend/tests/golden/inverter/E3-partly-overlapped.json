@@ -1,0 +1,114 @@
+{
+  "scenario": "User's 00:00–07:00 SelfUse kept around 02:00–05:00",
+  "requests": [
+    {
+      "method": "POST",
+      "path": "/op/v3/device/scheduler/get",
+      "body": {
+        "deviceSN": "TESTSN0001"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/op/v3/device/scheduler/enable",
+      "body": {
+        "deviceSN": "TESTSN0001",
+        "isDefault": false,
+        "groups": [
+          {
+            "startHour": 0,
+            "startMinute": 0,
+            "endHour": 1,
+            "endMinute": 59,
+            "workMode": "SelfUse",
+            "extraParam": {
+              "pvLimit": 4000
+            }
+          },
+          {
+            "startHour": 2,
+            "startMinute": 0,
+            "endHour": 4,
+            "endMinute": 59,
+            "workMode": "ForceCharge",
+            "extraParam": {
+              "fdSoc": 80,
+              "fdPwr": 3600,
+              "minSocOnGrid": 10
+            }
+          },
+          {
+            "startHour": 5,
+            "startMinute": 0,
+            "endHour": 6,
+            "endMinute": 59,
+            "workMode": "SelfUse",
+            "extraParam": {
+              "pvLimit": 4000
+            }
+          },
+          {
+            "startHour": 16,
+            "startMinute": 0,
+            "endHour": 18,
+            "endMinute": 59,
+            "workMode": "Feedin"
+          }
+        ]
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/op/v3/device/scheduler/get",
+      "body": {
+        "deviceSN": "TESTSN0001"
+      }
+    }
+  ],
+  "outcome": "ok",
+  "message": "Force charge to 80% 02:00–05:00 written and read back as written.",
+  "inverter_after": {
+    "enable": 1,
+    "groups": [
+      {
+        "startHour": 0,
+        "startMinute": 0,
+        "endHour": 1,
+        "endMinute": 59,
+        "workMode": "SelfUse",
+        "extraParam": {
+          "pvLimit": 4000
+        }
+      },
+      {
+        "startHour": 2,
+        "startMinute": 0,
+        "endHour": 4,
+        "endMinute": 59,
+        "workMode": "ForceCharge",
+        "extraParam": {
+          "fdSoc": 80,
+          "fdPwr": 3600,
+          "minSocOnGrid": 10
+        }
+      },
+      {
+        "startHour": 5,
+        "startMinute": 0,
+        "endHour": 6,
+        "endMinute": 59,
+        "workMode": "SelfUse",
+        "extraParam": {
+          "pvLimit": 4000
+        }
+      },
+      {
+        "startHour": 16,
+        "startMinute": 0,
+        "endHour": 18,
+        "endMinute": 59,
+        "workMode": "Feedin"
+      }
+    ]
+  }
+}

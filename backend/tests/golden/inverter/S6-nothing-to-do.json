@@ -3,7 +3,7 @@
   "requests": [
     {
       "method": "POST",
-      "path": "/op/v1/device/scheduler/get",
+      "path": "/op/v3/device/scheduler/get",
       "body": {
         "deviceSN": "TESTSN0001"
       }
@@ -15,7 +15,6 @@
     "enable": 1,
     "groups": [
       {
-        "enable": 1,
         "startHour": 16,
         "startMinute": 0,
         "endHour": 18,

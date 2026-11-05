@@ -43,10 +43,12 @@ Nothing touches an inverter. This proves the app builds the requests we intend, 
 - [x] The invariants (values in range, no overlaps, your periods sent back exactly, forced periods
   only inside the plan's times, stop level at or above the minimum) checked on 150 generated plans,
   schedules and time zones.
-- [x] Known defects D1, D3, D4, D6 and D11 as strict expected failures. Each one flips to a failure
-  of the suite when it's fixed, so the marker has to come off deliberately.
-- [ ] The rest of the Layer 2 matrix (T2 to T4, T6, E3, E4, E6 to E8, R1 to R5, A1, A3, A5, A6).
-- [ ] Layer 3: each Fox error injected at each of the four calls.
+- [x] Each of the defects D1 to D11 has a test named after it, which failed before its fix.
+- [x] More of the Layer 2 matrix: S2, T6, E3, E4, E9 (all-day default), R3, R4, A3.
+- [ ] The rest of the Layer 2 matrix (T2 to T4, E6 to E8, R1, R2, R5, A1, A5, A6).
+- [x] Layer 3: Fox errors (`40257`, `41201`, `41808`) injected at each call, a lost reply on the
+  write, and a refused write. Each leaves a known state that Remove can undo.
+- [ ] Layer 3: invalid JSON at each call.
 
 Run: `cd backend && pytest -q`. CI runs it on every pull request.
 
@@ -54,7 +56,7 @@ Run: `cd backend && pytest -q`. CI runs it on every pull request.
 
 - [ ] For each golden file, Claude works out the expected periods from the scenario line alone,
   before reading the file, then compares them. Prompt: *"Here's a scenario and the requests a
-  battery app sends to the Fox ESS v1 scheduler for it. Without trusting the app, work out by hand
+  battery app sends to the Fox ESS Scheduler V3 for it. Without trusting the app, work out by hand
   the periods you'd expect (local wall clock, ends inclusive to the minute, midnight split), then
   compare with the requests field for field. List every difference."*
 - [ ] Every pull request touching the control code gets a review against the invariants and the
@@ -65,7 +67,7 @@ Run: `cd backend && pytest -q`. CI runs it on every pull request.
 - [ ] Read three golden files, `S1-charge-only.json`, `S5-discharge-hold-charge.json` and
   `E2-users-periods-kept.json`. Is each what you'd set in the Fox app by hand?
 - [ ] Confirm `SBP_INVERTER_WRITES` is absent or `false` in your server's `.env`.
-- [ ] Open the Inverter page. It should say writes are switched off, with only step 1 and Preview
+- [ ] Open the Automation page. It should say writes are switched off, with only step 1 and Preview
   available.
 
 ## Stage 1: Fix the known defects, move to Scheduler V3
@@ -75,10 +77,14 @@ the client to V3, then fix D1 to D6 and D9 to D11, each with a failing test firs
 
 **Automated**
 
-- [ ] Each fixed defect's expected failure removed, and the test passing.
-- [ ] Golden files regenerated for V3 (`UPDATE_GOLDEN=1 pytest tests/test_fox_requests.py`).
-- [ ] New tests for V3's own risks: settings left out keep old values, the master switch, and
-  `extraParam` fields such as `pvLimit` sent back unchanged.
+- [x] Each fixed defect's expected failure removed, and the test passing.
+- [x] Golden files regenerated for V3 (`UPDATE_GOLDEN=1 pytest tests/test_fox_requests.py`).
+- [x] New tests for V3's own risks: every setting a stage depends on is sent, the master switch is
+  called only when it must change, `extraParam` fields such as `pvLimit` go back unchanged, and
+  the all-day default is never sent. The fake Fox cloud refuses V1 fields, overlaps, the all-day
+  period and `fdSoc` below `minSocOnGrid`, as Fox's documents say it should.
+- [x] The calls listed for authorising on the Automation page are checked to be exactly the calls
+  sent, in every scenario.
 
 **AI review**
 
@@ -96,7 +102,7 @@ Writes stay off. This proves the app reads your inverter correctly. It's L1 in t
 
 **Automated**
 
-- [ ] The write test's step 1 on the Inverter page: reads and saves the baseline.
+- [ ] The write test's step 1 on the Automation page: reads and saves the baseline.
 - [ ] A dry run, which reads once and prints the review pack:
   `cd backend && python -m app.control.dryrun --email you@example.com --out dryrun.md`.
   It exits 1 if any automated check fails.

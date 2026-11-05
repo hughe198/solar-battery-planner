@@ -8,7 +8,7 @@ them across many generated plans and schedules. Nothing here talks to an inverte
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from app.control.schedule import FORCE_CHARGE, FORCE_DISCHARGE, Period, charge_periods
+from app.control.schedule import FORCE_CHARGE, FORCE_DISCHARGE, Period, charge_periods, v3_group
 
 Status = Literal["pass", "fail", "warn"]
 DAY_MINUTES = 24 * 60
@@ -31,7 +31,9 @@ def check(proposal: Any, tz: str, raw_schedule: dict[str, Any] | None = None) ->
     checks: list[Check] = []
     schedule = proposal.schedule
     added: list[Period] = proposal.added
+    trimmed: list[Period] = getattr(proposal, "trimmed", [])
     kept = [p for p in proposal.after if not any(p is a for a in added)]
+    untouched = [p for p in kept if not any(p is t for t in trimmed)]
 
     # 5. Every value sent is within the range the inverter reports.
     out_of_range = []
@@ -40,6 +42,7 @@ def check(proposal: Any, tz: str, raw_schedule: dict[str, Any] | None = None) ->
             ("fdsoc", p.fd_soc),
             ("fdpwr", p.fd_pwr),
             ("minsocongrid", p.min_soc_on_grid),
+            ("maxsoc", p.max_soc),
         ):
             low, high = schedule.ranges[key]
             if value is not None and not low <= value <= high:
@@ -73,13 +76,36 @@ def check(proposal: Any, tz: str, raw_schedule: dict[str, Any] | None = None) ->
         )
     )
 
-    # 7. The user's periods that aren't replaced go back exactly as read.
-    changed = [p.label() for p in kept if p.raw and p.to_fox() != {**p.raw, "enable": 1}]
+    # 7. The user's periods that aren't overlapped go back exactly as read, in V3's shape.
+    # What's left of a partly overlapped one keeps every setting, with only its times changed.
+    changed = [p.label() for p in untouched if p.raw and p.to_fox() != v3_group(p.raw)]
+    for p in trimmed:
+        times = ("startHour", "startMinute", "endHour", "endMinute")
+        sent = {k: v for k, v in p.to_fox().items() if k not in times}
+        read = {k: v for k, v in v3_group(p.raw).items() if k not in times}
+        if sent != read:
+            changed.append(p.label())
     checks.append(
         Check(
             "Your other periods sent back unchanged",
             "fail" if changed else "pass",
             ("Changed: " + ", ".join(changed)) if changed else f"{len(kept)} kept as read.",
+        )
+    )
+
+    # Fox's all-day default period is never sent.
+    default_sent = [p.label() for p in proposal.after if p.all_day]
+    checks.append(
+        Check(
+            "All-day default period not sent",
+            "fail" if default_sent else "pass",
+            ("Sent: " + ", ".join(default_sent))
+            if default_sent
+            else (
+                f"Your all-day {schedule.default.work_mode} period is left to Fox."
+                if schedule.default is not None
+                else "There isn't one."
+            ),
         )
     )
 
@@ -130,34 +156,30 @@ def check(proposal: Any, tz: str, raw_schedule: dict[str, Any] | None = None) ->
     )
 
     # Things a person should know, though nothing is wrong.
-    mine_removed = [
+    mine_changed = [
         p for p in proposal.removed if p.work_mode not in (FORCE_CHARGE, FORCE_DISCHARGE)
     ]
-    if mine_removed:
+    if mine_changed:
         checks.append(
             Check(
-                "Your own periods replaced (defect D5)",
+                "Your own periods overlapped (D5)",
                 "warn",
-                "Removed whole, even where only part overlaps: "
-                + ", ".join(f"{p.work_mode} {p.label()}" for p in mine_removed),
+                "Only the overlapping part is replaced: "
+                + ", ".join(
+                    f"{p.work_mode} {p.label()}, kept for "
+                    + (", ".join(t.label() for t in trimmed if t.raw is p.raw) or "none of it")
+                    for p in mine_changed
+                ),
             )
         )
-    switched_off = [
-        g
-        for g in (raw_schedule or {}).get("groups") or []
-        if not g.get("enable", 1)
-        and (g.get("startHour"), g.get("startMinute"), g.get("endHour"), g.get("endMinute"))
-        != (0, 0, 0, 0)
-    ]
-    if switched_off and proposal.added:
+    switched_off = schedule.switched_off
+    if switched_off and (proposal.added or proposal.removed):
         checks.append(
             Check(
-                "Switched-off periods dropped (defect D2)",
+                "Switched-off periods dropped (D2)",
                 "warn",
                 f"{len(switched_off)} switched-off period(s) won't be written back: "
-                + ", ".join(
-                    f"{g.get('workMode')} {Period.from_fox(g).label()}" for g in switched_off
-                ),
+                + ", ".join(f"{p.work_mode} {p.label()}" for p in switched_off),
             )
         )
     if proposal.added and not schedule.enabled and kept:

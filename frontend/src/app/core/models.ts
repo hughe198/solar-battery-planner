@@ -428,6 +428,18 @@ export interface ControlProposal {
   removed: SchedulePeriod[];
   after: SchedulePeriod[];
   request: Record<string, unknown>;
+  /** Every call Apply makes to Fox ESS, in order, for the user to authorise. */
+  calls: ApiCall[];
   notes: string[];
   fingerprint: string;
+}
+
+export interface ApiCall {
+  method: string;
+  path: string;
+  body: Record<string, unknown>;
+  /** What the call does, in plain words. */
+  purpose: string;
+  /** Whether it changes the inverter. */
+  writes: boolean;
 }

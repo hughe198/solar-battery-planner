@@ -15,7 +15,9 @@ export const routes: Routes = [
   // The charge plan and forecast pages were merged into Tonight; keep old bookmarks working.
   { path: 'plan', redirectTo: 'tonight' },
   { path: 'forecast', redirectTo: 'tonight' },
-  { path: 'inverter', component: Control, canActivate: [systemGuard], title: 'Inverter control' },
+  { path: 'automation', component: Control, canActivate: [systemGuard], title: 'Automation' },
+  // The Inverter page was renamed Automation; keep old bookmarks working.
+  { path: 'inverter', redirectTo: 'automation' },
   { path: 'data', component: DataImport, canActivate: [systemGuard], title: 'Your data' },
   { path: 'setup', component: SystemSetup, canActivate: [authGuard], title: 'System setup' },
   {

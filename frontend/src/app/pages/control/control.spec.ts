@@ -67,7 +67,30 @@ const PROPOSAL: ControlProposal = {
       min_soc_percent: 10,
     },
   ],
-  request: { deviceSN: 'INV1', groups: [] },
+  request: { deviceSN: 'INV1', isDefault: false, groups: [] },
+  calls: [
+    {
+      method: 'POST',
+      path: '/op/v3/device/scheduler/get',
+      body: { deviceSN: 'INV1' },
+      purpose: 'Read your schedule again, and stop if it has changed since this preview.',
+      writes: false,
+    },
+    {
+      method: 'POST',
+      path: '/op/v3/device/scheduler/enable',
+      body: { deviceSN: 'INV1', isDefault: false, groups: [] },
+      purpose: "Replace your inverter's schedule with the 1 period shown above.",
+      writes: true,
+    },
+    {
+      method: 'POST',
+      path: '/op/v3/device/scheduler/get',
+      body: { deviceSN: 'INV1' },
+      purpose: 'Read the schedule back and check it matches what was sent.',
+      writes: false,
+    },
+  ],
   notes: ['Fox schedules repeat every day'],
   fingerprint: 'abc123',
 };
@@ -123,7 +146,7 @@ describe('Control', () => {
     fixture.componentInstance.proposal.set(PROPOSAL);
     fixture.detectChanges();
     const apply = Array.from(el.querySelectorAll('button')).find((b) =>
-      b.textContent?.includes('Apply to inverter'),
+      b.textContent?.includes('Authorise and send'),
     )!;
     expect(apply.disabled).toBe(true);
     expect(el.textContent).toContain('Pass the write test up to step 4');
@@ -140,7 +163,37 @@ describe('Control', () => {
     expect(named('Preview').disabled).toBe(false);
   });
 
-  it('applies exactly the previewed schedule', () => {
+  it('lists every call and sends nothing until the user authorises them', () => {
+    const fixture = render({ ...OFF, enabled: true, test_level: 4, can_apply: true });
+    fixture.componentInstance.loadPreview();
+    http.expectOne('/api/control/preview').flush(PROPOSAL);
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+    const calls = Array.from(el.querySelectorAll('ol.api-calls > li'));
+    expect(calls.length).toBe(3);
+    expect(calls[1].textContent).toContain('Changes inverter');
+    expect(calls[1].textContent).toContain('/op/v3/device/scheduler/enable');
+    expect(calls[0].textContent).toContain('Read only');
+    expect(el.textContent).toContain('1 of them changes your inverter');
+    const send = Array.from(el.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('Authorise and send'),
+    )!;
+    expect(send.disabled).toBe(true);
+    send.click();
+    http.expectNone('/api/control/apply');
+  });
+
+  it('says so when nothing would change the inverter', () => {
+    const fixture = render({ ...OFF, enabled: true, test_level: 4, can_apply: true });
+    fixture.componentInstance.loadPreview();
+    http.expectOne('/api/control/preview').flush({ ...PROPOSAL, calls: [PROPOSAL.calls[0]] });
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+    expect(el.textContent).toContain('no call would change your inverter');
+    expect(el.querySelector('ol.api-calls')).toBeNull();
+  });
+
+  it('applies exactly the previewed schedule once authorised', () => {
     const fixture = render({ ...OFF, enabled: true, test_level: 4, can_apply: true });
     fixture.componentInstance.loadPreview();
     http.expectOne('/api/control/preview').flush(PROPOSAL);
@@ -151,8 +204,13 @@ describe('Control', () => {
     expect(el.textContent).toContain('force discharge to 10%');
     expect(el.textContent).toContain('Added');
     const apply = Array.from(el.querySelectorAll('button')).find((b) =>
-      b.textContent?.includes('Apply to inverter'),
+      b.textContent?.includes('Authorise and send'),
     )!;
+    const authorise = Array.from(el.querySelectorAll('input[type=checkbox]')).find((i) =>
+      i.parentElement?.textContent?.includes('authorise them'),
+    ) as HTMLInputElement;
+    authorise.click();
+    fixture.detectChanges();
     expect(apply.disabled).toBe(false);
     apply.click();
     const req = http.expectOne('/api/control/apply');

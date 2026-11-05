@@ -1,0 +1,60 @@
+{
+  "scenario": "Hold 00:30–05:30, no charge (D1)",
+  "requests": [
+    {
+      "method": "POST",
+      "path": "/op/v3/device/scheduler/get",
+      "body": {
+        "deviceSN": "TESTSN0001"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/op/v3/device/scheduler/enable",
+      "body": {
+        "deviceSN": "TESTSN0001",
+        "isDefault": false,
+        "groups": [
+          {
+            "startHour": 0,
+            "startMinute": 30,
+            "endHour": 5,
+            "endMinute": 29,
+            "workMode": "ForceCharge",
+            "extraParam": {
+              "fdSoc": 10,
+              "fdPwr": 3600,
+              "minSocOnGrid": 10
+            }
+          }
+        ]
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/op/v3/device/scheduler/get",
+      "body": {
+        "deviceSN": "TESTSN0001"
+      }
+    }
+  ],
+  "outcome": "ok",
+  "message": "Hold 00:30–05:30 written and read back as written.",
+  "inverter_after": {
+    "enable": 1,
+    "groups": [
+      {
+        "startHour": 0,
+        "startMinute": 30,
+        "endHour": 5,
+        "endMinute": 29,
+        "workMode": "ForceCharge",
+        "extraParam": {
+          "fdSoc": 10,
+          "fdPwr": 3600,
+          "minSocOnGrid": 10
+        }
+      }
+    ]
+  }
+}
