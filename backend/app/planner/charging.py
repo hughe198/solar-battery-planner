@@ -63,7 +63,9 @@ def learn_rate(battery: BatterySpec, records: list[UsageRecord]) -> ChargeRate:
         if now.start - before.start != INTERVAL:
             continue
         rise = now.battery_soc_percent - before.battery_soc_percent
-        house = now.load_kwh - now.solar_kwh
+        # What the house needed from the grid or battery. Solar beyond the load is no part of
+        # it: counted as negative, a sunny half hour with no import passed as grid charging.
+        house = max(0.0, now.load_kwh - now.solar_kwh)
         if rise <= 0 or now.grid_import_kwh < house + GRID_CHARGE_MARGIN_KWH:
             continue
         if now.battery_soc_percent >= FULL_PERCENT:

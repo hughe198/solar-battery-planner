@@ -56,6 +56,10 @@ from app.tariffs import TariffSchedule
 SCENARIO_WEIGHTS = {"expected": 0.5, "dull": 0.25, "bright": 0.25}
 # Don't pay for charge that saves less than this on average.
 LEAN_UNDER_PENCE = 2.0
+# A day's dearest rate counts as a peak only this far above its cheapest (pence per kWh).
+PEAK_MARGIN_PENCE = 5.0
+# Peak-rate import (kWh over the peak) small enough to count as none.
+PEAK_TOLERANCE_KWH = 0.05
 # Alternatives described in the explanation, in SoC percentage points either side.
 COMPARE_STEP_PERCENT = 10
 FULL_TOLERANCE_KWH = 0.01
@@ -76,6 +80,28 @@ def effective_cost(c: Costs, mode: PlanningMode) -> np.ndarray:
 def best_index(scores: np.ndarray, tolerance: float = LEAN_UNDER_PENCE) -> int:
     """Lowest candidate (they are in rising order) within `tolerance` of the best score."""
     return int(np.flatnonzero(scores <= scores.min() + tolerance)[0])
+
+
+def peak_slots(prices: CyclePrices) -> np.ndarray:
+    """The day's half hours at its dearest import rate, when that rate stands clearly above the
+    rest of the day (an evening peak); none on a flat day rate."""
+    rates = prices.day_import
+    if not len(rates) or rates.max() < rates.min() + PEAK_MARGIN_PENCE:
+        return np.zeros(len(rates), dtype=bool)
+    return rates >= rates.max() - 0.01
+
+
+def peak_floor(sim: Simulation, peak: np.ndarray) -> int:
+    """The lowest candidate that imports no more at the peak rate on this day than the most
+    any candidate can avoid: none if the battery can cover the peak, else as little as can be.
+
+    The owner's choice (5 November 2026): running short at the peak costs far more a kWh than
+    charging a kWh too much at the cheap rate, so the dull day is covered through the peak
+    whatever the cost score's lean towards less charge."""
+    if not peak.any():
+        return 0
+    at_peak = sim.day_import_kwh[:, peak].sum(axis=1)
+    return int(np.flatnonzero(at_peak <= at_peak.min() + PEAK_TOLERANCE_KWH)[0])
 
 
 @dataclass(frozen=True)
@@ -450,8 +476,11 @@ def plan(
 
     plans: dict[PlanningMode, tuple[int, ChargeSchedule]] = {}
     recommendations = []
+    peak = peak_slots(prices)
+    floor = peak_floor(runs["dull"][1], peak)
     for mode in sorted(MODES, key=lambda m: m is not system.planning_mode):
-        chosen = best_index(scores[mode])
+        cheapest = best_index(scores[mode])
+        chosen = max(cheapest, floor)
         results = {
             name: outcome(sim, c, chosen, scenario, battery, day_starts)
             for name, (scenario, sim, c) in runs.items()
@@ -474,6 +503,18 @@ def plan(
             reasons.insert(1, explainer.timing(timing, rate, battery))
         elif timing.hold_minutes:
             reasons.insert(1, explainer.hold(timing))
+        if chosen > cheapest:
+            hours = [s for s, p in zip(day_starts, peak) if p]
+            extra = float(scores[mode][chosen] - scores[mode][cheapest])
+            reasons.insert(
+                1,
+                f"Charging to {battery.percent(targets[chosen]):.0f}% so the battery lasts "
+                f"through the {explainer.clock(hours[0])}–{explainer.clock(hours[-1] + INTERVAL)} "
+                f"peak even on a dull day ({results['dull'].solar_kwh:.1f} kWh solar, "
+                f"{results['dull'].load_kwh:.1f} kWh use). That's about {pence(max(extra, 0))} "
+                f"more on an average day than {battery.percent(targets[cheapest]):.0f}%, against "
+                "the peak rate if it runs short.",
+            )
         if drain:
             reasons.insert(0, explainer.discharge(drain, before_kwh, start_kwh))
         _, sim_e, _ = runs["expected"]

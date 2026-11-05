@@ -52,6 +52,32 @@ def test_learns_bulk_and_taper_rates_from_grid_charging():
     assert rate.samples == 8  # the half hour reaching 99% may have stopped part way
 
 
+def test_solar_charging_isnt_taken_for_grid_charging():
+    # Seen on the owner's history, 5 November 2026: sunny half hours have a negative net house
+    # use (solar beyond load), so even no import at all passed the grid-charging test. About
+    # 550 slow solar-charging samples outweighed 55 real overnight ones, and the rate learned
+    # was 1.2 kW against about 4 kW really, capping the night's charge at 41%.
+    records = [record(0, 20, 0.2)]
+    for k, soc in enumerate([40, 60, 80, 85], start=1):  # four half hours at 4 kW from the grid
+        records.append(record(k, soc, 0.2 + 2.0 if soc != 85 else 0.2 + 0.5))
+    sunny = START + timedelta(hours=12)
+    for k in range(20):  # a sunny day: 1.5 kWh of solar, 0.2 kWh of load, no import
+        records.append(
+            UsageRecord(
+                start=sunny + timedelta(minutes=30 * k),
+                load_kwh=0.2,
+                solar_kwh=1.5,
+                grid_import_kwh=0.0,
+                grid_export_kwh=0.0,
+                battery_soc_percent=30 + 2 * k,
+                source=UsageSource.csv,
+            )
+        )
+    rate = learn_rate(BATTERY, records)
+    assert rate.samples == 4
+    assert rate.bulk_kw == pytest.approx(4.0)
+
+
 def test_falls_back_to_the_battery_settings():
     rate = learn_rate(BATTERY, [record(0, 50, 0.2), record(1, 50, 0.2)])
     assert rate == ChargeRate(5.0, 5.0, 0)
