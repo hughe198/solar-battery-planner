@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.api.imports import get_weather_client
 from app.database import get_db
 from app.forecasting.base import DayForecast
-from app.forecasting.service import HistoryForecaster, backtest, load_history
+from app.forecasting.service import HistoryForecaster, backtest, load_history, load_marks
 from app.models import System, User
 from app.schemas import AccuracyOut, DayForecastOut
 from app.security import current_user
@@ -51,8 +51,9 @@ def forecast_day(
 def accuracy(user: User = Depends(current_user), db: Session = Depends(get_db)) -> AccuracyOut:
     """How well the model predicted the most recent imported days. Needs no weather fetch."""
     system = _system(user)
-    history = load_history(db, system)
-    checked = backtest(system, history)
+    marks = load_marks(db, system)
+    history = load_history(db, system, marks)
+    checked = backtest(system, history, marks)
     return AccuracyOut.model_validate(
         {
             "history_days": len(set(history.calendar.local_day)),

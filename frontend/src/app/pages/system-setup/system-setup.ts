@@ -48,6 +48,9 @@ export class SystemSetup implements OnInit {
     timezone: [Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/London'],
     planning_mode: ['maximise_own_usage' as SystemConfig['planning_mode']],
     data_source: ['none' as SystemConfig['data_source']],
+    has_heat_pump: [false],
+    has_electric_car: [false],
+    car_charger_kw: [7, [Validators.required, Validators.min(0.1), Validators.max(22)]],
     battery: this.fb.group({
       capacity_kwh: [10, [Validators.required, Validators.min(0.1)]],
       min_soc_percent: [10, [Validators.required, Validators.min(0), Validators.max(99)]],

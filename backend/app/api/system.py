@@ -114,7 +114,17 @@ def save_system(
         # The stored weather is for the old location. Usage is what the meter measured, so it
         # stays, and the forecast can't learn from it until the new weather arrives.
         db.execute(delete(WeatherRecord).where(WeatherRecord.system_id == system.id))
-    for field in ("name", "latitude", "longitude", "timezone", "planning_mode", "data_source"):
+    for field in (
+        "name",
+        "latitude",
+        "longitude",
+        "timezone",
+        "planning_mode",
+        "data_source",
+        "has_heat_pump",
+        "has_electric_car",
+        "car_charger_kw",
+    ):
         setattr(system, field, getattr(body, field))
 
     if system.battery is None:

@@ -869,3 +869,57 @@ table.control-log {
 .result-failed {
   border-left-color: var(--error);
 }
+
+// Expected usage for the day shown on Tonight: Away / Low / Normal / High.
+.usage-selector {
+  max-width: 26rem;
+  margin: 0 auto 1rem;
+  text-align: center;
+
+  .segmented {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.25rem;
+
+    button {
+      min-height: 2.5rem;
+      padding: 0.25rem 0.5rem;
+    }
+  }
+
+  .usage-hint {
+    margin: 0.4rem 0 0;
+    font-size: 0.9rem;
+  }
+
+  .car-charge,
+  .holiday {
+    margin-top: 0.75rem;
+    text-align: left;
+  }
+
+  .holiday .row {
+    margin-top: 0.5rem;
+  }
+}
+
+.usage-note {
+  margin: 0.25rem 0 0.5rem;
+}
+
+// A day the user marked as other than normal, in the look back calendar.
+.usage-mark {
+  display: block;
+  font-size: 0.7rem;
+  line-height: 1;
+  color: var(--muted);
+}
+
+.mark-past {
+  margin: 0.75rem 0;
+
+  .usage-selector {
+    margin: 0.5rem 0 0;
+    max-width: 22rem;
+  }
+}

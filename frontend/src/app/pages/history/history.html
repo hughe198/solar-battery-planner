@@ -109,8 +109,23 @@
         [days]="rp.days"
         [selected]="selectedDay()"
         [inProgress]="inProgress()"
+        [marks]="marks()"
         (pick)="selectDay($event)"
       />
+      @if (selectedDay(); as day) {
+        <div class="mark-past">
+          <p class="muted">
+            Was {{ dayLabel(day) }} unusual, such as a day away? Mark it so the usage forecast
+            doesn't learn from it.
+          </p>
+          <app-usage-selector
+            [day]="day"
+            [showCar]="false"
+            [showRange]="false"
+            (changed)="loadMarks()"
+          />
+        </div>
+      }
       @if (selectedDay(); as day) {
         @if (inProgress(); as c) {
           @if (c.day === day) {

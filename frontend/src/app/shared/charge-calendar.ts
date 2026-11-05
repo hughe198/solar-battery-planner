@@ -1,5 +1,6 @@
 import { Component, computed, input, output, signal } from '@angular/core';
-import { InProgressCharge, ReplayDay } from '../core/models';
+import { InProgressCharge, ReplayDay, UsageLevel } from '../core/models';
+import { USAGE_LABELS } from '../core/usage.service';
 import { formatPence } from '../core/plan.service';
 
 /** Lost less than this and the charge was about right, as the replay's own review says. */
@@ -70,6 +71,9 @@ function shiftMonth(month: string, by: number): string {
             >
               <span class="calendar-date">{{ cell.date }}</span>
               <strong>{{ round(d.soc_after_charge_percent) }}%</strong>
+              @if (marks()[d.day]; as mark) {
+                <span class="usage-mark">{{ usageLabels[mark] }}</span>
+              }
             </button>
           } @else if (cell.key === inProgress()?.day) {
             <button
@@ -100,7 +104,8 @@ function shiftMonth(month: string, by: number): string {
         @if (inProgress()) {
           <span class="key in-progress"></span> in progress, with no score yet.
         }
-        Grey days have no complete data.
+        Grey days have no complete data. Days you marked as away, low or high say so, and are left
+        out of what the usage forecast learns.
       </p>
     }
   `,
@@ -112,6 +117,9 @@ export class ChargeCalendar {
   /** The cycle under way, which has no score yet. */
   readonly inProgress = input<InProgressCharge | null>(null);
   readonly pick = output<string>();
+  /** Days the user marked as other than normal usage. */
+  readonly marks = input<Record<string, UsageLevel>>({});
+  readonly usageLabels = USAGE_LABELS;
 
   readonly chosenMonth = signal<string | null>(null);
   readonly weekdays = WEEKDAYS;
@@ -197,6 +205,8 @@ export class ChargeCalendar {
       rating(d.missed_saving_pence) === 'good'
         ? 'about right'
         : `lost ${formatPence(d.missed_saving_pence)}`;
-    return `${date}: charged to ${Math.round(d.soc_after_charge_percent)}%, best ${Math.round(d.best_soc_percent)}%, ${lost}`;
+    const mark = this.marks()[d.day];
+    const marked = mark ? `, marked ${mark}` : '';
+    return `${date}: charged to ${Math.round(d.soc_after_charge_percent)}%, best ${Math.round(d.best_soc_percent)}%, ${lost}${marked}`;
   }
 }

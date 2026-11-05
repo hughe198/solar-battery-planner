@@ -12,6 +12,7 @@ from app.models import (
     PlanningMode,
     RateDays,
     RateDirection,
+    UsageLevel,
     UsageSource,
 )
 from app.tariffs import coverage_problems
@@ -126,6 +127,10 @@ class SystemIn(BaseModel):
     # The local day changed rates began; today if not given. Ignored when the rates are the same.
     tariff_effective_from: date | None = None
     arrays: list[SolarArrayIn] = Field(min_length=1, max_length=6)
+    # Big loads the usage forecast allows for.
+    has_heat_pump: bool = False
+    has_electric_car: bool = False
+    car_charger_kw: float = Field(default=7.0, gt=0, le=22)
 
     @field_validator("timezone")
     @classmethod
@@ -280,6 +285,7 @@ class BacktestDayOut(BaseModel):
     solar_actual_kwh: float
     solar_predicted_kwh: float
     solar_physics_kwh: float
+    usage: UsageLevel = UsageLevel.normal
 
 
 class BacktestOut(BaseModel):
@@ -307,6 +313,7 @@ class DayForecastOut(BaseModel):
     history_days: int
     array_performance: list[float]
     backtest: BacktestOut | None
+    usage_notes: list[str] = []
 
 
 class AccuracyOut(BaseModel):
@@ -400,6 +407,7 @@ class ChargePlanOut(BaseModel):
     load_method: str
     solar_method: str
     history_days: int
+    usage_notes: list[str] = []
 
 
 class ReplayDayOut(BaseModel):
@@ -591,3 +599,51 @@ class ApplyIn(BaseModel):
 
 class TestStepIn(BaseModel):
     step: int = Field(ge=1, le=6)
+
+
+class UsageExpectationIn(BaseModel):
+    """How a day's usage is expected to go. Normal with no car charge clears the day."""
+
+    level: UsageLevel = UsageLevel.normal
+    car_kwh: float | None = Field(default=None, ge=0, le=150)
+
+
+class UsageRangeIn(BaseModel):
+    """One level for every day from `start` to `end` inclusive, such as a holiday."""
+
+    start: date
+    end: date
+    level: UsageLevel
+
+    @model_validator(mode="after")
+    def ordered(self) -> "UsageRangeIn":
+        if self.end < self.start:
+            raise ValueError("end is before start")
+        if (self.end - self.start).days > 366:
+            raise ValueError("a range can cover at most a year")
+        return self
+
+
+class UsageExpectationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    day: date
+    level: UsageLevel
+    car_kwh: float | None
+
+
+class UsageProfileOut(BaseModel):
+    """The home's figures behind the options; `learned` false means fixed allowances."""
+
+    base_daily_kwh: float | None
+    low_factor: float
+    high_factor: float
+    learned: bool
+
+
+class UsageExpectationsOut(BaseModel):
+    days: list[UsageExpectationOut]
+    profile: UsageProfileOut
+    has_heat_pump: bool
+    has_electric_car: bool
+    car_charger_kw: float

@@ -1,6 +1,6 @@
 # Plan: Expected usage
 
-Status: planned, not started.
+Status: built, with the decisions below confirmed by the user on 5 November 2026. Big-load settings (heat pump, electric car) were added alongside, which replace decisions 3 and 4.
 
 The user marks a day as Away, Low, Normal or High on the Tonight page, and the app adjusts that
 day's usage forecast. The plan, battery line and statement all update from it. For example, when

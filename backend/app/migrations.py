@@ -70,6 +70,24 @@ def add_battery_wear_cost(engine: Engine) -> None:
         )
 
 
+def add_big_load_settings(engine: Engine) -> None:
+    """Heat pump and electric car settings on systems; off for existing systems."""
+    inspector = inspect(engine)
+    if not inspector.has_table("systems"):
+        return
+    have = {c["name"] for c in inspector.get_columns("systems")}
+    columns = {
+        "has_heat_pump": "BOOLEAN NOT NULL DEFAULT FALSE",
+        "has_electric_car": "BOOLEAN NOT NULL DEFAULT FALSE",
+        "car_charger_kw": "FLOAT NOT NULL DEFAULT 7",
+    }
+    with engine.begin() as conn:
+        for name, kind in columns.items():
+            if name not in have:
+                conn.execute(text(f"ALTER TABLE systems ADD COLUMN {name} {kind}"))
+
+
 def upgrade(engine: Engine) -> None:
     upgrade_single_window_tariffs(engine)
     add_battery_wear_cost(engine)
+    add_big_load_settings(engine)

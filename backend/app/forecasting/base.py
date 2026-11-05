@@ -2,7 +2,7 @@
 interval from weather forecasts, trained on imported usage matched to
 historical weather."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Literal, Protocol
 
@@ -45,6 +45,9 @@ class BacktestDay:
     solar_predicted_kwh: float
     # What the physics estimate alone would have said, to show what learning adds.
     solar_physics_kwh: float
+    # The usage the user marked for the day (away, low, normal or high). Marked days are left
+    # out of load accuracy.
+    usage: str = "normal"
 
 
 @dataclass(frozen=True)
@@ -77,6 +80,8 @@ class DayForecast:
     # Learned multiplier on each array's physics estimate, in array order.
     array_performance: list[float]
     backtest: Backtest | None
+    # Plain sentences on how the user's marks and big loads changed the forecast.
+    usage_notes: list[str] = field(default_factory=list)
 
 
 class Forecaster(Protocol):

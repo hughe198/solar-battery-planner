@@ -71,6 +71,33 @@ export interface SystemConfig {
   /** The local day changed rates began; today if left out. */
   tariff_effective_from?: string | null;
   arrays: SolarArray[];
+  /** Big loads the usage forecast allows for. */
+  has_heat_pump?: boolean;
+  has_electric_car?: boolean;
+  car_charger_kw?: number;
+}
+
+export type UsageLevel = 'away' | 'low' | 'normal' | 'high';
+
+/** A day marked other than normal, or with a car charge in the cheap window before it. */
+export interface UsageExpectation {
+  day: string;
+  level: UsageLevel;
+  car_kwh: number | null;
+}
+
+export interface UsageExpectations {
+  days: UsageExpectation[];
+  /** The home's figures behind the options; not learned means fixed allowances. */
+  profile: {
+    base_daily_kwh: number | null;
+    low_factor: number;
+    high_factor: number;
+    learned: boolean;
+  };
+  has_heat_pump: boolean;
+  has_electric_car: boolean;
+  car_charger_kw: number;
 }
 
 /** A tariff and the local days it applied: no end is current, no start is from the beginning. */
@@ -159,6 +186,8 @@ export interface BacktestDay {
   solar_actual_kwh: number;
   solar_predicted_kwh: number;
   solar_physics_kwh: number;
+  /** What the user marked the day as; marked days are left out of usage accuracy. */
+  usage?: UsageLevel;
 }
 
 /** Accuracy on the latest days, predicted by a model trained only on the days before them. */
@@ -184,6 +213,8 @@ export interface DayForecast {
   /** Learned multiplier on each array's physics estimate, in array order. */
   array_performance: number[];
   backtest: Backtest | null;
+  /** How the user's day marks and car charges changed the forecast. */
+  usage_notes?: string[];
 }
 
 /** One charge target played out over one version of the day. Money in pence. */
@@ -279,6 +310,8 @@ export interface ChargePlan {
   load_method: ForecastMethod;
   solar_method: ForecastMethod;
   history_days: number;
+  /** How the user's day marks and car charges changed the usage forecast. */
+  usage_notes?: string[];
 }
 
 export interface ReplayDay {
