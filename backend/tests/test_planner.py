@@ -308,6 +308,23 @@ def test_peak_rule_raises_a_charge_that_runs_out_in_the_peak(monkeypatch):
     assert own.reasons[1].startswith(f"Charging to {own.target_soc_percent:.0f}% so the battery")
 
 
+def test_a_battery_that_drains_faster_is_charged_more():
+    # Seen on the owner's battery, 5-6 November 2026: its level fell about 1.35 kWh for each
+    # kWh the house took, so a charge planned to last to 19:00 ran out at 15:30.
+    from app.planner.charging import Drain
+
+    def house(k):
+        return 0.3 if 32 <= k < 38 else 0.12
+
+    forecast = make_forecast(house, grey, spread=0.5)
+    rated = plan(flux_system(), forecast, start_soc_percent=10).recommendations[0]
+    slow = Drain(0.74, 1500)
+    drained = plan(flux_system(), forecast, 10, battery_drain=slow).recommendations[0]
+    assert drained.target_soc_percent > rated.target_soc_percent + 10
+    assert drained.dull.reserve_at >= datetime(2026, 6, 2, 19, 0, tzinfo=timezone.utc)
+    assert any("1.35 kWh for each kWh" in r and "1500" in r for r in drained.reasons)
+
+
 def test_costs_follow_a_multi_rate_price_book():
     cycle = cycle_for(DAY, PEAK, "UTC")
     assert cycle.night_start == datetime(2026, 6, 1, 23, 0, tzinfo=timezone.utc)

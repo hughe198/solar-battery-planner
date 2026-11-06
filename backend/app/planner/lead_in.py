@@ -16,6 +16,7 @@ from app.forecasting.base import IntervalForecast
 from app.importers.base import INTERVAL
 from app.models import System, UsageRecord
 from app.planner.base import TimelinePoint
+from app.planner.charging import Drain
 from app.planner.simulator import BatterySpec, Cycle, cycle_for, simulate
 from app.tariffs import TariffSchedule
 
@@ -50,10 +51,15 @@ def usable_reading(db: Session, system: System, day: date, cycle: Cycle) -> Read
 
 
 def simulate_lead_in(
-    system: System, reading: Reading, intervals: list[IntervalForecast]
+    system: System,
+    reading: Reading,
+    intervals: list[IntervalForecast],
+    drain: Drain | None = None,
 ) -> list[TimelinePoint]:
     """Self-use from the reading through `intervals`, the half hours up to the window opening."""
     battery = BatterySpec.of(system.battery)
+    if drain is not None:
+        battery = battery.with_drain(drain.efficiency)
     level = battery.kwh(reading.soc_percent)
     empty = np.zeros(0)
     sim = simulate(

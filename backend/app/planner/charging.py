@@ -8,7 +8,8 @@ held, so the house runs on the cheap (or free) grid rather than spending stored 
 would only be bought back, with losses, before morning.
 
 The charge rate is learned from history where it can be: half hours in which the grid charged
-the battery, split at the level where batteries usually slow down near full.
+the battery, split at the level where batteries usually slow down near full. So is the drain:
+how far the battery's level falls for each kWh it supplies the house.
 """
 
 from dataclasses import dataclass
@@ -35,6 +36,12 @@ MIN_TAPER_SAMPLES = 3
 GRID_CHARGE_MARGIN_KWH = 0.1
 # Use a high percentile: a half hour where charging started or stopped part way is slower.
 RATE_PERCENTILE = 75
+# Grid flow below this, kWh per half hour, leaves the battery alone supplying the house.
+GRID_IDLE_KWH = 0.02
+# A day's worth of half hours, and enough energy that whole-percent readings average out.
+MIN_DRAIN_SAMPLES = 48
+MIN_DRAIN_KWH = 3.0
+DRAIN_EFFICIENCY_RANGE = (0.5, 1.0)
 SCHEDULE_STEP = timedelta(minutes=5)
 
 
@@ -81,22 +88,79 @@ def learn_rate(battery: BatterySpec, records: list[UsageRecord]) -> ChargeRate:
     return ChargeRate(bulk_kw, min(taper_kw, bulk_kw), len(bulk) + len(taper))
 
 
-def learn_rate_from_history(db: Session, system: System) -> ChargeRate:
-    battery = BatterySpec.of(system.battery)
+def _recent_records(db: Session, system: System) -> list[UsageRecord]:
+    """The last `LEARN_DAYS` of readings, oldest first."""
     latest = db.scalar(
         select(func.max(UsageRecord.start)).where(UsageRecord.system_id == system.id)
     )
     if latest is None:
-        return ChargeRate.rated(battery)
-    records = db.scalars(
-        select(UsageRecord)
-        .where(
-            UsageRecord.system_id == system.id,
-            UsageRecord.start >= latest - timedelta(days=LEARN_DAYS),
-        )
-        .order_by(UsageRecord.start)
-    ).all()
-    return learn_rate(battery, list(records))
+        return []
+    return list(
+        db.scalars(
+            select(UsageRecord)
+            .where(
+                UsageRecord.system_id == system.id,
+                UsageRecord.start >= latest - timedelta(days=LEARN_DAYS),
+            )
+            .order_by(UsageRecord.start)
+        ).all()
+    )
+
+
+def learn_rate_from_history(db: Session, system: System) -> ChargeRate:
+    return learn_rate(BatterySpec.of(system.battery), _recent_records(db, system))
+
+
+@dataclass(frozen=True)
+class Drain:
+    """kWh the house gets for each kWh the battery's level falls while supplying it: the
+    battery's discharge efficiency as the planner uses it."""
+
+    efficiency: float
+    # Half hours it was learned from; 0 means taken from the battery settings.
+    samples: int
+
+    @classmethod
+    def rated(cls, battery: BatterySpec) -> "Drain":
+        return cls(battery.discharge_efficiency, 0)
+
+
+def learn_drain(battery: BatterySpec, records: list[UsageRecord]) -> Drain:
+    """The drain seen in half hours when the battery alone supplied the house, oldest records
+    first. Readings give the level at the end of each half hour.
+
+    Seen on the owner's history, 6 November 2026: the level fell about 1.3 kWh for each kWh
+    the house took, where 90% round trip alone gives 1.05, while grid charging showed almost no
+    loss. An inverter rated at 10 kW runs inefficiently at a house's few hundred watts, so a
+    battery the planner thought would last to 19:00 ran out at 15:30."""
+    rated = Drain.rated(battery)
+    reserve_percent = battery.percent(battery.reserve_kwh)
+    delivered = fallen = 0.0
+    samples = 0
+    for before, now in zip(records, records[1:]):
+        if before.battery_soc_percent is None or now.battery_soc_percent is None:
+            continue
+        if now.start - before.start != INTERVAL:
+            continue
+        house = now.load_kwh - now.solar_kwh
+        if house <= 0 or max(now.grid_import_kwh, now.grid_export_kwh) >= GRID_IDLE_KWH:
+            continue
+        # At the reserve the battery stops; from full, solar may have been topping it up.
+        if min(before.battery_soc_percent, now.battery_soc_percent) <= reserve_percent + 1:
+            continue
+        if before.battery_soc_percent >= FULL_PERCENT:
+            continue
+        delivered += house
+        fall = before.battery_soc_percent - now.battery_soc_percent
+        fallen += fall / 100 * battery.capacity_kwh
+        samples += 1
+    if samples < MIN_DRAIN_SAMPLES or fallen < MIN_DRAIN_KWH:
+        return rated
+    return Drain(float(np.clip(delivered / fallen, *DRAIN_EFFICIENCY_RANGE)), samples)
+
+
+def learn_drain_from_history(db: Session, system: System) -> Drain:
+    return learn_drain(BatterySpec.of(system.battery), _recent_records(db, system))
 
 
 def charge_hours(rate: ChargeRate, battery: BatterySpec, from_kwh: float, to_kwh: float) -> float:

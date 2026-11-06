@@ -9,7 +9,7 @@ Every candidate target is simulated side by side as one numpy array, so comparin
 targets costs about the same as one.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta, timezone
 from math import sqrt
 from typing import Protocol
@@ -48,6 +48,10 @@ class BatterySpec:
             discharge_efficiency=one_way,
             wear_pence_per_kwh=(battery.wear_pence_per_cycle or 0) / battery.capacity_kwh,
         )
+
+    def with_drain(self, efficiency: float) -> "BatterySpec":
+        """This battery with the discharge efficiency learned from its history."""
+        return replace(self, discharge_efficiency=efficiency)
 
     def percent(self, kwh):
         return kwh / self.capacity_kwh * 100

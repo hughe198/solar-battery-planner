@@ -6,7 +6,9 @@ from app.models import Battery, UsageRecord, UsageSource
 from app.planner.charging import (
     ChargeRate,
     charge_hours,
+    Drain,
     discharge,
+    learn_drain,
     learn_rate,
     reachable_kwh,
     schedule,
@@ -81,6 +83,37 @@ def test_solar_charging_isnt_taken_for_grid_charging():
 def test_falls_back_to_the_battery_settings():
     rate = learn_rate(BATTERY, [record(0, 50, 0.2), record(1, 50, 0.2)])
     assert rate == ChargeRate(5.0, 5.0, 0)
+
+
+def house_record(k, soc, load, solar=0.0, grid_import=0.0, grid_export=0.0):
+    return UsageRecord(
+        start=START + timedelta(minutes=30 * k),
+        load_kwh=load,
+        solar_kwh=solar,
+        grid_import_kwh=grid_import,
+        grid_export_kwh=grid_export,
+        battery_soc_percent=soc,
+        source=UsageSource.csv,
+    )
+
+
+def test_learns_how_fast_the_battery_drains_supplying_the_house():
+    # 0.6 kWh to the house for every 8 points (0.8 kWh) the level falls: 75%.
+    records = [house_record(k, 90 - 8 * (k % 10), 0.6 if k % 10 else 0.0) for k in range(60)]
+    # A half hour drawing on the grid, one at the reserve and one with solar to spare are
+    # no part of it.
+    records += [
+        house_record(60, 40, 0.6, grid_import=0.5),
+        house_record(61, 11, 0.6),
+        house_record(62, 15, 0.2, solar=1.0),
+    ]
+    drain = learn_drain(BATTERY, records)
+    assert drain.efficiency == pytest.approx(0.75)
+    assert drain.samples == 54  # each tenth record restarts at 90%, a rise, so isn't counted
+
+
+def test_drain_falls_back_to_the_battery_settings():
+    assert learn_drain(BATTERY, [house_record(k, 90 - k, 0.1) for k in range(10)]) == Drain(1.0, 0)
 
 
 def test_charge_hours_slow_down_near_full():

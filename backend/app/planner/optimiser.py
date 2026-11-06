@@ -37,6 +37,7 @@ from app.planner.charging import (
     ChargeRate,
     ChargeSchedule,
     Discharge,
+    Drain,
     discharge,
     reachable_kwh,
 )
@@ -428,8 +429,11 @@ def plan(
     forecast: DayForecast,
     start_soc_percent: float,
     rate: ChargeRate | None = None,
+    battery_drain: Drain | None = None,
 ) -> ChargePlan:
     battery = BatterySpec.of(system.battery)
+    if battery_drain is not None:
+        battery = battery.with_drain(battery_drain.efficiency)
     rate = rate or ChargeRate.rated(battery)
     schedule = TariffSchedule.from_system(system)
     cycle = cycle_for(forecast.day, schedule, system.timezone)
@@ -517,6 +521,12 @@ def plan(
             )
         if drain:
             reasons.insert(0, explainer.discharge(drain, before_kwh, start_kwh))
+        if battery_drain is not None and battery_drain.samples:
+            reasons.append(
+                f"Your battery's level has been falling about {1 / battery_drain.efficiency:.2f} "
+                f"kWh for each kWh it supplies the house, learned from {battery_drain.samples} "
+                "recent half hours, so the plan allows for that."
+            )
         _, sim_e, _ = runs["expected"]
         if battery.wear_pence_per_kwh > 0:
             c_e = runs["expected"][2]

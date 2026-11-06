@@ -25,7 +25,11 @@ from app.planner.base import (
     Review,
     Verdict,
 )
-from app.planner.charging import learn_rate_from_history, reachable_kwh
+from app.planner.charging import (
+    learn_drain_from_history,
+    learn_rate_from_history,
+    reachable_kwh,
+)
 from app.planner.optimiser import (
     PEAK_TOLERANCE_KWH,
     best_index,
@@ -92,7 +96,9 @@ class Replayer:
     def __init__(self, db: Session, system: System) -> None:
         self.db = db
         self.system = system
-        self.battery = BatterySpec.of(system.battery)
+        self.battery = BatterySpec.of(system.battery).with_drain(
+            learn_drain_from_history(db, system).efficiency
+        )
         # Past days cost what the tariff in force then charged.
         self.book = TariffTimeline.from_system(system)
         self.rate = learn_rate_from_history(db, system)
