@@ -380,6 +380,19 @@ export interface HistoryDay {
   max_soc_percent: number | null;
 }
 
+/** One complete day's costs, as metered and as if every kWh had come from the grid (pence). */
+export interface SavingsDay {
+  day: string;
+  house_kwh: number;
+  grid_only_pence: number;
+  import_cost_pence: number;
+  export_revenue_pence: number;
+}
+
+export interface Savings {
+  days: SavingsDay[];
+}
+
 export interface History {
   points: FlowPoint[];
   days: HistoryDay[];

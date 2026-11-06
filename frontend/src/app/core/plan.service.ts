@@ -1,7 +1,7 @@
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { ChargePlan, History, PlanningMode, Replay, ReplayDetail } from './models';
+import { ChargePlan, History, PlanningMode, Replay, ReplayDetail, Savings } from './models';
 
 export const MODE_LABELS: Record<PlanningMode, string> = {
   maximise_own_usage: 'Maximise own usage',
@@ -33,6 +33,11 @@ export class PlanService {
   /** Metered half hours and daily totals for the last `days` days imported. */
   history(days = 7): Observable<History> {
     return this.http.get<History>('/api/history', { params: { days } });
+  }
+
+  /** Every complete day's cost beside what the grid alone would have charged. */
+  savings(): Observable<Savings> {
+    return this.http.get<Savings>('/api/history/savings');
   }
 }
 

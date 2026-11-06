@@ -657,6 +657,188 @@ button.destructive {
   }
 }
 
+// The savings view in its modal on the History page.
+dialog.modal {
+  width: min(52rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+  padding: 1.25rem 1.5rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+
+  &::backdrop {
+    background: rgb(0 0 0 / 0.45);
+  }
+
+  h3 {
+    margin: 1.25rem 0 0.25rem;
+    font-size: 1.05rem;
+  }
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+
+  h2 {
+    margin: 0;
+  }
+}
+
+.savings-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  margin: 1rem 0 0.5rem;
+
+  .week-pick {
+    width: auto;
+    margin: 0;
+  }
+}
+
+.switch {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+
+  button {
+    border-radius: 0;
+    padding: 0.4rem 0.9rem;
+    font-weight: 400;
+    background: transparent;
+    color: var(--muted);
+
+    & + button {
+      border-left: 1px solid var(--border);
+    }
+
+    &[aria-pressed='true'] {
+      background: var(--accent);
+      color: var(--accent-text);
+      font-weight: 600;
+    }
+  }
+}
+
+.better {
+  color: var(--battery);
+}
+
+.worse {
+  color: var(--error);
+}
+
+.savings-chart {
+  width: 100%;
+  height: auto;
+  display: block;
+
+  .grid {
+    stroke: var(--border);
+  }
+
+  .zero {
+    stroke: var(--muted);
+  }
+
+  .axis,
+  .value {
+    fill: var(--muted);
+    font-size: 11px;
+  }
+
+  .value {
+    fill: var(--text);
+    font-weight: 600;
+  }
+
+  .avoided {
+    fill: var(--battery);
+  }
+
+  .income {
+    fill: var(--accent);
+  }
+
+  .grid-only {
+    fill: var(--muted);
+    opacity: 0.6;
+  }
+
+  .paid {
+    fill: var(--load);
+  }
+
+  .line {
+    fill: none;
+    stroke-width: 2;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+    opacity: 1;
+
+    &.grid-only {
+      stroke: var(--muted);
+    }
+
+    &.paid {
+      stroke: var(--load);
+    }
+  }
+
+  .gap {
+    fill: var(--battery);
+    opacity: 0.14;
+  }
+
+  .week-bar {
+    cursor: pointer;
+
+    &.dim rect:not(.hit) {
+      opacity: 0.35;
+    }
+  }
+
+  .hit {
+    fill: transparent;
+  }
+}
+
+.key {
+  &.avoided {
+    background: var(--battery);
+  }
+
+  &.income {
+    background: var(--accent);
+  }
+
+  &.grid-only {
+    background: var(--muted);
+  }
+
+  &.paid {
+    background: var(--load);
+  }
+}
+
+.savings-notes {
+  margin-top: 1rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+
+  summary {
+    cursor: pointer;
+    color: var(--text);
+  }
+}
+
 .plan-modes {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));

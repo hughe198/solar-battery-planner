@@ -3,6 +3,35 @@
   How the last week went, how each night's charge worked out against the best one in hindsight, and
   how close the forecast has been.
 </p>
+<p>
+  <button type="button" class="secondary" (click)="openSavings()">
+    Savings from solar and battery
+  </button>
+</p>
+
+<dialog
+  #savingsDialog
+  class="modal"
+  aria-labelledby="savings-title"
+  (click)="closeOnBackdrop($event)"
+>
+  <div class="modal-head">
+    <h2 id="savings-title">Savings from solar and battery</h2>
+    <button type="button" class="secondary" (click)="closeSavings()">Close</button>
+  </div>
+  @if (savings(); as days) {
+    <!-- Loaded only when first opened, to keep the app's first download small. -->
+    @defer {
+      <app-savings [days]="days" />
+    } @loading {
+      <p class="muted">Loading…</p>
+    }
+  } @else if (savingsError(); as message) {
+    <p class="form-error" role="alert">{{ message }}</p>
+  } @else {
+    <p class="muted">Loading…</p>
+  }
+</dialog>
 
 @if (week(); as w) {
   <h2>Your last {{ w.days }} days</h2>

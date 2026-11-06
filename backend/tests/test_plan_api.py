@@ -403,6 +403,34 @@ def test_history_summarises_the_last_week(client, headers):
     assert last["import_cost_pence"] < last["import_kwh"] * 27.5
 
 
+def test_savings_compare_each_complete_day_with_the_grid_alone(client, headers):
+    assert client.get("/api/history/savings", headers=headers).json() == {"days": []}
+    upload(client, headers, metered_days(charge_to_percent=100))
+    days = client.get("/api/history/savings", headers=headers).json()["days"]
+    # The first day has only its last half hour, and the last lacks its 23:30.
+    assert [d["day"] for d in days] == [
+        (FIRST_DAY + timedelta(days=i)).isoformat() for i in range(DAYS - 1)
+    ]
+    day = days[-1]
+    assert day["house_kwh"] == pytest.approx(10.0)  # 8 half hours at 0.5, 40 at 0.15
+    # Solar and the cheap night charge make the metered day cheaper than the grid alone; here
+    # exports earn more than imports cost.
+    net = day["import_cost_pence"] - day["export_revenue_pence"]
+    assert day["grid_only_pence"] > 0 > net
+
+
+@pytest.mark.parametrize(
+    ("day", "half_hours"),
+    [(date(2026, 10, 25), 50), (date(2026, 3, 29), 46), (date(2026, 11, 5), 48)],
+)
+def test_clock_change_days_have_more_or_fewer_half_hours(day, half_hours):
+    from zoneinfo import ZoneInfo
+
+    from app.api.history import half_hours_in
+
+    assert half_hours_in(day, ZoneInfo("Europe/London")) == half_hours
+
+
 def test_plan_and_replay_on_a_single_rate_tariff(client, headers):
     flat = {
         **UTC_SYSTEM,

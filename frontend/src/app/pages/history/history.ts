@@ -1,5 +1,5 @@
 import { DecimalPipe } from '@angular/common';
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { Component, ElementRef, OnInit, computed, inject, signal, viewChild } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { RouterLink } from '@angular/router';
 import { chargeLabel, dayLabel, describeInProgress, localDate } from '../../core/charge-summary';
@@ -10,6 +10,7 @@ import {
   History as WeekHistory,
   Replay,
   ReplayDetail,
+  SavingsDay,
   UsageLevel,
 } from '../../core/models';
 import { PlanService, formatPence } from '../../core/plan.service';
@@ -18,6 +19,7 @@ import { ChargeCalendar } from '../../shared/charge-calendar';
 import { FlowChart } from '../../shared/flow-chart';
 import { UsageService } from '../../core/usage.service';
 import { UsageSelector } from '../../shared/usage-selector';
+import { SavingsView } from '../../shared/savings-view';
 import { WeekChart } from '../../shared/week-chart';
 
 /** As far back as the API replays. */
@@ -29,7 +31,15 @@ const LOOK_BACK_DAYS = 120;
  */
 @Component({
   selector: 'app-history',
-  imports: [DecimalPipe, RouterLink, ChargeCalendar, FlowChart, WeekChart, UsageSelector],
+  imports: [
+    DecimalPipe,
+    RouterLink,
+    ChargeCalendar,
+    FlowChart,
+    WeekChart,
+    UsageSelector,
+    SavingsView,
+  ],
   templateUrl: './history.html',
 })
 export class History implements OnInit {
@@ -41,6 +51,10 @@ export class History implements OnInit {
   readonly system = toSignal(inject(SystemService).get());
   readonly pence = formatPence;
   clock: () => number = () => Date.now();
+
+  readonly savingsDialog = viewChild<ElementRef<HTMLDialogElement>>('savingsDialog');
+  readonly savings = signal<SavingsDay[] | null>(null);
+  readonly savingsError = signal<string | null>(null);
 
   readonly history = signal<WeekHistory | null>(null);
   readonly replay = signal<Replay | null>(null);
@@ -155,6 +169,30 @@ export class History implements OnInit {
   }
 
   readonly dayLabel = dayLabel;
+
+  /** Opens the savings view, fetching the days afresh each time. */
+  openSavings(): void {
+    const dialog = this.savingsDialog()?.nativeElement;
+    // Browsers without <dialog> support (and test DOMs) just show it in place.
+    if (dialog?.showModal) dialog.showModal();
+    else dialog?.setAttribute('open', '');
+    this.savingsError.set(null);
+    this.plans.savings().subscribe({
+      next: (s) => this.savings.set(s.days),
+      error: (err) => this.savingsError.set(errorMessage(err)),
+    });
+  }
+
+  closeSavings(): void {
+    const dialog = this.savingsDialog()?.nativeElement;
+    if (dialog?.close) dialog.close();
+    else dialog?.removeAttribute('open');
+  }
+
+  /** A click outside the box lands on the dialog itself, behind it. */
+  closeOnBackdrop(event: MouseEvent): void {
+    if (event.target === this.savingsDialog()?.nativeElement) this.closeSavings();
+  }
 
   /** Width of a backtest bar as a percentage of the largest value. */
   barWidth(kwh: number): number {

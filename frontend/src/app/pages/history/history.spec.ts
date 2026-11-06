@@ -1,6 +1,6 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
-import { TestBed } from '@angular/core/testing';
+import { DeferBlockState, TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { Backtest, History as WeekHistory, Replay, SystemConfig } from '../../core/models';
 import { History } from './history';
@@ -442,6 +442,36 @@ describe('History', () => {
         "That day can't be replayed",
       );
     });
+  });
+
+  it('opens the savings in a modal, fetched when asked for', async () => {
+    const { fixture, el } = render({ ...REPLAY, days: [], review: null, missed_saving_pence: 0 });
+    http.expectNone('/api/history/savings');
+    const open = [...el.querySelectorAll('button')].find((b) =>
+      b.textContent?.includes('Savings from solar and battery'),
+    )!;
+    open.click();
+    http.expectOne('/api/history/savings').flush({
+      days: [
+        {
+          day: '2026-05-21',
+          house_kwh: 10,
+          grid_only_pence: 250,
+          import_cost_pence: 50,
+          export_revenue_pence: 75,
+        },
+      ],
+    });
+    fixture.detectChanges();
+    // The view is loaded on first opening.
+    for (const block of await fixture.getDeferBlocks())
+      await block.render(DeferBlockState.Complete);
+    fixture.detectChanges();
+    const dialog = el.querySelector('dialog.modal') as HTMLDialogElement;
+    expect(dialog.open).toBe(true);
+    expect(dialog.textContent).toContain('£2.75'); // 250p less a net of -25p
+    [...dialog.querySelectorAll('button')].find((b) => b.textContent?.includes('Close'))!.click();
+    expect(dialog.open).toBe(false);
   });
 
   it('explains what is needed when there is no battery history', () => {
