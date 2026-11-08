@@ -1,0 +1,94 @@
+.opt-in ul,
+.test-steps {
+  padding-left: 1.25rem;
+}
+
+.test-steps {
+  list-style: none;
+  padding-left: 0;
+
+  li {
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-start;
+  }
+
+  .tick {
+    font-weight: 700;
+    width: 1rem;
+  }
+
+  li.passed .tick {
+    color: var(--accent);
+  }
+
+  p {
+    margin: 0.15rem 0 0.75rem;
+  }
+}
+
+.preview {
+  margin-top: 1rem;
+
+  tr.removed td {
+    text-decoration: line-through;
+    opacity: 0.7;
+  }
+
+  pre {
+    overflow-x: auto;
+    font-size: 0.8rem;
+  }
+}
+
+.preview table.plan-table,
+table.control-log {
+  th,
+  td {
+    text-align: left;
+  }
+}
+
+.control-log pre {
+  overflow-x: auto;
+  font-size: 0.75rem;
+  max-width: 40rem;
+}
+
+.result-mismatch,
+.result-failed {
+  border-left-color: var(--error);
+}
+
+ol.api-calls {
+  padding-left: 1.5rem;
+
+  li {
+    margin: 0.5rem 0;
+    padding-left: 0.5rem;
+    border-left: 3px solid var(--border);
+  }
+
+  li.writes {
+    border-left-color: var(--accent);
+  }
+
+  .badge {
+    display: inline-block;
+    margin-right: 0.4rem;
+    padding: 0 0.4rem;
+    border: 1px solid var(--border);
+    border-radius: 0.6rem;
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
+
+  li.writes .badge {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  code {
+    overflow-wrap: anywhere;
+  }
+}

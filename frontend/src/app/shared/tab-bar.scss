@@ -1,0 +1,159 @@
+// Phone first: a fixed bar along the bottom. From 48rem it moves into the header.
+
+.tab-bar {
+  position: fixed;
+  inset: auto 0 0;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  height: calc(var(--tab-bar-height) + env(safe-area-inset-bottom));
+  padding-bottom: env(safe-area-inset-bottom);
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+
+.tab {
+  all: unset;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  font-size: var(--text-xs);
+  color: var(--muted);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+
+  svg {
+    width: 1.5rem;
+    height: 1.5rem;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+  }
+
+  circle {
+    fill: currentColor;
+    stroke: none;
+  }
+
+  &.active {
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -4px;
+    border-radius: var(--radius-sm);
+  }
+}
+
+.more-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 18;
+  background: rgb(0 0 0 / 0.35);
+}
+
+.more-menu {
+  position: fixed;
+  inset: auto 0 calc(var(--tab-bar-height) + env(safe-area-inset-bottom));
+  z-index: 19;
+  background: var(--surface);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  padding: var(--space-2) 0;
+
+  ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  li + li {
+    border-top: 1px solid var(--border);
+  }
+
+  a,
+  .account {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-3);
+    min-height: 3.25rem;
+    padding: var(--space-2) var(--space-4);
+  }
+
+  a {
+    color: var(--text);
+    text-decoration: none;
+
+    &.active .label {
+      color: var(--accent);
+      font-weight: 600;
+    }
+  }
+
+  .hint {
+    font-size: var(--text-sm);
+    color: var(--muted);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .account button {
+    flex: none;
+  }
+}
+
+@media (min-width: 48rem) {
+  .tab-bar {
+    position: static;
+    display: flex;
+    gap: var(--space-1);
+    height: auto;
+    padding: 0;
+    background: none;
+    border: none;
+  }
+
+  .tab {
+    flex-direction: row;
+    gap: var(--space-2);
+    padding: 0.4rem 0.75rem;
+    border-radius: var(--radius-sm);
+    font-size: var(--text-base);
+    font-weight: 600;
+    color: var(--text);
+
+    svg {
+      width: 1.1rem;
+      height: 1.1rem;
+    }
+
+    &:hover {
+      background: var(--surface-sunk);
+    }
+
+    &.active {
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+  }
+
+  .more-backdrop {
+    background: transparent;
+  }
+
+  .more-menu {
+    position: absolute;
+    inset: calc(100% + var(--space-1)) var(--gutter) auto auto;
+    width: 22rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
+  }
+}

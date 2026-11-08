@@ -1,0 +1,183 @@
+.data-freshness {
+  min-height: 1.5rem;
+}
+
+.home-result {
+  margin-top: 0.75rem;
+}
+
+.good-solar {
+  display: block;
+}
+
+.verdict {
+  font-size: 1.05rem;
+  margin: 0 0 0.75rem;
+}
+
+/* A dry-run night's morning verdict, on the Automation page. */
+.night-verdict {
+  margin: 0.25rem 0 0;
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+
+  &.rating-good {
+    background: var(--rating-good);
+    color: var(--rating-text);
+  }
+
+  &.rating-fair {
+    background: var(--rating-fair);
+    color: var(--rating-text);
+  }
+}
+
+.calendar {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.25rem;
+}
+
+.calendar-weekday {
+  text-align: center;
+  font-size: 0.8rem;
+}
+
+.calendar-day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 3.25rem;
+  min-width: 0;
+  padding: 0.15rem;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  color: var(--rating-text);
+  font-size: 0.85rem;
+  line-height: 1.2;
+
+  &.good {
+    background: var(--rating-good);
+  }
+
+  &.fair {
+    background: var(--rating-fair);
+  }
+
+  &.poor {
+    background: var(--rating-poor);
+  }
+
+  &.empty {
+    background: var(--border);
+    opacity: 0.45;
+  }
+
+  &.in-progress {
+    background: transparent;
+    border: 2px dashed var(--muted);
+    color: var(--text);
+  }
+
+  &.selected {
+    border-color: var(--text);
+  }
+}
+
+.calendar-date {
+  font-size: 0.75rem;
+}
+
+.look-back h3 {
+  margin: 1.25rem 0 0.5rem;
+}
+
+// The savings view in its modal on the History page.
+dialog.modal {
+  width: min(52rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+  padding: 1.25rem 1.5rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+
+  &::backdrop {
+    background: rgb(0 0 0 / 0.45);
+  }
+
+  h3 {
+    margin: 1.25rem 0 0.25rem;
+    font-size: 1.05rem;
+  }
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+
+  h2 {
+    margin: 0;
+  }
+}
+
+.savings-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  margin: 1rem 0 0.5rem;
+
+  .week-pick {
+    width: auto;
+    margin: 0;
+  }
+}
+
+.switch {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+
+  button {
+    border-radius: 0;
+    padding: 0.4rem 0.9rem;
+    font-weight: 400;
+    background: transparent;
+    color: var(--muted);
+
+    & + button {
+      border-left: 1px solid var(--border);
+    }
+
+    &[aria-pressed='true'] {
+      background: var(--accent);
+      color: var(--accent-text);
+      font-weight: 600;
+    }
+  }
+}
+
+.better {
+  color: var(--battery);
+}
+
+.worse {
+  color: var(--error);
+}
+
+.savings-notes {
+  margin-top: 1rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+
+  summary {
+    cursor: pointer;
+    color: var(--text);
+  }
+}

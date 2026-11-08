@@ -1,10 +1,11 @@
 header {
+  position: relative;
+  z-index: 20;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
-  flex-wrap: wrap;
-  padding: 0.75rem 1rem;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--gutter);
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
@@ -15,59 +16,20 @@ header {
   text-decoration: none;
 }
 
-nav {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.25rem;
-}
-
-.nav-button {
-  display: inline-block;
-  padding: 0.4rem 0.75rem;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-weight: 600;
-  text-decoration: none;
-  cursor: pointer;
-  transition:
-    background-color 0.12s,
-    border-color 0.12s;
-
-  &:hover {
-    background: color-mix(in srgb, var(--accent) 16%, transparent);
-    border-color: var(--accent);
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 1px;
-  }
-
-  &.active {
-    background: var(--accent);
-    color: var(--accent-text);
-  }
-}
-
-.user {
-  margin: 0 0.5rem;
-  font-size: 0.9rem;
-}
-
 main {
-  max-width: 52rem;
+  max-width: var(--page-width);
   margin: 0 auto;
-  padding: 1.5rem 1rem 3rem;
+  padding: var(--space-4) var(--gutter) var(--space-6);
+
+  // Room for the bottom tab bar on a phone, so the last card isn't hidden behind it.
+  &.with-tab-bar {
+    padding-bottom: calc(var(--tab-bar-height) + env(safe-area-inset-bottom) + var(--space-5));
+  }
 }
 
-/* Separates the three main pages from the settings and data pages. */
-.nav-divider {
-  width: 1px;
-  height: 1.5rem;
-  margin: 0 0.4rem;
-  background: var(--border);
+@media (min-width: 48rem) {
+  main,
+  main.with-tab-bar {
+    padding: var(--space-5) var(--gutter) 3rem;
+  }
 }

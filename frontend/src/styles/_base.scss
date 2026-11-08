@@ -1,0 +1,88 @@
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font:
+    16px/1.5 system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+  // Long words and URLs wrap rather than widening the page on a phone.
+  overflow-wrap: break-word;
+}
+
+h1 {
+  font-size: var(--text-xl);
+  line-height: 1.2;
+  margin: 0 0 var(--space-2);
+}
+
+h2 {
+  font-size: var(--text-lg);
+  line-height: 1.3;
+  margin: 0 0 var(--space-2);
+}
+
+a {
+  color: var(--accent);
+}
+
+img,
+svg {
+  max-width: 100%;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  margin: 0 0 var(--space-3);
+}
+
+@media (min-width: 40rem) {
+  .card {
+    padding: var(--space-4) var(--space-5);
+    margin-bottom: var(--space-4);
+  }
+}
+
+.narrow {
+  max-width: 24rem;
+  margin: 2rem auto;
+}
+
+// For screen readers only.
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+a,
+button,
+summary,
+input,
+select {
+  &:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+}
