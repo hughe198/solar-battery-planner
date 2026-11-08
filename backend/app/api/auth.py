@@ -1,6 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
+from pydantic import BaseModel
 from sqlalchemy import select
+
+from app.config import settings
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -23,8 +26,22 @@ def _authenticate(db: Session, email: str, password: str) -> User:
     return user
 
 
+class AuthOptions(BaseModel):
+    registration_open: bool
+
+
+@router.get("/options", response_model=AuthOptions)
+def options() -> AuthOptions:
+    """What the sign-in pages offer: whether new accounts can be made there."""
+    return AuthOptions(registration_open=settings.registration_open)
+
+
 @router.post("/register", response_model=Token, status_code=status.HTTP_201_CREATED)
 def register(body: Credentials, db: Session = Depends(get_db)) -> Token:
+    if not settings.registration_open:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "New accounts aren't being taken at the moment"
+        )
     email = body.email.lower()
     if db.scalar(select(User).where(User.email == email)):
         raise HTTPException(status.HTTP_409_CONFLICT, "An account with that email already exists")

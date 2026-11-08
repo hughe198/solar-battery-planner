@@ -84,6 +84,15 @@ VARS: list[Var] = [
         kind="origins",
     ),
     Var(
+        "registration_open",
+        "Open sign-ups",
+        "Lets anyone who finds the site create an account. Leave off until you mean to open "
+        "it: make your own account on the server with `python -m app.accounts create "
+        "you@example.com` instead.",
+        default="false",
+        kind="bool",
+    ),
+    Var(
         "inverter_writes",
         "Allow writes to inverters",
         "The master switch for changing an inverter's schedule. While it's off, the server "

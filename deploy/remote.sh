@@ -300,6 +300,7 @@ do_setup() {
         python3 -c 'import json, sys; print("SBP_CORS_ORIGINS=" + json.dumps([o.strip().rstrip("/") for o in sys.argv[1].split(",") if o.strip()]))' "$ORIGINS"
       fi
       echo "SBP_AUTO_APPLY=false"
+      echo "SBP_REGISTRATION_OPEN=false"
     } >"$ENV_FILE"
     chown "$APP_USER:$APP_USER" "$ENV_FILE"
     chmod 600 "$ENV_FILE"
@@ -318,6 +319,8 @@ do_setup() {
     echo
     ok "settings written. Copy SBP_CREDENTIALS_SECRET into your password manager:"
     info "sudo grep CREDENTIALS $ENV_FILE"
+    info "Sign-ups are closed unless you opened them. Make your account once the service is up:"
+    info "cd $CURRENT/backend && sudo -u $APP_USER .venv/bin/python -m app.accounts create you@example.com"
   fi
   chown "$APP_USER:$APP_USER" "$ENV_FILE"
   chmod 600 "$ENV_FILE"
