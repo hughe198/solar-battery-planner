@@ -5,6 +5,9 @@ historical forecast API instead. Forecasts for the coming days come from the for
 No API key is needed; the free tier is for non-commercial use.
 """
 
+import logging
+import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -23,10 +26,82 @@ HOURLY_VARIABLES = (
 )
 RADIATION_VARIABLES = ("shortwave_radiation", "direct_radiation", "diffuse_radiation")
 RECENT_DAYS = 7
+# Open-Meteo has short outages (502/503/504) and rate limits (429). Retry those a couple of
+# times before giving up; other errors (bad request, bad JSON) won't fix themselves.
+RETRY_DELAYS_SECONDS = (1.0, 3.0)
+RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+# When the forecast API is down, plan on the last forecast fetched for the same place if it
+# is no older than this. Forecasts a few hours old are nearly as good as fresh ones.
+STALE_FORECAST_MAX_AGE = timedelta(hours=12)
+
+log = logging.getLogger(__name__)
 
 
 class WeatherError(Exception):
     pass
+
+
+class ForecastCache:
+    """The last forecast hours fetched for each place, kept in memory, so a short Open-Meteo
+    outage falls back to a forecast a few hours old instead of failing the plan."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._places: dict[
+            tuple[float, float], dict[datetime, tuple[datetime, "HourlyWeather"]]
+        ] = {}
+
+    @staticmethod
+    def _key(lat: float, lon: float) -> tuple[float, float]:
+        return (round(lat, 4), round(lon, 4))
+
+    def store(self, lat: float, lon: float, rows: "list[HourlyWeather]", fetched: datetime) -> None:
+        with self._lock:
+            place = self._places.setdefault(self._key(lat, lon), {})
+            for row in rows:
+                place[row.start] = (fetched, row)
+            # Drop hours well in the past so the cache doesn't grow forever.
+            cutoff = fetched - timedelta(days=3)
+            for start in [s for s in place if s < cutoff]:
+                del place[start]
+
+    def recall(
+        self, lat: float, lon: float, start: date, end: date, now: datetime
+    ) -> "list[HourlyWeather]":
+        with self._lock:
+            place = self._places.get(self._key(lat, lon), {})
+            return [
+                row
+                for when, row in sorted(place.values(), key=lambda v: v[1].start)
+                if start <= row.start.date() <= end and now - when <= STALE_FORECAST_MAX_AGE
+            ]
+
+    def clear(self) -> None:
+        with self._lock:
+            self._places.clear()
+
+
+forecast_cache = ForecastCache()
+
+
+def _describe(exc: Exception) -> str:
+    if isinstance(exc, httpx.HTTPStatusError):
+        code = exc.response.status_code
+        if code in RETRY_STATUSES:
+            return (
+                f"The weather service (Open-Meteo) is busy or down right now ({code} "
+                f"{exc.response.reason_phrase}). This is usually brief, so try again in a few "
+                "minutes"
+            )
+        return f"The weather service (Open-Meteo) refused the request ({code} {exc.response.reason_phrase})"
+    if isinstance(exc, httpx.TimeoutException):
+        return "The weather service (Open-Meteo) didn't answer in time. Try again in a few minutes"
+    if isinstance(exc, httpx.TransportError):
+        return (
+            "Couldn't reach the weather service (Open-Meteo). Check the server's internet "
+            "connection, or try again in a few minutes"
+        )
+    return f"The weather service (Open-Meteo) sent something unexpected: {exc}"
 
 
 @dataclass(frozen=True)
@@ -69,10 +144,18 @@ def parse_hourly(payload: dict[str, Any]) -> list[HourlyWeather]:
 
 class OpenMeteoClient:
     def __init__(
-        self, http: httpx.Client | None = None, today: Callable[[], date] | None = None
+        self,
+        http: httpx.Client | None = None,
+        today: Callable[[], date] | None = None,
+        sleep: Callable[[float], None] = time.sleep,
+        cache: ForecastCache | None = None,
+        now: Callable[[], datetime] | None = None,
     ) -> None:
         self.http = http or httpx.Client(timeout=60)
         self.today = today or (lambda: datetime.now(timezone.utc).date())
+        self.sleep = sleep
+        self.cache = forecast_cache if cache is None else cache
+        self.now = now or (lambda: datetime.now(timezone.utc))
 
     def _get(self, url: str, lat: float, lon: float, start: date, end: date) -> list[HourlyWeather]:
         params = {
@@ -84,12 +167,25 @@ class OpenMeteoClient:
             "hourly": ",".join(HOURLY_VARIABLES),
             "timezone": "GMT",
         }
-        try:
-            resp = self.http.get(url, params=params)
-            resp.raise_for_status()
-            return parse_hourly(resp.json())
-        except (httpx.HTTPError, ValueError) as exc:
-            raise WeatherError(f"Open-Meteo request failed: {exc}") from exc
+        for attempt in range(len(RETRY_DELAYS_SECONDS) + 1):
+            try:
+                resp = self.http.get(url, params=params)
+                resp.raise_for_status()
+                return parse_hourly(resp.json())
+            except (httpx.HTTPError, ValueError) as exc:
+                # Not timeouts: each already waited a full minute.
+                transient = (
+                    isinstance(exc, httpx.TransportError)
+                    and not isinstance(exc, httpx.TimeoutException)
+                ) or (
+                    isinstance(exc, httpx.HTTPStatusError)
+                    and exc.response.status_code in RETRY_STATUSES
+                )
+                if not transient or attempt == len(RETRY_DELAYS_SECONDS):
+                    raise WeatherError(_describe(exc)) from exc
+                log.warning("Open-Meteo request failed, retrying: %s", exc)
+                self.sleep(RETRY_DELAYS_SECONDS[attempt])
+        raise AssertionError("unreachable")
 
     def hourly(self, lat: float, lon: float, start: date, end: date) -> list[HourlyWeather]:
         """Hours whose UTC date is within [start, end] inclusive."""
@@ -112,10 +208,25 @@ class OpenMeteoClient:
         return rows
 
     def forecast(self, lat: float, lon: float, start: date, end: date) -> list[HourlyWeather]:
-        """Forecast hours whose UTC date is within [start, end] inclusive (up to ~2 weeks ahead)."""
-        return self._in_range(
-            self._get(settings.open_meteo_forecast_url, lat, lon, start, end), start, end
-        )
+        """Forecast hours whose UTC date is within [start, end] inclusive (up to ~2 weeks ahead).
+
+        If Open-Meteo is down, falls back to the last forecast fetched for this place when it
+        is recent enough; callers check that every hour they need is there."""
+        try:
+            rows = self._in_range(
+                self._get(settings.open_meteo_forecast_url, lat, lon, start, end),
+                start,
+                end,
+            )
+        except WeatherError:
+            cached = self.cache.recall(lat, lon, start, end, self.now())
+            hours_wanted = ((end - start).days + 1) * 24
+            if len(cached) < hours_wanted or any(r.shortwave_radiation_wm2 is None for r in cached):
+                raise
+            log.warning("Open-Meteo forecast unavailable; using the last forecast fetched")
+            return cached
+        self.cache.store(lat, lon, rows, self.now())
+        return rows
 
     @staticmethod
     def _in_range(rows: list[HourlyWeather], start: date, end: date) -> list[HourlyWeather]:
