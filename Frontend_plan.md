@@ -1,7 +1,6 @@
 # Plan: New layout and information priority
 
-Status: draft, written 8 November 2026. The decisions at the end need confirming with the user
-before any code is written.
+Status: confirmed by the user on 8 November 2026, including all six decisions at the end.
 
 The app is used mostly on a phone, at two times of day:
 
@@ -151,18 +150,14 @@ Each step is its own pull request and leaves the app working.
 Snapshots start saving in step 2, so the look back at yesterday has real forecasts to compare with
 by the time Home ships.
 
-## Decisions to confirm
+## Decisions (all confirmed 8 November 2026)
 
-1. **Evening order:** after 16:00, tonight's plan moves above yesterday's savings. *(Recommended.)*
-   Otherwise the order stays fixed.
-2. **Navigation:** bottom tab bar on phones with Home, Tonight, History and More. *(Recommended.)*
-3. **Explanation memory:** each card remembers its last state on that phone. *(Recommended.)*
-   Otherwise every card starts hidden on every visit.
-4. **Weather comparison:** solar is compared with the last 14 days' average. *(Recommended, because
-   it follows the seasons.)* The alternative is the best recent day, which shows how far from a
-   clear day it is.
+1. **Evening order:** after 16:00, tonight's plan moves above yesterday's savings. *(Confirmed.)*
+2. **Navigation:** bottom tab bar on phones with Home, Tonight, History and More. *(Confirmed.)*
+3. **Explanation memory:** each card remembers its last state on that phone. *(Confirmed.)*
+4. **Weather comparison:** solar is compared with the last 14 days' average. *(Confirmed, because it
+   follows the seasons.)*
 5. **Fresh readings on opening:** Home fetches from Fox ESS when the latest reading is over 30
-   minutes old. This is one or two calls of the 1,440 a day. *(Recommended.)* Otherwise only the
-   "Update now" button fetches.
+   minutes old. This is one or two calls of the 1,440 a day. *(Confirmed.)*
 6. **Mock-up first:** phone-width mock-ups of Home and Tonight to review before step 3.
-   *(Recommended.)*
+   *(Confirmed.)*
