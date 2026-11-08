@@ -185,6 +185,30 @@ class InProgress:
 
 
 @dataclass(frozen=True)
+class Verdict:
+    """A suggested charge judged against what really happened that day: the morning verdict on
+    a dry run. All three charges are simulated from the level the battery really had before the
+    window, on the day's metered load and solar, so like is compared with like."""
+
+    day: date
+    before_percent: float
+    suggested_percent: float
+    charged_percent: float
+    # The least charge within a penny of the cheapest with hindsight.
+    enough_percent: float
+    # What the suggestion, and the charge really made, cost against the cheapest (effective
+    # cost).
+    lost_pence: float
+    charged_lost_pence: float
+    # When the suggested charge would have run the battery down to its reserve, if it did.
+    reserve_at: datetime | None
+    # What the suggested charge would have bought at the day's peak rate, if it has one.
+    peak_import_kwh: float
+    verdict: str  # "about right", "too little" or "more than needed"
+    summary: str
+
+
+@dataclass(frozen=True)
 class ReplayDetail:
     """One replayed day in full, for looking back at it."""
 

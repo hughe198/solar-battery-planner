@@ -228,6 +228,47 @@ def test_replay_matches_metered_days_and_reviews_over_charging(client, headers):
     assert body["missed_saving_pence"] > 50
 
 
+def replayer():
+    from app.database import get_session_factory
+    from app.main import app
+    from app.models import System
+    from app.planner.replay import Replayer
+
+    db = app.dependency_overrides[get_session_factory]()()
+    return Replayer(db, db.query(System).one())
+
+
+def test_judges_a_suggested_charge_against_what_really_happened(client, headers):
+    # The morning verdict on a dry run (owner's request, 5 November 2026): what the planner
+    # suggested, against the charge made and the best with hindsight, on the real day.
+    upload(client, headers, metered_days(charge_to_percent=100))
+    day = FIRST_DAY + timedelta(days=DAYS - 1)
+    r = replayer()
+    replayed = r.detail(day, r.system.planning_mode).day
+
+    too_much = r.judge(day, 100.0)
+    assert too_much.charged_percent == pytest.approx(100, abs=0.1)
+    # The yardstick is the least charge within a penny of the cheapest.
+    assert too_much.enough_percent <= replayed.best_soc_percent + 0.5
+    assert too_much.verdict == "more than needed"
+    assert too_much.lost_pence == pytest.approx(replayed.missed_saving_pence, abs=0.5)
+    assert too_much.peak_import_kwh == 0
+    assert "the suggestion cost" in too_much.summary
+
+    for enough in (replayed.best_soc_percent, too_much.enough_percent):
+        right = r.judge(day, enough)
+        assert right.verdict == "about right" and right.lost_pence < 1
+        assert "Verdict: about right" in right.summary
+
+    none = r.judge(day, None)  # a night it suggested no charge
+    assert none.suggested_percent == pytest.approx(none.before_percent, abs=0.1)
+    assert none.summary.startswith("No charge was suggested")
+    below = r.judge(day, max(none.before_percent - 5, 0))
+    assert "so no charge, as the battery already had" in below.summary
+
+    assert r.judge(day + timedelta(days=1), 50.0) is None  # no readings yet
+
+
 def test_replay_of_one_day_has_its_half_hours_and_the_best_charge(client, headers):
     upload(client, headers, metered_days(charge_to_percent=100))
     day = FIRST_DAY + timedelta(days=4)
@@ -360,6 +401,34 @@ def test_history_summarises_the_last_week(client, headers):
     assert cheap and all(p["start"][11:16] >= "23:30" or p["start"][11:16] < "05:30" for p in cheap)
     # Overnight charging is bought at the cheap rate.
     assert last["import_cost_pence"] < last["import_kwh"] * 27.5
+
+
+def test_savings_compare_each_complete_day_with_the_grid_alone(client, headers):
+    assert client.get("/api/history/savings", headers=headers).json() == {"days": []}
+    upload(client, headers, metered_days(charge_to_percent=100))
+    days = client.get("/api/history/savings", headers=headers).json()["days"]
+    # The first day has only its last half hour, and the last lacks its 23:30.
+    assert [d["day"] for d in days] == [
+        (FIRST_DAY + timedelta(days=i)).isoformat() for i in range(DAYS - 1)
+    ]
+    day = days[-1]
+    assert day["house_kwh"] == pytest.approx(10.0)  # 8 half hours at 0.5, 40 at 0.15
+    # Solar and the cheap night charge make the metered day cheaper than the grid alone; here
+    # exports earn more than imports cost.
+    net = day["import_cost_pence"] - day["export_revenue_pence"]
+    assert day["grid_only_pence"] > 0 > net
+
+
+@pytest.mark.parametrize(
+    ("day", "half_hours"),
+    [(date(2026, 10, 25), 50), (date(2026, 3, 29), 46), (date(2026, 11, 5), 48)],
+)
+def test_clock_change_days_have_more_or_fewer_half_hours(day, half_hours):
+    from zoneinfo import ZoneInfo
+
+    from app.api.history import half_hours_in
+
+    assert half_hours_in(day, ZoneInfo("Europe/London")) == half_hours
 
 
 def test_plan_and_replay_on_a_single_rate_tariff(client, headers):

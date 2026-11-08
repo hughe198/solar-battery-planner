@@ -118,14 +118,19 @@ Writes stay off. This proves the app reads your inverter correctly. It's L1 in t
 - [ ] "Schedule now" matches the Fox app, including whether it's on.
 - [ ] Switched-off periods are listed as a NOTE if you have any.
 
-## Stage 3: A week of dry runs
+## Stage 3: Three nights of dry runs
 
 Writes stay off. Each evening, before the cheap window, run the dry run and compare it with what
-you'd do by hand. Run it from cron if you like; it sends nothing.
+you'd do by hand: "Run tonight's dry run" on the Automation page (section 2), or the command
+above for the full review pack. It sends nothing.
+
+Shortened from a week to three nights by the owner on 5 November 2026, after stages 4 and 5 had
+already been run live. Ideally one bright and one dull night, so the peak rule and the dull day
+are seen working. The owner applies by hand in the Fox app meanwhile.
 
 **Automated**
 
-- [ ] Seven nights of dry runs with no FAIL (exit code 0).
+- [ ] Three nights of dry runs with no FAIL, ticked off on the Automation page.
 
 **AI review**
 
@@ -204,3 +209,17 @@ pack, the AI's answer or a screenshot.
 | | 0 | Automated suite, CI | CI | | |
 | | 0 | Golden files reviewed | Claude | | |
 | | 0 | Three golden files, writes off on server | Hugh | | |
+| 2026-11-05 | 0 | Golden files S1, S5 and E2 reviewed | Claude | SAFE | Matched hand-derived requests. S1's switch-on uses V1's `scheduler/set/flag` alongside V3 |
+| 2026-11-05 | 2 | Write test step 1, read the schedule | Hugh | Pass | Matched the Fox app. Labels show inclusive ends plus a minute, e.g. `05:01` |
+| 2026-11-05 | 2 | Preview for the night of 6 November | Hugh, Claude | NOT SAFE | Defect D12: a one-minute ForceCharge 05:00–05:01 to 67% left from Hugh's own 02:45–05:00 period. Fixed on `claude/fix-d12-force-leftover`; run Preview again before any write |
+| 2026-11-05 | 4 | Write test step 2, schedule written back | Hugh, Claude | Mismatch | Four periods read back exactly, but Fox dropped its all-day SelfUse default and the switched-off ForceDischarge 16:00–19:00 (D2, accepted). Left 02:00–02:45 and 16:01–19:01 with no period: defect D13, fixed on the same branch. Writes switched off again; step 2 to be rerun with the fix |
+| 2026-11-05 | 4 | Write test step 2 rerun with the D13 fix | Hugh, Claude | Pass | Six periods, all 1,440 minutes covered, matching the Fox app. Fox changed `pvLimit` on three periods (20,000/24,000 W swapped), unchecked by read-back: D14, harmless with 10 kWp of panels |
+| 2026-11-05 | 4 | Write test step 3, test period added | Hugh, Claude | Pass | ForceCharge 18:40–18:49 at 500 W to 100%, inside the filled 16:01–19:01, seen in the Fox app. Fox gave the new period import 12,000, export 12,000, PV 24,000 W, reactive 0 |
+| 2026-11-05 | 4 | Write test step 4, test period removed | Hugh, Claude | Pass | Back to the six periods, 16:01–19:01 rejoined, every setting as sent, including `pvLimit` this time. Test level 4 |
+| 2026-11-05 | 4 | Writes switched off again | Hugh, Claude | Pass | `SBP_INVERTER_WRITES=false`, server restarted and confirmed |
+| 2026-11-05 | 5 | Write test step 5, live 500 W charge 16:05–16:15 | Hugh, Claude | Mismatch, then seen working | The read-back straight after the write showed the old schedule; a read two minutes later showed it exactly as sent, and the charge ran at 16:05 as seen in the Fox app. Defect D15: read-back doesn't allow for Fox's delay |
+| 2026-11-05 | 5 | Step 5 rerun, live charge 16:30–16:40 | Hugh, Claude | Pass | Read back as written; charged as expected |
+| 2026-11-05 | 5 | Owner removed the 16:05 test period in the Fox app | Hugh, Claude | Note | The Fox app re-added its all-day default and copied the test's fdSoc 100 and fdPwr 500 into the neighbouring SelfUse periods, and set every pvLimit to 24,000 W. Let the app's own steps remove its periods |
+| 2026-11-05 | 5 | Write test step 6, remove the live test | Hugh, Claude | Mismatch, then seen working | Same delay as step 5 (D15): a read straight after showed the test charge gone and the gaps filled |
+| 2026-11-05 | 5 | Restore | Hugh, Claude | Pass | The six periods from step 2, every minute covered, copied settings gone, confirmed by a separate read |
+| 2026-11-05 | 5 | Writes switched off again | Hugh, Claude | Pass | `SBP_INVERTER_WRITES=false`, server restarted and confirmed |

@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from app.forecasting.model import Calendar, LoadModel, SolarModel, typical_profile
-from app.forecasting.service import History, backtest, day_half_hours, fit
+from app.forecasting.service import History, backtest, darkest_recent_day, day_half_hours, fit
 from app.forecasting.solar import (
     DEFAULT_PERFORMANCE_RATIO,
     HalfHourWeather,
@@ -134,6 +134,35 @@ def test_backtest_reports_accuracy_and_beats_physics_alone():
     low, high = spread.solar_interval
     assert low < 1 < high
     assert spread.load_interval.shape == (6, 2)
+
+
+def half_hours_of(days: list[tuple[date, float, int]]):
+    """A calendar and solar readings: each day spread evenly from 08:00, up to a last slot."""
+    starts, solar = [], []
+    for day, total, last_slot in days:
+        for slot in range(last_slot + 1):
+            starts.append(datetime(day.year, day.month, day.day, tzinfo=timezone.utc) + timedelta(minutes=30 * slot))
+            solar.append(total / 16 if 16 <= slot < 32 else 0.0)
+    return Calendar.of(starts, "UTC"), np.array(solar)
+
+
+def test_darkest_recent_day_follows_the_season():
+    # Late summer was bright; the dull day for a November plan comes from the last two weeks,
+    # where the owner had 0.52 kWh on 5 November 2026.
+    days = [(date(2026, 9, 1) + timedelta(days=i), 20.0, 47) for i in range(30)]
+    days += [(date(2026, 10, 25) + timedelta(days=i), 3.0, 47) for i in range(11)]
+    days += [(date(2026, 11, 5), 0.52, 34)]  # imported to 17:00, after the sun had gone
+    calendar, solar = half_hours_of(days)
+    assert darkest_recent_day(calendar, solar) == pytest.approx(0.52)
+
+
+def test_darkest_recent_day_skips_a_day_still_in_daylight():
+    # A day whose readings stop while the sun is still up has its solar cut short.
+    days = [(date(2026, 6, 1) + timedelta(days=i), 25.0, 47) for i in range(5)]
+    days += [(date(2026, 6, 6), 25.0, 24)]  # 12:00, mid-morning's solar only
+    calendar, solar = half_hours_of(days)
+    assert darkest_recent_day(calendar, solar) == pytest.approx(25.0)
+    assert darkest_recent_day(*half_hours_of([])) is None
 
 
 def test_day_half_hours_handles_clock_changes():

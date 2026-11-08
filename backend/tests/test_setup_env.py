@@ -42,6 +42,7 @@ def test_interactive_answers(tmp_path):
         "x" * 40,  # own credentials secret
         "60",
         "http://localhost:4200, https://solar.example.com/",
+        "",  # sign-ups stay closed
         "",  # inverter writes stay off
         "yes",
     )
@@ -51,6 +52,7 @@ def test_interactive_answers(tmp_path):
     assert s.credentials_secret == "x" * 40
     assert s.access_token_minutes == 60
     assert s.cors_origins == ["http://localhost:4200", "https://solar.example.com"]
+    assert s.registration_open is False
     assert s.inverter_writes is False
     assert s.auto_apply is True
 

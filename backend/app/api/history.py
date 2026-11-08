@@ -47,6 +47,28 @@ class History(BaseModel):
     days: list[HistoryDay]
 
 
+class SavingsDay(BaseModel):
+    day: date
+    house_kwh: float
+    # The home's use priced at the import rate of each half hour, as if it all came from the
+    # grid, beside what was really imported and exported.
+    grid_only_pence: float
+    import_cost_pence: float
+    export_revenue_pence: float
+
+
+class Savings(BaseModel):
+    days: list[SavingsDay]
+
+
+def half_hours_in(day: date, zone: ZoneInfo) -> int:
+    """48, or 46 or 50 on the days the clocks change."""
+    # Two times in the same zone subtract by the wall clock, so both go to UTC first.
+    start = datetime.combine(day, time(), zone).astimezone(timezone.utc)
+    end = datetime.combine(day + timedelta(days=1), time(), zone).astimezone(timezone.utc)
+    return int((end - start).total_seconds()) // 1800
+
+
 def self_sufficiency(load: float, imported: float) -> float | None:
     if load <= 0:
         return None
@@ -133,3 +155,38 @@ def recent_history(
             )
         )
     return History(points=points, days=summaries)
+
+
+@router.get("/savings", response_model=Savings)
+def savings(user: User = Depends(current_user), db: Session = Depends(get_db)) -> Savings:
+    """Every complete local day imported: what it cost as metered, beside what the home's use
+    would have cost bought from the grid at the same rates. Days missing any half hour are left
+    out, so a gap in the data isn't counted as a saving."""
+    system = _system(user)
+    zone = ZoneInfo(system.timezone)
+    book = TariffTimeline.from_system(system)
+    totals: dict[date, list[float]] = {}
+    for r in db.scalars(
+        select(UsageRecord).where(UsageRecord.system_id == system.id).order_by(UsageRecord.start)
+    ):
+        start = r.start.replace(tzinfo=timezone.utc)
+        rate = book.rate_at(start, "import")
+        t = totals.setdefault(start.astimezone(zone).date(), [0, 0.0, 0.0, 0.0, 0.0])
+        t[0] += 1
+        t[1] += r.load_kwh
+        t[2] += r.load_kwh * rate
+        t[3] += r.grid_import_kwh * rate
+        t[4] += r.grid_export_kwh * book.rate_at(start, "export")
+    return Savings(
+        days=[
+            SavingsDay(
+                day=day,
+                house_kwh=round(house, 2),
+                grid_only_pence=round(grid, 1),
+                import_cost_pence=round(imported, 1),
+                export_revenue_pence=round(exported, 1),
+            )
+            for day, (count, house, grid, imported, exported) in sorted(totals.items())
+            if count == half_hours_in(day, zone)
+        ]
+    )

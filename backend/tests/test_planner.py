@@ -242,6 +242,89 @@ PEAK = schedule(
 )
 
 
+def flux_system(tz="UTC") -> System:
+    """The owner's Octopus Flux rates and battery, 5 November 2026."""
+    system = make_system(tz=tz)
+    system.battery.round_trip_efficiency_percent = 90
+    system.tariff.bands = [
+        band("import", "02:00", "05:00", 15.56),
+        band("import", "05:00", "16:00", 25.75),
+        band("import", "16:00", "19:00", 35.99),
+        band("import", "19:00", "02:00", 25.78),
+        band("export", "00:00", "00:00", 10.7),
+    ]
+    return system
+
+
+def grey(k):
+    return 0.4 if 20 <= k < 28 else 0.0  # 3.2 kWh, 10:00 to 14:00
+
+
+def test_charges_enough_to_last_through_the_peak_on_a_dull_day():
+    # The owner would rather buy too much at the cheap rate than pay the peak rate: running
+    # short at peak costs about 18.7p a kWh, charging a kWh too much about 1.7p.
+    def house(k):
+        return 0.3 if 32 <= k < 38 else 0.12  # 6.8 kWh, most in the 16:00-19:00 peak
+
+    forecast = make_forecast(house, grey, spread=0.5)
+    result = plan(flux_system(), forecast, start_soc_percent=10)
+    own = result.recommendations[0]
+    peak_end = datetime(2026, 6, 2, 19, 0, tzinfo=timezone.utc)
+    assert own.dull.reserve_at is not None and own.dull.reserve_at >= peak_end
+    # Without the rule, leaning under on cost alone ran out in the peak on the dull day.
+    assert own.target_soc_percent > 50
+    assert any("16:00–19:00" in r and "dull" in r for r in own.reasons)
+
+
+def test_peak_rule_stays_out_when_no_charge_reaches_the_peak():
+    # 43 kWh on the dull day: the battery is empty by mid-morning whatever the charge, so more
+    # charge saves nothing at the peak and the cost score alone decides.
+    forecast = make_forecast(lambda k: 0.6, no_sun, spread=0.5)
+    own = plan(flux_system(), forecast, start_soc_percent=10).recommendations[0]
+    assert not any("peak even on a dull day" in r for r in own.reasons)
+
+
+def test_peak_rule_raises_a_charge_that_runs_out_in_the_peak(monkeypatch):
+    # The cost score's lean towards less charge stops short of the peak; the rule tops it up.
+    from app.planner import optimiser
+
+    def house(k):
+        return 0.3 if 32 <= k < 38 else 0.12
+
+    forecast = make_forecast(house, grey, spread=0.5)
+    lean_far = optimiser.best_index
+    leaned_by_mode: list[int] = []  # the user's mode is planned first
+
+    def record(scores):
+        leaned_by_mode.append(lean_far(scores, 15.0))
+        return leaned_by_mode[-1]
+
+    monkeypatch.setattr(optimiser, "best_index", record)
+    result = plan(flux_system(), forecast, start_soc_percent=10)
+    own = result.recommendations[0]
+    leaned = result.candidates[leaned_by_mode[0]].target_soc_percent
+    assert leaned < own.target_soc_percent  # the rule raised it
+    assert own.dull.reserve_at >= datetime(2026, 6, 2, 19, 0, tzinfo=timezone.utc)
+    assert own.reasons[1].startswith(f"Charging to {own.target_soc_percent:.0f}% so the battery")
+
+
+def test_a_battery_that_drains_faster_is_charged_more():
+    # Seen on the owner's battery, 5-6 November 2026: its level fell about 1.35 kWh for each
+    # kWh the house took, so a charge planned to last to 19:00 ran out at 15:30.
+    from app.planner.charging import Drain
+
+    def house(k):
+        return 0.3 if 32 <= k < 38 else 0.12
+
+    forecast = make_forecast(house, grey, spread=0.5)
+    rated = plan(flux_system(), forecast, start_soc_percent=10).recommendations[0]
+    slow = Drain(0.74, 1500)
+    drained = plan(flux_system(), forecast, 10, battery_drain=slow).recommendations[0]
+    assert drained.target_soc_percent > rated.target_soc_percent + 10
+    assert drained.dull.reserve_at >= datetime(2026, 6, 2, 19, 0, tzinfo=timezone.utc)
+    assert any("1.35 kWh for each kWh" in r and "1500" in r for r in drained.reasons)
+
+
 def test_costs_follow_a_multi_rate_price_book():
     cycle = cycle_for(DAY, PEAK, "UTC")
     assert cycle.night_start == datetime(2026, 6, 1, 23, 0, tzinfo=timezone.utc)

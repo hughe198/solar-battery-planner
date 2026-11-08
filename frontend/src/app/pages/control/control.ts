@@ -10,6 +10,9 @@ import {
   ControlActionKind,
   ControlProposal,
   ControlStatus,
+  DryRun,
+  DryRunNight,
+  DryRunVerdict,
   InverterControl,
   SchedulePeriod,
 } from '../../core/models';
@@ -40,6 +43,7 @@ const KIND_LABELS: Record<ControlActionKind, string> = {
   clear: 'Remove periods',
   restore: 'Restore',
   test: 'Write test',
+  dry_run: 'Dry run',
 };
 
 @Component({
@@ -53,6 +57,20 @@ export class Control implements OnInit {
 
   readonly status = signal<InverterControl | null>(null);
   readonly proposal = signal<ControlProposal | null>(null);
+  readonly dryRun = signal<DryRun | null>(null);
+  /** Charge nights with a dry run that passed, out of those needed. */
+  readonly nightsPassed = computed(
+    () => (this.status()?.dry_run_nights ?? []).filter((n) => n.passed).length,
+  );
+  readonly checkLabels = { pass: 'Pass', warn: 'Note', fail: 'FAIL' } as const;
+  /** Oldest first, one slot per night needed (more once extra nights have been run). */
+  readonly nightSlots = computed<(DryRunNight | null)[]>(() => {
+    const s = this.status();
+    if (!s) return [];
+    const run = [...(s.dry_run_nights ?? [])].reverse();
+    const slots = Math.max(s.dry_run_nights_needed ?? 3, run.length);
+    return Array.from({ length: slots }, (_, i) => run[i] ?? null);
+  });
   readonly last = signal<ControlAction | null>(null);
   readonly busy = signal(false);
   readonly error = signal<string | null>(null);
@@ -130,6 +148,33 @@ export class Control implements OnInit {
     this.run(this.control.testStep(step), this.afterWrite);
   }
 
+  /** Trust ladder stage 3: one read, nothing written, logged for tonight's charge. */
+  runDryRun(): void {
+    this.run(this.control.dryRun(), (d) => {
+      this.dryRun.set(d);
+      this.refresh();
+    });
+  }
+
+  verdictLabel(verdict: DryRunVerdict['verdict']): string {
+    return verdict.charAt(0).toUpperCase() + verdict.slice(1);
+  }
+
+  /** Reuses the calendar's colours: about right is good, either way off is fair. */
+  verdictClass(verdict: DryRunVerdict['verdict']): string {
+    return verdict === 'about right' ? 'rating-good' : 'rating-fair';
+  }
+
+  /** "Fri 6 Nov" for a charge night. */
+  nightLabel(day: string): string {
+    return new Intl.DateTimeFormat('en-GB', {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+      timeZone: 'UTC',
+    }).format(new Date(`${day}T00:00:00Z`));
+  }
+
   loadPreview(): void {
     this.authorised.set(false);
     this.run(this.control.preview(), (p) => this.proposal.set(p));
@@ -151,8 +196,11 @@ export class Control implements OnInit {
     this.run(this.control.restore(), this.afterWrite);
   }
 
-  isAdded(period: SchedulePeriod, p: ControlProposal): boolean {
-    return p.added.some((a) => a.start === period.start && a.end === period.end);
+  /** "Added", "Fills a gap" (a copy of Fox's all-day period, which a write drops) or "Kept". */
+  changeOf(period: SchedulePeriod, p: ControlProposal): string {
+    const same = (a: SchedulePeriod) => a.start === period.start && a.end === period.end;
+    if (p.added.some(same)) return 'Added';
+    return (p.filled ?? []).some(same) ? 'Fills a gap' : 'Kept';
   }
 
   /** "HH:MM" in the system's time zone. */

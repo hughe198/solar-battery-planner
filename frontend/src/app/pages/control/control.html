@@ -54,8 +54,8 @@
     @if (!s.writes_allowed) {
       <p class="notice writes-off" role="status">
         Writes to inverters are switched off on this server, so nothing here can change your
-        inverter. Step 1 and the preview only read, so they still work. The server's owner turns
-        writes on (SBP_INVERTER_WRITES) only for the live stages of the trust ladder.
+        inverter. Step 1, the dry runs and the preview only read, so they still work. The server's
+        owner turns writes on (SBP_INVERTER_WRITES) only for the live stages of the trust ladder.
       </p>
     }
     <section class="card">
@@ -98,7 +98,77 @@
     </section>
 
     <section class="card">
-      <h2>2. Review and authorise tonight's schedule</h2>
+      <h2>2. Three nights of dry runs</h2>
+      <p>
+        Each evening before the cheap rate, run a dry run. It reads your schedule once, works out
+        tonight's plan and exactly what applying it would send, and checks it. Nothing is written,
+        so it works with writes switched off. Once the next day's readings are in, each night gets a
+        verdict: the suggested charge replayed against what really happened, beside the charge
+        actually made and the best with hindsight. The <a routerLink="/history">History</a> page
+        shows the day in full.
+      </p>
+      <ol class="test-steps">
+        @for (night of nightSlots(); track $index; let i = $index) {
+          <li [class.passed]="night?.passed">
+            <span class="tick" aria-hidden="true">{{ night?.passed ? '✓' : '○' }}</span>
+            <div>
+              <strong>
+                Night {{ i + 1 }}
+                @if (night) {
+                  : {{ nightLabel(night.day) }}
+                }
+              </strong>
+              <p class="muted">
+                @if (night) {
+                  {{ night.message }}
+                } @else {
+                  Not run yet.
+                }
+              </p>
+              @if (night) {
+                @if (night.verdict; as v) {
+                  <p [class]="'night-verdict ' + verdictClass(v.verdict)">
+                    <strong>{{ verdictLabel(v.verdict) }}.</strong> {{ v.summary }}
+                  </p>
+                } @else {
+                  <p class="muted night-verdict">
+                    Verdict: waiting for the next day's readings, until the following cheap rate.
+                  </p>
+                }
+              }
+            </div>
+          </li>
+        }
+      </ol>
+      <button type="button" class="secondary" [disabled]="busy()" (click)="runDryRun()">
+        Run tonight's dry run
+      </button>
+      @if (nightsPassed() >= s.dry_run_nights_needed) {
+        <p class="muted">Three nights done. Running more is still useful whenever you like.</p>
+      }
+      @if (dryRun(); as d) {
+        <div class="dry-run">
+          <p>
+            <strong>{{ d.action.message }}</strong>
+          </p>
+          <ul class="plain checks">
+            @for (c of d.checks; track c.name) {
+              <li [class]="'check ' + c.status">
+                <strong>{{ checkLabels[c.status] }}</strong> {{ c.name }}:
+                <span class="muted">{{ c.detail }}</span>
+              </li>
+            }
+          </ul>
+          <p class="muted">
+            {{ d.requests.length }} request{{ d.requests.length === 1 ? '' : 's' }} would be sent;
+            use Preview below to see the schedule before and after.
+          </p>
+        </div>
+      }
+    </section>
+
+    <section class="card">
+      <h2>3. Review and authorise tonight's schedule</h2>
       <p>
         For applying the suggested schedule yourself, one night at a time, without automatic apply.
         Preview reads your inverter's schedule and works out tonight's plan, then lists every call
@@ -156,7 +226,7 @@
                     <td>{{ r.work_mode }}</td>
                     <td>{{ r.charge_to_percent ?? '–' }}</td>
                     <td>{{ r.power_w ?? '–' }}</td>
-                    <td>{{ isAdded(r, p) ? 'Added' : 'Kept' }}</td>
+                    <td>{{ changeOf(r, p) }}</td>
                   </tr>
                 }
               </tbody>
@@ -218,7 +288,7 @@
     </section>
 
     <section class="card">
-      <h2>3. Undo</h2>
+      <h2>4. Undo</h2>
       @if (s.planner_periods.length) {
         <p>
           The planner's periods on your inverter:
@@ -259,7 +329,7 @@
     </section>
 
     <section class="card">
-      <h2>4. Automatic nightly apply</h2>
+      <h2>5. Automatic nightly apply</h2>
       @if (!s.auto_apply_available) {
         <p class="muted">
           This server doesn't run the nightly apply. It needs SBP_AUTO_APPLY=true, or

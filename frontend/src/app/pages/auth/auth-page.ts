@@ -1,4 +1,6 @@
 import { Component, inject, input, signal } from '@angular/core';
+import { toSignal } from '@angular/core/rxjs-interop';
+import { catchError, map, of } from 'rxjs';
 import { NonNullableFormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { AuthService } from '../../core/auth.service';
@@ -18,6 +20,16 @@ export class AuthPage {
 
   readonly busy = signal(false);
   readonly error = signal<string | null>(null);
+
+  /** Whether new accounts can be made here; null until the server says. If it can't be asked,
+   * the form stays, and the server refuses a sign-up if they're closed. */
+  readonly registrationOpen = toSignal(
+    this.auth.options().pipe(
+      map((o) => o.registration_open),
+      catchError(() => of(true)),
+    ),
+    { initialValue: null },
+  );
 
   readonly form = inject(NonNullableFormBuilder).group({
     email: ['', [Validators.required, Validators.email]],

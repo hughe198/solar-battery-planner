@@ -28,6 +28,7 @@ cd backend
 python -m venv .venv && . .venv/bin/activate
 pip install -r requirements-dev.txt
 python setup_env.py   # writes backend/.env, see Configuration
+python -m app.accounts create you@example.com   # sign-ups are closed by default
 uvicorn app.main:app --reload
 pytest
 ```
@@ -77,6 +78,7 @@ carried over commented out. `tests/test_setup_env.py` fails if a setting is adde
 | `SBP_JWT_SECRET` | dev-only value | **Must** be set to a long random string in production |
 | `SBP_JWT_ALGORITHM` | `HS256` | |
 | `SBP_ACCESS_TOKEN_MINUTES` | `10080` (7 days) | |
+| `SBP_REGISTRATION_OPEN` | `false` | Lets anyone create an account from the sign-up page. While it's off the page says new accounts aren't being taken, and accounts are made on the server instead (see [Accounts](#accounts)) |
 | `SBP_CORS_ORIGINS` | `["http://localhost:4200"]` | JSON list |
 | `SBP_CREDENTIALS_SECRET` | dev-only value | Encrypts stored Fox ESS API keys. **Must** be set in production and kept stable |
 | `SBP_FOX_ESS_BASE_URL` | `https://www.foxesscloud.com` | |
@@ -85,6 +87,22 @@ carried over commented out. `tests/test_setup_env.py` fails if a setting is adde
 
 SQLite is the default and is fine for development or a single small server. For a multi-user
 deployment use Postgres (`SBP_DATABASE_URL=postgresql+psycopg://…` and `pip install psycopg`).
+
+### Accounts
+
+Sign-ups are closed unless `SBP_REGISTRATION_OPEN=true`, so a server isn't open to strangers
+until its owner chooses. Make an account, or set a new password for one, on the server from the
+`backend` folder, as the user the service runs as so it uses the same settings and database:
+
+```bash
+python -m app.accounts create you@example.com
+python -m app.accounts password you@example.com
+```
+
+The password is typed at a hidden prompt, twice. On a server deployed with `deploy.ps1`:
+`cd /opt/solar-battery-planner/current/backend && sudo -u solar .venv/bin/python -m app.accounts create you@example.com`.
+To open sign-ups later, set `SBP_REGISTRATION_OPEN=true` in the settings file and restart the
+service.
 
 Tables are created on startup. Migrations (Alembic) will be added once the schema starts
 changing with real data in it.

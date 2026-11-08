@@ -16,6 +16,8 @@ const OFF: InverterControl = {
   consented_at: null,
   test_level: 0,
   test_steps: STEPS,
+  dry_run_nights: [],
+  dry_run_nights_needed: 3,
   can_apply: false,
   can_auto_apply: false,
   has_original: false,
@@ -64,6 +66,24 @@ const PROPOSAL: ControlProposal = {
       work_mode: 'ForceCharge',
       charge_to_percent: 64,
       power_w: 3600,
+      min_soc_percent: 10,
+    },
+    {
+      start: '05:30',
+      end: '00:00',
+      work_mode: 'SelfUse',
+      charge_to_percent: null,
+      power_w: null,
+      min_soc_percent: 10,
+    },
+  ],
+  filled: [
+    {
+      start: '05:30',
+      end: '00:00',
+      work_mode: 'SelfUse',
+      charge_to_percent: null,
+      power_w: null,
       min_soc_percent: 10,
     },
   ],
@@ -163,6 +183,73 @@ describe('Control', () => {
     expect(named('Preview').disabled).toBe(false);
   });
 
+  it('runs dry runs with writes off and ticks off each night', () => {
+    const night = {
+      day: '2026-11-06',
+      at: '2026-11-05T18:00:00Z',
+      passed: true,
+      target_soc_percent: 65,
+      message: 'Dry run for Fri 06 Nov: hold 02:00–03:30. 9 checks passed, 2 notes.',
+      verdict: null,
+    };
+    const judged = {
+      ...night,
+      day: '2026-11-05',
+      verdict: {
+        suggested_percent: 65,
+        charged_percent: 67,
+        enough_percent: 60,
+        lost_pence: 0.4,
+        charged_lost_pence: 0.2,
+        reserve_at: '2026-11-05T21:30:00Z',
+        peak_import_kwh: 0,
+        verdict: 'about right' as const,
+        summary: 'Suggested 65%; the battery was charged to 67%. Verdict: about right.',
+      },
+    };
+    const fixture = render({
+      ...OFF,
+      enabled: true,
+      test_level: 4,
+      writes_allowed: false,
+      dry_run_nights: [night, judged],
+    });
+    const el = fixture.nativeElement as HTMLElement;
+    const section = Array.from(el.querySelectorAll('section')).find((s) =>
+      s.textContent?.includes('Three nights of dry runs'),
+    )!;
+    const nights = Array.from(section.querySelectorAll('li'));
+    expect(nights.length).toBe(3);
+    // Oldest first: the judged night, then tonight's, waiting for its readings.
+    expect(nights[0].classList).toContain('passed');
+    expect(nights[0].textContent).toContain('Thu 5 Nov');
+    expect(nights[0].querySelector('.night-verdict.rating-good')?.textContent).toContain(
+      'About right',
+    );
+    expect(nights[1].textContent).toContain('Fri 6 Nov');
+    expect(nights[1].textContent).toContain('waiting for the next day');
+    expect(nights[2].textContent).toContain('Not run yet');
+    const run = Array.from(section.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('Run tonight'),
+    )!;
+    expect(run.disabled).toBe(false); // reads only, so writes off doesn't block it
+    run.click();
+    const req = http.expectOne('/api/control/dry-run');
+    expect(req.request.method).toBe('POST');
+    req.flush({
+      action: { ...night, id: 9, kind: 'dry_run', status: 'ok' },
+      checks: [{ name: 'Values within the inverter’s ranges', status: 'pass', detail: 'ok' }],
+      requests: [{ path: '/op/v3/device/scheduler/enable', body: {} }],
+      proposal: PROPOSAL,
+    });
+    http
+      .expectOne('/api/control')
+      .flush({ ...OFF, enabled: true, test_level: 4, dry_run_nights: [night] });
+    fixture.detectChanges();
+    expect(el.textContent).toContain('Values within the inverter’s ranges');
+    expect(el.textContent).toContain('1 request would be sent');
+  });
+
   it('lists every call and sends nothing until the user authorises them', () => {
     const fixture = render({ ...OFF, enabled: true, test_level: 4, can_apply: true });
     fixture.componentInstance.loadPreview();
@@ -203,6 +290,8 @@ describe('Control', () => {
     expect(el.textContent).toContain('02:10');
     expect(el.textContent).toContain('force discharge to 10%');
     expect(el.textContent).toContain('Added');
+    // A copy of Fox's all-day period, which a write drops (D13).
+    expect(el.textContent).toContain('Fills a gap');
     const apply = Array.from(el.querySelectorAll('button')).find((b) =>
       b.textContent?.includes('Authorise and send'),
     )!;

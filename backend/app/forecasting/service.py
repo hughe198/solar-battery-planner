@@ -9,7 +9,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import numpy as np
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.forecasting.base import (
@@ -48,6 +48,12 @@ MIN_TEST_DAYS = 7
 WEATHER_FORECAST_WIDENING = 1.5
 SOLAR_INTERVAL_FLOOR = (0.6, 1.3)
 SOLAR_DAY_FLOOR = (0.8, 1.15)
+# The dull day's solar is never brighter than the darkest of this many recent days, which
+# follow the season; the 10th percentile of a month's errors missed days like 5 November
+# 2026 (0.52 kWh against a dull day of 0.8).
+DARK_DAY_LOOKBACK_DAYS = 14
+NOON_SLOT = 24
+SUNSET_SOLAR_KWH = 0.01
 # Half hours predicted below this share of the panels' rated output (dawn, dusk, heavy cloud)
 # have wild actual/predicted ratios, so they are left out when sizing solar ranges.
 MIN_SOLAR_SHARE_FOR_RATIO = 0.1
@@ -241,6 +247,51 @@ class Spread:
         return cls(None, DEFAULT_SOLAR_INTERVAL, DEFAULT_LOAD_DAY, DEFAULT_SOLAR_DAY)
 
 
+def darkest_recent_day(
+    calendar: Calendar, solar_kwh: np.ndarray, days: int = DARK_DAY_LOOKBACK_DAYS
+) -> float | None:
+    """Solar on the darkest of the last `days` local days, so the dull day follows the season
+    (late summer's sun can't flatter a November plan). A day counts once its readings run past
+    noon and its last one has no solar, so a day imported while the sun is up isn't taken for
+    a dark one."""
+    if not len(solar_kwh):
+        return None
+    totals: dict[date, float] = {}
+    last: dict[date, int] = {}
+    for i, day in enumerate(calendar.local_day):
+        totals[day] = totals.get(day, 0.0) + float(solar_kwh[i])
+        last[day] = i
+    latest = max(totals)
+    done = [
+        totals[d]
+        for d in totals
+        if (latest - d).days < days
+        and calendar.slot[last[d]] >= NOON_SLOT
+        and solar_kwh[last[d]] < SUNSET_SOLAR_KWH
+    ]
+    return min(done) if done else None
+
+
+def _recent_solar(db: Session, system: System) -> tuple[Calendar, np.ndarray]:
+    latest = db.scalar(
+        select(func.max(UsageRecord.start)).where(UsageRecord.system_id == system.id)
+    )
+    if latest is None:
+        return Calendar.of([], system.timezone), np.array([])
+    records = db.scalars(
+        select(UsageRecord)
+        .where(
+            UsageRecord.system_id == system.id,
+            UsageRecord.start > latest - timedelta(days=DARK_DAY_LOOKBACK_DAYS + 1),
+        )
+        .order_by(UsageRecord.start)
+    ).all()
+    return (
+        Calendar.of([_utc(r.start) for r in records], system.timezone),
+        np.array([r.solar_kwh for r in records], dtype=float),
+    )
+
+
 def _widen(ratios: tuple[float, float], floor: tuple[float, float]) -> tuple[float, float]:
     low, high = ratios
     return (
@@ -428,6 +479,11 @@ class HistoryForecaster:
         if checked:
             solar_ratio = _widen(solar_ratio, SOLAR_INTERVAL_FLOOR)
             solar_day = _widen(solar_day, SOLAR_DAY_FLOOR)
+        # From the readings alone: the history above waits for weather, which can lag a day.
+        darkest = darkest_recent_day(*_recent_solar(self.db, system))
+        solar_expected = float(solar.sum())
+        if darkest is not None and solar_expected > 0:
+            solar_day = (min(solar_day[0], darkest / solar_expected), solar_day[1])
 
         intervals = [
             IntervalForecast(

@@ -380,6 +380,19 @@ export interface HistoryDay {
   max_soc_percent: number | null;
 }
 
+/** One complete day's costs, as metered and as if every kWh had come from the grid (pence). */
+export interface SavingsDay {
+  day: string;
+  house_kwh: number;
+  grid_only_pence: number;
+  import_cost_pence: number;
+  export_revenue_pence: number;
+}
+
+export interface Savings {
+  days: SavingsDay[];
+}
+
 export interface History {
   points: FlowPoint[];
   days: HistoryDay[];
@@ -395,7 +408,8 @@ export interface SchedulePeriod {
   min_soc_percent: number | null;
 }
 
-export type ControlActionKind = 'opt_in' | 'opt_out' | 'apply' | 'clear' | 'restore' | 'test';
+export type ControlActionKind =
+  'opt_in' | 'opt_out' | 'apply' | 'clear' | 'restore' | 'test' | 'dry_run';
 export type ControlStatus = 'ok' | 'mismatch' | 'failed' | 'skipped';
 
 export interface ControlAction {
@@ -417,6 +431,43 @@ export interface TestStep {
   passed: boolean;
 }
 
+/** A dry run's suggestion judged against what really happened, once the day is metered. */
+export interface DryRunVerdict {
+  suggested_percent: number;
+  charged_percent: number;
+  /** The least charge within a penny of the cheapest, with hindsight. */
+  enough_percent: number;
+  lost_pence: number;
+  charged_lost_pence: number;
+  reserve_at: string | null;
+  peak_import_kwh: number;
+  verdict: 'about right' | 'too little' | 'more than needed';
+  summary: string;
+}
+
+export interface DryRunNight {
+  day: string;
+  at: string;
+  passed: boolean;
+  target_soc_percent: number | null;
+  message: string;
+  verdict: DryRunVerdict | null;
+}
+
+export interface DryRunCheck {
+  name: string;
+  status: 'pass' | 'fail' | 'warn';
+  detail: string;
+}
+
+/** What applying tonight's plan would send, worked out from one read; nothing written. */
+export interface DryRun {
+  action: ControlAction;
+  checks: DryRunCheck[];
+  requests: { path: string; body: Record<string, unknown> }[];
+  proposal: ControlProposal;
+}
+
 export interface InverterControl {
   connected: boolean;
   enabled: boolean;
@@ -427,6 +478,9 @@ export interface InverterControl {
   consented_at: string | null;
   test_level: number;
   test_steps: TestStep[];
+  /** The latest dry run for each charge night, newest first. */
+  dry_run_nights: DryRunNight[];
+  dry_run_nights_needed: number;
   can_apply: boolean;
   can_auto_apply: boolean;
   has_original: boolean;
@@ -460,6 +514,8 @@ export interface ControlProposal {
   added: SchedulePeriod[];
   removed: SchedulePeriod[];
   after: SchedulePeriod[];
+  /** Copies of Fox's all-day default for the times no other period covers. */
+  filled: SchedulePeriod[];
   request: Record<string, unknown>;
   /** Every call Apply makes to Fox ESS, in order, for the user to authorise. */
   calls: ApiCall[];

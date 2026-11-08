@@ -8,11 +8,14 @@ minute (a period "to 05:30" is stored as ending 05:29), a work mode, and its set
 periods.
 
 Only the periods that overlap tonight's charge are changed, and only where they overlap; the
-user's other periods are written back with every setting as Fox returned it.
+user's other periods are written back with every setting as Fox returned it. The exception is
+the user's own forced charge or discharge: if tonight's charge overlaps one, all of it is
+replaced, so no stray piece of it forces the battery outside the plan.
 
 An all-day period (00:00 to 23:59) is Fox's default for the times no other period covers. The
 Open API can't set it, and community reports say sending it can stop the other periods working,
-so it is never written, only checked for after each write.
+so it is never written. Fox drops it on any write, so the times only it covered are written as
+periods with its settings instead (see `fill_gaps`).
 
 Stored copies of the schedule from before the move to V3 have V1's flat periods, with the
 settings on the period itself and an `enable` field. Both shapes are read, and V3's is written.
@@ -146,6 +149,10 @@ class Period:
         return group
 
     @property
+    def forced(self) -> bool:
+        return self.work_mode in (FORCE_CHARGE, FORCE_DISCHARGE)
+
+    @property
     def all_day(self) -> bool:
         return self.start == 0 and self.end == DAY_MINUTES - 1
 
@@ -274,9 +281,13 @@ def merge(
     existing: list[Period], added: list[Period]
 ) -> tuple[list[Period], list[Period], list[Period]]:
     """The schedule with `added` in place of whatever overlaps it. Returns the new schedule,
-    the periods overlapped, and what's left of those outside `added`, kept with their settings."""
+    the periods overlapped, and what's left of those outside `added`, kept with their settings.
+
+    A forced period the plan overlaps goes completely (defect D12): what's left of it would
+    force the battery at times the plan didn't choose, such as a one-minute grid charge to the
+    user's old level just after the planner's charge ends, repeating every night."""
     removed = [p for p in existing if any(p.overlaps(a) for a in added)]
-    trimmed = [piece for p in removed for piece in _outside(p, added)]
+    trimmed = [piece for p in removed if not p.forced for piece in _outside(p, added)]
     kept = [p for p in existing if not any(p is r for r in removed)]
     return sorted(kept + trimmed + added, key=lambda p: p.start), removed, trimmed
 
@@ -293,6 +304,50 @@ def _outside(period: Period, covering: list[Period]) -> list[Period]:
             pieces.append(replace(period, start=run, end=minute - 1))
             run = None
     return pieces
+
+
+def fill_gaps(
+    periods: list[Period], all_day: Period | None
+) -> tuple[list[Period], list[Period]]:
+    """The periods with every time none of them covers written as a copy of the all-day
+    default, and the copies (defect D13).
+
+    Fox drops its all-day default on any write, as seen on the owner's inverter on 5 November
+    2026, and the times only it covered would then have no period. Each copy keeps every
+    setting it had, so those times run as before. With no all-day period ever seen, the gaps
+    were already running in the inverter's main work mode, which a write doesn't change, so
+    they're left alone. An empty list is the schedule being cleared, and is left empty."""
+    if all_day is None or not periods:
+        return periods, []
+    whole_day = replace(all_day, start=0, end=DAY_MINUTES - 1)
+    pieces = sorted(periods + _outside(whole_day, periods), key=lambda p: p.start)
+    # Neighbouring copies become one period, so the pieces left by each night's charge being
+    # added and removed don't build up towards the inverter's limit.
+    merged: list[Period] = []
+    for p in pieces:
+        last = merged[-1] if merged else None
+        if last and last.end + 1 == p.start and is_copy(last, all_day) and is_copy(p, all_day):
+            merged[-1] = replace(last, end=p.end)
+        else:
+            merged.append(p)
+    filled = [p for p in merged if not any(p is q for q in periods)]
+    return merged, filled
+
+
+def _settings(p: Period) -> dict[str, Any]:
+    """What a period sends, apart from its times."""
+    times = ("startHour", "startMinute", "endHour", "endMinute")
+    return {k: v for k, v in p.to_fox().items() if k not in times}
+
+
+def is_copy(period: Period, all_day: Period | None) -> bool:
+    """Whether a period runs exactly as the all-day default does, so its times can be given
+    to another period and filled again afterwards with nothing changed."""
+    return all_day is not None and not period.forced and _settings(period) == _settings(all_day)
+
+
+def covers_day(periods: list[Period]) -> bool:
+    return {m for p in periods for m in range(p.start, p.end + 1)} >= set(range(DAY_MINUTES))
 
 
 def without(existing: list[Period], ours: list[Period]) -> tuple[list[Period], list[Period]]:

@@ -1,7 +1,7 @@
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { ControlAction, ControlProposal, InverterControl } from './models';
+import { ControlAction, ControlProposal, DryRun, InverterControl } from './models';
 
 /** Opt-in control of the user's Fox ESS inverter. Only `apply`, `clear`, `restore` and test
  * steps 2 to 6 write to the inverter. */
@@ -40,6 +40,11 @@ export class ControlService {
 
   restore(): Observable<ControlAction> {
     return this.http.post<ControlAction>('/api/control/restore', {});
+  }
+
+  /** Reads the schedule and works out what Apply would send tonight; writes nothing. */
+  dryRun(): Observable<DryRun> {
+    return this.http.post<DryRun>('/api/control/dry-run', {});
   }
 
   testStep(step: number): Observable<ControlAction> {

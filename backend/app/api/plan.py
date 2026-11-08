@@ -12,7 +12,7 @@ from app.forecasting.service import HistoryForecaster
 from app.models import PlanningMode, System, User
 from app.planner import optimiser
 from app.planner.base import ChargePlan, Replay, ReplayDetail
-from app.planner.charging import learn_rate_from_history
+from app.planner.charging import learn_drain_from_history, learn_rate_from_history
 from app.planner.lead_in import simulate_lead_in, usable_reading
 from app.planner.replay import DEFAULT_DAYS, MAX_DAYS, Replayer
 from app.planner.simulator import cycle_for
@@ -78,15 +78,18 @@ def make_plan(
     starts = lead_starts + cycle.night_starts() + cycle.day_starts()
     forecast = HistoryForecaster(db, weather_client).forecast(system, day, starts)
     rate = learn_rate_from_history(db, system)
+    drain = learn_drain_from_history(db, system)
     if start_soc_percent is not None:
-        plan = optimiser.plan(system, forecast, start_soc_percent, rate)
+        plan = optimiser.plan(system, forecast, start_soc_percent, rate, drain)
         return replace(plan, start_soc_source="given")
     if reading is None:
-        return optimiser.plan(system, forecast, system.battery.min_soc_percent, rate)
+        return optimiser.plan(system, forecast, system.battery.min_soc_percent, rate, drain)
     wanted = set(lead_starts)
-    lead_in = simulate_lead_in(system, reading, [i for i in forecast.intervals if i.start in wanted])
+    lead_in = simulate_lead_in(
+        system, reading, [i for i in forecast.intervals if i.start in wanted], drain
+    )
     opening = lead_in[-1].soc_percent if lead_in else reading.soc_percent
-    plan = optimiser.plan(system, forecast, opening, rate)
+    plan = optimiser.plan(system, forecast, opening, rate, drain)
     return replace(
         plan,
         start_soc_source="measured",

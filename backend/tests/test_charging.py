@@ -6,7 +6,9 @@ from app.models import Battery, UsageRecord, UsageSource
 from app.planner.charging import (
     ChargeRate,
     charge_hours,
+    Drain,
     discharge,
+    learn_drain,
     learn_rate,
     reachable_kwh,
     schedule,
@@ -52,9 +54,66 @@ def test_learns_bulk_and_taper_rates_from_grid_charging():
     assert rate.samples == 8  # the half hour reaching 99% may have stopped part way
 
 
+def test_solar_charging_isnt_taken_for_grid_charging():
+    # Seen on the owner's history, 5 November 2026: sunny half hours have a negative net house
+    # use (solar beyond load), so even no import at all passed the grid-charging test. About
+    # 550 slow solar-charging samples outweighed 55 real overnight ones, and the rate learned
+    # was 1.2 kW against about 4 kW really, capping the night's charge at 41%.
+    records = [record(0, 20, 0.2)]
+    for k, soc in enumerate([40, 60, 80, 85], start=1):  # four half hours at 4 kW from the grid
+        records.append(record(k, soc, 0.2 + 2.0 if soc != 85 else 0.2 + 0.5))
+    sunny = START + timedelta(hours=12)
+    for k in range(20):  # a sunny day: 1.5 kWh of solar, 0.2 kWh of load, no import
+        records.append(
+            UsageRecord(
+                start=sunny + timedelta(minutes=30 * k),
+                load_kwh=0.2,
+                solar_kwh=1.5,
+                grid_import_kwh=0.0,
+                grid_export_kwh=0.0,
+                battery_soc_percent=30 + 2 * k,
+                source=UsageSource.csv,
+            )
+        )
+    rate = learn_rate(BATTERY, records)
+    assert rate.samples == 4
+    assert rate.bulk_kw == pytest.approx(4.0)
+
+
 def test_falls_back_to_the_battery_settings():
     rate = learn_rate(BATTERY, [record(0, 50, 0.2), record(1, 50, 0.2)])
     assert rate == ChargeRate(5.0, 5.0, 0)
+
+
+def house_record(k, soc, load, solar=0.0, grid_import=0.0, grid_export=0.0):
+    return UsageRecord(
+        start=START + timedelta(minutes=30 * k),
+        load_kwh=load,
+        solar_kwh=solar,
+        grid_import_kwh=grid_import,
+        grid_export_kwh=grid_export,
+        battery_soc_percent=soc,
+        source=UsageSource.csv,
+    )
+
+
+def test_learns_how_fast_the_battery_drains_supplying_the_house():
+    # 0.6 kWh to the house for every 8 points (0.8 kWh) the level falls: 75%.
+    records = [house_record(k, 90 - 8 * (k % 10), 0.6 if k % 10 else 0.0) for k in range(60)]
+    # A half hour drawing on the grid, one at the reserve and one with solar to spare are
+    # no part of it.
+    records += [
+        house_record(60, 40, 0.6, grid_import=0.5),
+        house_record(61, 11, 0.6),
+        house_record(62, 15, 0.2, solar=1.0),
+    ]
+    drain = learn_drain(BATTERY, records)
+    assert drain.efficiency == pytest.approx(0.75)
+    assert drain.samples == 54  # each tenth record restarts at 90%, a rise, so isn't counted
+
+
+def test_drain_falls_back_to_the_battery_settings():
+    assert learn_drain(BATTERY, [house_record(k, 90 - k, 0.1) for k in range(10)]) == Drain(1.0, 0)
 
 
 def test_charge_hours_slow_down_near_full():

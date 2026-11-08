@@ -4,8 +4,20 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.config import settings
+from app.control import service
 from app.database import Base, get_db, get_session_factory
 from app.main import app
+
+
+@pytest.fixture(autouse=True)
+def isolated(monkeypatch):
+    """Tests don't wait on Fox (D15's re-reads), and don't take the write block from the
+    developer's .env: writes are off unless a test turns them on. Sign-ups are open, as most
+    tests start by making an account; tests of closed sign-ups close them."""
+    monkeypatch.setattr(service, "_wait", lambda seconds: None)
+    monkeypatch.setattr(settings, "inverter_writes", False)
+    monkeypatch.setattr(settings, "registration_open", True)
 
 
 @pytest.fixture

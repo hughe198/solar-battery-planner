@@ -367,6 +367,8 @@ class ControlActionKind(str, enum.Enum):
     clear = "clear"
     restore = "restore"
     test = "test"
+    # Read the schedule and worked out what Apply would send; nothing written.
+    dry_run = "dry_run"
 
 
 class ControlTrigger(str, enum.Enum):

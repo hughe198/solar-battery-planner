@@ -9,6 +9,10 @@ class Settings(BaseSettings):
     jwt_secret: str = "dev-only-secret-change-me-in-production"
     jwt_algorithm: str = "HS256"
     access_token_minutes: int = 60 * 24 * 7
+    # Lets anyone create an account from the sign-up page. Off by default, so a server put on
+    # the internet isn't open to strangers until its owner chooses; accounts can still be made
+    # on the server with `python -m app.accounts create`.
+    registration_open: bool = False
     cors_origins: list[str] = ["http://localhost:4200"]
     # Encrypts stored third-party API keys (e.g. Fox ESS). Override in any real deployment,
     # and keep it stable: changing it makes saved keys unreadable.

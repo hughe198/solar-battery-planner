@@ -21,6 +21,11 @@ export class AuthService {
   readonly user = signal<User | null>(null);
   readonly isLoggedIn = computed(() => this.token() !== null);
 
+  /** What the sign-in pages offer: whether new accounts can be made there. */
+  options(): Observable<{ registration_open: boolean }> {
+    return this.http.get<{ registration_open: boolean }>('/api/auth/options');
+  }
+
   register(email: string, password: string): Observable<User> {
     return this.authenticate('/api/auth/register', email, password);
   }

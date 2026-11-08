@@ -5,6 +5,7 @@ it, read it back and compare, and log what was sent and what came back. Before t
 the schedule is saved so it can be put back exactly.
 """
 
+import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from math import ceil
@@ -17,6 +18,8 @@ from app.control.schedule import (
     Period,
     Schedule,
     charge_periods,
+    covers_day,
+    fill_gaps,
     fingerprint,
     matches,
     merge,
@@ -46,6 +49,21 @@ from app.planner.base import ChargePlan
 # The lowest minimum charge the planner writes, whatever the inverter accepts. The owner chose
 # to keep it at 10% for safety (1 November 2026), as the true lower limit is uncertain.
 MIN_SOC_FLOOR = 10.0
+# Seconds to wait before each re-read when a read-back differs from what was written (D15).
+READ_BACK_WAITS = (10.0, 20.0, 30.0)
+
+
+def all_day_period(schedule: Schedule, control: InverterControl | None) -> Period | None:
+    """Fox's all-day default: as read now, or, once a write has dropped it, as saved before the
+    first write or in the write test's step 1."""
+    if schedule.default is not None:
+        return schedule.default
+    for saved in (control.original_schedule, control.test_baseline) if control else ():
+        if saved:
+            default = Schedule.from_fox(saved).default
+            if default is not None:
+                return default
+    return None
 
 
 class ControlError(Exception):
@@ -80,6 +98,8 @@ class Proposal:
     notes: list[str] = field(default_factory=list)
     # What's left of the user's periods that the new ones partly overlap.
     trimmed: list[Period] = field(default_factory=list)
+    # Copies of the all-day default, for the times no other period covers (D13).
+    filled: list[Period] = field(default_factory=list)
     max_soc: float | None = None
     # What's written, in words, e.g. "hold 00:30–03:40; force charge to 80% 03:40–05:30".
     summary: str = ""
@@ -197,6 +217,10 @@ def propose(
 
     after, overlapping, trimmed = merge(current, added)
     removed = replaced + overlapping
+    filled: list[Period] = []
+    all_day = all_day_period(schedule, control)
+    if added or removed:
+        after, filled = fill_gaps(after, all_day)
     if len(after) > schedule.max_groups:
         raise ControlError(
             f"The inverter's schedule holds at most {schedule.max_groups} periods and this "
@@ -221,14 +245,20 @@ def propose(
             + (
                 f"only the overlapping part is replaced; it's kept for {', '.join(rest)}."
                 if rest
-                else "it's replaced."
+                else (
+                    "all of it is replaced, so none of it forces the battery outside the "
+                    "planner's times."
+                    if p.forced
+                    else "it's replaced."
+                )
             )
         )
-    if schedule.default is not None and (added or removed):
+    if filled:
         notes.append(
-            f"Your all-day {schedule.default.work_mode} period is Fox's default for times no "
-            "other period covers. It isn't sent, as the API can't set it, and it's checked "
-            "for after the write."
+            f"Fox removes your all-day {all_day.work_mode} period when the schedule is "
+            "written, and the API can't set it. So the times no other period covers are "
+            f"written as {all_day.work_mode} periods with its settings, and run as before: "
+            f"{_labels(filled)}."
         )
     if schedule.switched_off and (added or removed):
         notes.append(
@@ -270,6 +300,7 @@ def propose(
         after=after,
         notes=notes,
         trimmed=trimmed,
+        filled=filled,
         max_soc=max_soc if added else None,
         summary="; ".join(stages),
     )
@@ -390,7 +421,26 @@ def _write(
             raise
 
 
+def _wait(seconds: float) -> None:
+    time.sleep(seconds)
+
+
 def _verify(client: FoxEssClient, sn: str, before: Schedule, periods: list[Period], enable: bool):
+    """Read the schedule back and compare. Fox's cloud can answer a read straight after a write
+    with the schedule from before it (defect D15, twice on 5 November 2026), so a difference is
+    only reported once it's still there after waiting about a minute."""
+    back, problems = _compare(client, sn, before, periods, enable)
+    for seconds in READ_BACK_WAITS:
+        if not problems:
+            break
+        _wait(seconds)
+        back, problems = _compare(client, sn, before, periods, enable)
+    if problems:
+        problems.append(f"Still so after waiting {sum(READ_BACK_WAITS):g} seconds for Fox.")
+    return back, problems
+
+
+def _compare(client: FoxEssClient, sn: str, before: Schedule, periods: list[Period], enable: bool):
     back = read_schedule(client, sn)
     problems = matches(periods, back.periods)
     expected_on = bool(enable and periods)
@@ -399,7 +449,9 @@ def _verify(client: FoxEssClient, sn: str, before: Schedule, periods: list[Perio
             f"The inverter reports its schedule is {'on' if back.enabled else 'off'}, "
             f"not {'on' if expected_on else 'off'}."
         )
-    if before.default is not None and back.default is None:
+    # Fox drops its all-day default on a write. That's only a problem if it leaves a time no
+    # period covers (D13).
+    if before.default is not None and back.default is None and not covers_day(back.periods):
         problems.append(
             f"Your all-day {before.default.work_mode} period, Fox's default, is no longer "
             "reported. Check it in the Fox app."
@@ -438,6 +490,14 @@ def _run_write(
     """Write, read back and log. Returns the log entry, and whether the periods did or may
     have reached the inverter, so the caller can keep track of them even after a failure (D4)."""
     sn = system.fox_ess.device_sn
+    # A proposal is already filled; the write test, Remove and Restore are filled here (D13).
+    all_day = all_day_period(before, getattr(system, "inverter_control", None))
+    periods, filled = fill_gaps(periods, all_day)
+    if filled:
+        done += (
+            f" The times no other period covers were written as {all_day.work_mode} periods "
+            f"with your all-day period's settings, as Fox drops it: {_labels(filled)}."
+        )
     sent = {"groups": [p.to_fox() for p in periods], "enable": int(bool(enable and periods))}
     try:
         _write(client, sn, periods, enable, before.enabled)
