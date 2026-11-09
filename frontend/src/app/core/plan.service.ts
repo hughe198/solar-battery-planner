@@ -1,7 +1,15 @@
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { ChargePlan, History, PlanningMode, Replay, ReplayDetail, Savings } from './models';
+import {
+  ChargePlan,
+  History,
+  LookBack,
+  PlanningMode,
+  Replay,
+  ReplayDetail,
+  Savings,
+} from './models';
 
 export const MODE_LABELS: Record<PlanningMode, string> = {
   maximise_own_usage: 'Maximise own usage',
@@ -38,6 +46,12 @@ export class PlanService {
   /** Every complete day's cost beside what the grid alone would have charged. */
   savings(): Observable<Savings> {
     return this.http.get<Savings>('/api/history/savings');
+  }
+
+  /** How a past day (yesterday by default) went against the forecast kept for it. */
+  lookBack(day?: string): Observable<LookBack> {
+    const params = day ? new HttpParams().set('day', day) : undefined;
+    return this.http.get<LookBack>('/api/history/look-back', { params });
   }
 }
 

@@ -9,6 +9,7 @@ from app.api.forecast import MAX_DAYS_AHEAD, _system
 from app.api.imports import get_weather_client
 from app.database import get_db
 from app.forecasting.service import HistoryForecaster
+from app.forecasting.snapshots import remember_forecast
 from app.models import PlanningMode, System, User
 from app.planner import optimiser
 from app.planner.base import ChargePlan, Replay, ReplayDetail
@@ -51,7 +52,9 @@ def charge_plan(
             f"Plans are available from today to {MAX_DAYS_AHEAD} days ahead",
         )
     try:
-        return make_plan(db, system, weather_client, day, start_soc_percent)
+        plan = make_plan(db, system, weather_client, day, start_soc_percent)
+        db.commit()
+        return plan
     except WeatherError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
     except ValueError as exc:
@@ -80,23 +83,35 @@ def make_plan(
     rate = learn_rate_from_history(db, system)
     drain = learn_drain_from_history(db, system)
     if start_soc_percent is not None:
-        plan = optimiser.plan(system, forecast, start_soc_percent, rate, drain)
-        return replace(plan, start_soc_source="given")
-    if reading is None:
-        return optimiser.plan(system, forecast, system.battery.min_soc_percent, rate, drain)
-    wanted = set(lead_starts)
-    lead_in = simulate_lead_in(
-        system, reading, [i for i in forecast.intervals if i.start in wanted], drain
+        plan = replace(
+            optimiser.plan(system, forecast, start_soc_percent, rate, drain),
+            start_soc_source="given",
+        )
+    elif reading is None:
+        plan = optimiser.plan(system, forecast, system.battery.min_soc_percent, rate, drain)
+    else:
+        wanted = set(lead_starts)
+        lead_in = simulate_lead_in(
+            system, reading, [i for i in forecast.intervals if i.start in wanted], drain
+        )
+        opening = lead_in[-1].soc_percent if lead_in else reading.soc_percent
+        plan = replace(
+            optimiser.plan(system, forecast, opening, rate, drain),
+            start_soc_source="measured",
+            reading_at=reading.at,
+            reading_soc_percent=reading.soc_percent,
+            lead_in=lead_in,
+        )
+    # Kept for looking back on the day; a level the user typed in is only a what-if.
+    remember_forecast(
+        db,
+        system,
+        day,
+        forecast,
+        None if start_soc_percent is not None else plan.recommendations[0].target_soc_percent,
+        cycle.night_end,
     )
-    opening = lead_in[-1].soc_percent if lead_in else reading.soc_percent
-    plan = optimiser.plan(system, forecast, opening, rate, drain)
-    return replace(
-        plan,
-        start_soc_source="measured",
-        reading_at=reading.at,
-        reading_soc_percent=reading.soc_percent,
-        lead_in=lead_in,
-    )
+    return plan
 
 
 @router.get("/replay", response_model=ReplayOut)

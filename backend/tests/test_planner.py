@@ -429,3 +429,44 @@ def test_wear_cost_is_counted():
     dear.battery.wear_pence_per_cycle = 300
     result = plan(dear, make_forecast(evening_peak, no_sun), start_soc_percent=10)
     assert result.recommendations[0].target_soc_percent < 15
+
+
+def summaries(result):
+    return [r.summary for r in result.recommendations]
+
+
+def test_each_plan_has_a_one_sentence_summary():
+    dull = plan(make_system(), make_forecast(evening_peak, no_sun), 10).recommendations[0]
+    assert dull.summary.startswith("Charging to 100% for about")
+    assert "the day looks dull" in dull.summary
+
+    sunny = plan(make_system(export_rate=4), make_forecast(evening_peak, bright), 10)
+    own = sunny.recommendations[0]
+    assert own.summary.startswith(f"Charging to {own.target_soc_percent:.0f}%")
+    assert "should fill the battery by" in own.summary
+
+    full = plan(make_system(), make_forecast(evening_peak, bright), 60).recommendations[0]
+    assert full.summary.startswith("No charge needed: the battery's 60%")
+
+    export = plan(
+        make_system(export_rate=15, mode=PlanningMode.maximise_export_revenue),
+        make_forecast(evening_peak, bright),
+        10,
+    ).recommendations[0]
+    assert "export pays more than charging costs" in export.summary
+
+    for result in (dull, own, full, export):
+        assert result.summary.count(". ") == 0 and result.summary.endswith(".")
+
+
+def test_summary_names_the_peak_and_the_free_window():
+    def house(k):
+        return 0.3 if 32 <= k < 38 else 0.12
+
+    peak = plan(flux_system(), make_forecast(house, grey, spread=0.5), 10).recommendations[0]
+    assert "lasts through the evening peak even if the day is dull" in peak.summary
+
+    free = plan(free_window_system(), make_forecast(evening_peak, bright), 60)
+    assert free.recommendations[0].summary.startswith(
+        "Exporting 5.0 kWh before the free window earns 75p; then "
+    )

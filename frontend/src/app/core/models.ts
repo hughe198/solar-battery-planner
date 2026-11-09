@@ -202,6 +202,48 @@ export interface Backtest {
   days: BacktestDay[];
 }
 
+/** What the weather does to a day's solar and usage: a headline, one sentence and the detail. */
+export interface WeatherStory {
+  /** E.g. "Cloudy, 4°C". */
+  headline: string;
+  /** E.g. "brighter 13:00–15:00", or empty. */
+  detail: string;
+  summary: string;
+  points: string[];
+  daylight_cloud_percent: number | null;
+  mean_temperature_c: number | null;
+  solar_kwh: number | null;
+  /** Average daily solar over the last 14 days. */
+  recent_solar_kwh: number | null;
+  recent_temperature_c: number | null;
+  /** Usage the model puts down to the cold. */
+  cold_kwh: number;
+}
+
+/** How a past day went against the forecast kept for it the night before. */
+export interface LookBack {
+  day: string;
+  complete: boolean;
+  /** What it was compared with: the kept forecast, the home's recent days, or nothing. */
+  basis: 'forecast' | 'recent' | 'none';
+  /** E.g. "Sunnier than forecast". */
+  headline: string;
+  /** E.g. "30% cloud, not 70%". */
+  detail: string;
+  weather_headline: string | null;
+  summary: string;
+  points: string[];
+  load_kwh: number;
+  solar_kwh: number;
+  net_cost_pence: number;
+  grid_only_pence: number;
+  saved_pence: number;
+  forecast_load_kwh: number | null;
+  forecast_solar_kwh: number | null;
+  charged_soc_percent: number | null;
+  best_soc_percent: number | null;
+}
+
 export interface DayForecast {
   day: string;
   intervals: IntervalForecast[];
@@ -215,6 +257,7 @@ export interface DayForecast {
   backtest: Backtest | null;
   /** How the user's day marks and car charges changed the forecast. */
   usage_notes?: string[];
+  weather?: WeatherStory | null;
 }
 
 /** One charge target played out over one version of the day. Money in pence. */
@@ -258,6 +301,8 @@ export interface Recommendation {
   reasons: string[];
   /** Costs besides money: battery wear and the risks the strategy takes on. */
   downsides: string[];
+  /** The plan in one sentence; `reasons` has the detail. */
+  summary?: string;
 }
 
 /** Average effective cost of one target under each mode (lower is better), in pence. */
@@ -312,6 +357,7 @@ export interface ChargePlan {
   history_days: number;
   /** How the user's day marks and car charges changed the usage forecast. */
   usage_notes?: string[];
+  weather?: WeatherStory | null;
 }
 
 export interface ReplayDay {

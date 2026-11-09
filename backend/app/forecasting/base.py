@@ -4,9 +4,12 @@ historical weather."""
 
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from app.models import System
+
+if TYPE_CHECKING:
+    from app.forecasting.weather_story import WeatherStory
 
 # How a forecast was made: from the user's history, from a generic prior (typical UK usage, or
 # panel physics at a standard efficiency), or a mix while history is still short.
@@ -82,6 +85,8 @@ class DayForecast:
     backtest: Backtest | None
     # Plain sentences on how the user's marks and big loads changed the forecast.
     usage_notes: list[str] = field(default_factory=list)
+    # What the weather does to the day's solar and usage, in a sentence and a few points.
+    weather: "WeatherStory | None" = None
 
 
 class Forecaster(Protocol):

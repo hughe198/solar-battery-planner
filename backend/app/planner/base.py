@@ -6,6 +6,7 @@ from datetime import date, datetime
 from typing import Literal
 
 from app.forecasting.base import Method, Range
+from app.forecasting.weather_story import WeatherStory
 from app.models import PlanningMode
 
 StartSocSource = Literal["measured", "given", "assumed"]
@@ -59,6 +60,8 @@ class Recommendation:
     reasons: list[str]
     # What the strategy costs besides money: battery wear and the risks it takes on.
     downsides: list[str]
+    # The plan in one plain sentence, for the collapsed explanation; `reasons` has the detail.
+    summary: str = ""
 
 
 @dataclass(frozen=True)
@@ -115,6 +118,8 @@ class ChargePlan:
     lead_in: list[TimelinePoint] = field(default_factory=list)
     # How the user's day marks and car charges shaped the usage forecast.
     usage_notes: list[str] = field(default_factory=list)
+    # What the weather does to the day's solar and usage.
+    weather: WeatherStory | None = None
 
 
 @dataclass(frozen=True)
