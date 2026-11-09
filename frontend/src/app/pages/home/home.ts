@@ -1,28 +1,23 @@
-import { DecimalPipe } from '@angular/common';
 import { Component, DestroyRef, OnInit, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
-import { RouterLink } from '@angular/router';
 import { switchMap, takeWhile, timer } from 'rxjs';
-import {
-  chargeLabel,
-  dayLabel,
-  describeInProgress,
-  localDate,
-  localTime,
-  weekday,
-} from '../../core/charge-summary';
+import { localDate, localTime, weekday } from '../../core/charge-summary';
+import { ControlService } from '../../core/control.service';
 import { errorMessage } from '../../core/errors';
 import { ImportService } from '../../core/import.service';
+import { ForecastService } from '../../core/forecast.service';
 import {
   ChargePlan,
-  History as RecentHistory,
+  ControlAction,
+  DayForecast,
   ImportStatus,
-  Recommendation,
+  LookBack,
+  History as RecentHistory,
   Replay,
 } from '../../core/models';
-import { PlanService, formatPence } from '../../core/plan.service';
+import { PlanService } from '../../core/plan.service';
 import { SystemService } from '../../core/system.service';
-import { FlowChart } from '../../shared/flow-chart';
+import { BatteryCard, TodayCard, TonightCard, YesterdayCard } from './home-cards';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const SLOT_MS = 30 * 60 * 1000;
@@ -31,59 +26,53 @@ const STALE_MS = 30 * 60 * 1000;
 const POLL_MS = 3000;
 const ACTIVE = new Set(['queued', 'running']);
 
+/** After this local hour, tonight's plan matters more than yesterday, so it moves up. */
+const EVENING_HOUR = 16;
+
 /**
- * What the user wants on signing in: what happened yesterday and with last night's charge, then
- * what's suggested for tonight.
+ * What the user wants on opening the app, on a phone: the battery now and last night's charge,
+ * then today's forecast, then yesterday's savings and tonight's plan (swapped in the evening).
  */
 @Component({
   selector: 'app-home',
-  imports: [DecimalPipe, RouterLink, FlowChart],
+  imports: [BatteryCard, TodayCard, YesterdayCard, TonightCard],
   templateUrl: './home.html',
+  styleUrl: './home.scss',
 })
 export class Home implements OnInit {
   private readonly plans = inject(PlanService);
   private readonly imports = inject(ImportService);
+  private readonly forecasts = inject(ForecastService);
+  private readonly control = inject(ControlService);
   private readonly destroyRef = inject(DestroyRef);
   readonly system = toSignal(inject(SystemService).get());
-  readonly pence = formatPence;
-  readonly dayLabel = dayLabel;
   clock: () => number = () => Date.now();
 
   readonly recent = signal<RecentHistory | null>(null);
   readonly replay = signal<Replay | null>(null);
   readonly plan = signal<ChargePlan | null>(null);
   readonly planError = signal<string | null>(null);
+  readonly todayForecast = signal<DayForecast | null>(null);
+  readonly forecastError = signal<string | null>(null);
+  readonly lookBack = signal<LookBack | null>(null);
+  readonly lookBackMissing = signal(false);
+  readonly controlActions = signal<ControlAction[] | null>(null);
   readonly status = signal<ImportStatus | null>(null);
   readonly updating = signal(false);
   readonly updateError = signal<string | null>(null);
 
-  private readonly timeZone = computed(() => this.system()?.timezone);
-  private readonly today = computed(() => localDate(this.clock(), this.timeZone()));
+  readonly timeZone = computed(() => this.system()?.timezone);
+  readonly today = computed(() => localDate(this.clock(), this.timeZone()));
   readonly yesterdayDate = computed(() => localDate(this.clock() - DAY_MS, this.timeZone()));
 
-  readonly yesterday = computed(
-    () => this.recent()?.days.find((d) => d.day === this.yesterdayDate()) ?? null,
-  );
-
-  readonly net = computed(() => {
-    const y = this.yesterday();
-    return y ? y.import_cost_pence - y.export_revenue_pence : 0;
-  });
-
-  /** Yesterday's charge, once its whole cycle is in. */
-  readonly yesterdaysCharge = computed(() => {
-    const day = this.replay()?.review?.day;
-    return day?.day === this.yesterdayDate() ? day : null;
-  });
-
-  readonly chargeLabel = computed(() => {
-    const day = this.yesterdaysCharge();
-    return day ? chargeLabel(day, this.timeZone()) : '';
-  });
-
-  readonly latestCharge = computed(() => {
-    const current = this.replay()?.in_progress;
-    return current ? describeInProgress(current, this.timeZone(), this.today()) : null;
+  /** From 16:00 local time. */
+  readonly evening = computed(() => {
+    const hour = new Intl.DateTimeFormat('en-GB', {
+      hour: 'numeric',
+      hourCycle: 'h23',
+      timeZone: this.timeZone(),
+    }).format(new Date(this.clock()));
+    return Number(hour) >= EVENING_HOUR;
   });
 
   /** The readings' end, as "Sunday 19:00". */
@@ -98,49 +87,6 @@ export class Home implements OnInit {
     const points = this.recent()?.points ?? [];
     const last = points[points.length - 1];
     return last ? new Date(last.start).getTime() + SLOT_MS : null;
-  });
-
-  readonly recommendation = computed<Recommendation | null>(
-    () => this.plan()?.recommendations[0] ?? null,
-  );
-
-  /** "Force charge to 62%, 02:00–03:10 on Monday" or "No charge needed…". */
-  readonly suggestion = computed(() => {
-    const plan = this.plan();
-    const r = this.recommendation();
-    if (!plan || !r) return null;
-    const zone = this.timeZone();
-    const on = `on ${weekday(plan.charge_start, zone)}`;
-    const span = (start: string, stop: string | null) =>
-      `${localTime(start, zone)}–${stop ? localTime(stop, zone) : ''}`;
-    const headline = r.force_charge_start
-      ? `Charge to ${Math.round(r.target_soc_percent)}%`
-      : 'No charge needed';
-    const steps: string[] = [];
-    if (r.hold_start) {
-      steps.push(`Hold the battery ${span(r.hold_start, r.hold_stop)} ${on}, house on the grid.`);
-    }
-    if (r.force_charge_start) {
-      steps.push(
-        `Force charge ${span(r.force_charge_start, r.force_charge_stop)} ${on}: ` +
-          `${r.charge_kwh.toFixed(1)} kWh, costing ${formatPence(r.charge_cost_pence)}.`,
-      );
-    }
-    const before = Math.round(plan.start_soc_percent);
-    const opening = localTime(plan.charge_start, zone);
-    const going =
-      plan.start_soc_source === 'measured'
-        ? `Predicted ${before}% going in at ${opening}, from your latest reading.`
-        : plan.start_soc_source === 'assumed'
-          ? `Assumes ${before}% going in at ${opening}, as there's no recent reading.`
-          : '';
-    return {
-      headline,
-      steps,
-      going,
-      left: `Expected to leave ${Math.round(r.expected.end_soc_percent)}% when the next cheap period starts.`,
-      why: r.reasons[0] ?? '',
-    };
   });
 
   ngOnInit(): void {
@@ -206,6 +152,25 @@ export class Home implements OnInit {
   private load(): void {
     this.plans.history(2).subscribe({ next: (h) => this.recent.set(h), error: () => {} });
     this.plans.replay(2).subscribe({ next: (r) => this.replay.set(r), error: () => {} });
+    this.plans.lookBack().subscribe({
+      next: (y) => {
+        this.lookBack.set(y);
+        this.lookBackMissing.set(false);
+      },
+      error: () => this.lookBackMissing.set(true),
+    });
+    this.forecasts.day(this.today()).subscribe({
+      next: (f) => {
+        this.todayForecast.set(f);
+        this.forecastError.set(null);
+      },
+      error: (err) => this.forecastError.set(errorMessage(err)),
+    });
+    this.control.status().subscribe({
+      // Only once automation is on does "sent" mean anything.
+      next: (c) => this.controlActions.set(c.enabled ? c.actions : null),
+      error: () => this.controlActions.set(null),
+    });
     this.plans.plan().subscribe({
       next: (plan) => {
         this.plan.set(plan);

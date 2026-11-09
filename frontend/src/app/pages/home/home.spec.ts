@@ -3,11 +3,23 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { vi } from 'vitest';
-import { ChargePlan, History, ImportStatus, Replay, SystemConfig } from '../../core/models';
+import {
+  ChargePlan,
+  DayForecast,
+  History,
+  ImportStatus,
+  LookBack,
+  Replay,
+  SystemConfig,
+} from '../../core/models';
 import { Home } from './home';
 
 const NOW = Date.UTC(2026, 5, 2, 18, 40); // Tuesday 2 June, 19:40 in London.
-const SYSTEM = { timezone: 'Europe/London', name: 'Home' } as SystemConfig;
+const SYSTEM = {
+  timezone: 'Europe/London',
+  name: 'Home',
+  battery: { capacity_kwh: 10 },
+} as SystemConfig;
 
 const RECENT: History = {
   days: [
@@ -81,9 +93,40 @@ const PLAN = {
       hold_stop: '2026-06-03T04:00:00Z',
       expected: { end_soc_percent: 39 },
       reasons: ["No overnight charge: the battery's 59% is enough."],
+      summary:
+        "No charge needed: the battery's 59% should last until solar and the next cheap window.",
     },
   ],
 } as unknown as ChargePlan;
+
+const TODAY = {
+  day: '2026-06-02',
+  load: { expected: 7.6, low: 6.4, high: 9.1 },
+  solar: { expected: 4.2, low: 2.8, high: 6.0 },
+  weather: {
+    headline: 'Cloudy, 4°C',
+    detail: 'brighter 13:00–15:00',
+    summary: 'Cloudy skies put solar about 40% below your recent average.',
+    points: ['Solar: cloudy skies (85% cloud in daylight), so 4.2 kWh.'],
+  },
+} as unknown as DayForecast;
+
+const LOOK_BACK = {
+  day: '2026-06-01',
+  headline: 'Sunnier than forecast',
+  detail: '30% cloud, not 70%',
+  weather_headline: 'Sunny spells, 11°C',
+  summary: 'It was sunnier than forecast, so solar made 11.2 kWh against 7.5.',
+  points: ['2.1 kWh went to export.'],
+  net_cost_pence: 64,
+  grid_only_pence: 184,
+  saved_pence: 120,
+} as unknown as LookBack;
+
+const CONTROL = {
+  enabled: true,
+  actions: [{ kind: 'apply', day: '2026-06-03', status: 'ok' }],
+};
 
 const fresh = (last = '2026-06-02T18:30:00'): ImportStatus =>
   ({
@@ -104,10 +147,24 @@ describe('Home', () => {
   });
 
   function flushData(
-    data: { recent?: History; replay?: Replay; plan?: ChargePlan | null } = {},
+    data: {
+      recent?: History;
+      replay?: Replay;
+      plan?: ChargePlan | null;
+      lookBack?: LookBack | null;
+      control?: object;
+    } = {},
   ): void {
     http.expectOne((r) => r.url === '/api/history').flush(data.recent ?? RECENT);
     http.expectOne((r) => r.url === '/api/plan/replay').flush(data.replay ?? REPLAY);
+    const look = http.expectOne((r) => r.url === '/api/history/look-back');
+    if (data.lookBack === null) {
+      look.flush({ detail: 'No readings' }, { status: 404, statusText: 'Not Found' });
+    } else {
+      look.flush(data.lookBack ?? LOOK_BACK);
+    }
+    http.expectOne((r) => r.url === '/api/forecast').flush(TODAY);
+    http.expectOne('/api/control').flush(data.control ?? CONTROL);
     const plan = http.expectOne((r) => r.url === '/api/plan');
     if (data.plan === null) {
       plan.flush({ detail: 'No weather forecast yet' }, { status: 502, statusText: 'Bad Gateway' });
@@ -116,65 +173,103 @@ describe('Home', () => {
     }
   }
 
-  function start() {
+  function start(now = NOW) {
     const fixture = TestBed.createComponent(Home);
-    fixture.componentInstance.clock = () => NOW;
+    fixture.componentInstance.clock = () => now;
     fixture.detectChanges();
     http.expectOne('/api/system').flush(SYSTEM);
     return { fixture, el: fixture.nativeElement as HTMLElement };
   }
 
-  function open(data: Parameters<typeof flushData>[0] = {}, status = fresh()) {
-    const page = start();
+  function open(data: Parameters<typeof flushData>[0] = {}, status = fresh(), now = NOW) {
+    const page = start(now);
     http.expectOne('/api/import/status').flush(status);
     flushData(data);
     page.fixture.detectChanges();
     return page;
   }
 
-  it('answers what happened yesterday first', () => {
-    const { el } = open();
-    const first = el.querySelector('section')!;
-    expect(first.classList).toContain('home-yesterday');
-    expect(first.querySelector('h2')?.textContent).toBe('Yesterday, Monday 1 June');
-    expect(first.textContent).toContain('7.2 kWh');
-    expect(first.textContent).toContain('5.9 kWh');
-    expect(first.textContent).toContain('Net cost');
-    expect(first.textContent).toContain('65p');
-    expect(first.textContent).toContain('21–89%');
-    expect(first.textContent).toContain('Charge at 02:00 on Monday 1 June:');
-    expect(first.textContent).toContain('so it cost 12p more than it needed to.');
+  const cards = (el: HTMLElement) =>
+    [...el.querySelectorAll('.home-cards > *')].map((c) => c.tagName.toLowerCase());
+
+  it('leads with the battery and today, then yesterday and tonight', () => {
+    const { el } = open({}, fresh(), Date.UTC(2026, 5, 2, 7, 10)); // 08:10 in London
+    expect(cards(el)).toEqual([
+      'app-battery-card',
+      'app-today-card',
+      'app-yesterday-card',
+      'app-tonight-card',
+    ]);
+    expect(el.querySelector('.home-cards')?.classList).not.toContain('evening');
+    expect(el.querySelector('.home-battery .eyebrow')?.textContent).toContain('This morning');
+    expect(el.querySelector('.home-today .eyebrow')?.textContent).toContain('Today, Tuesday');
   });
 
-  it("then what last night's charge did", () => {
-    const { el } = open();
-    const card = el.querySelector('.home-charge')!;
-    expect(card.querySelector('h2')?.textContent).toBe("Last night's charge");
-    expect(card.textContent).toContain(
-      'went in at 66% and held at 65%, with the house on the grid.',
-    );
-    expect(card.textContent).toContain('Its score comes after 02:00 on Wednesday');
-    expect(card.querySelector('path.soc')).not.toBeNull();
+  it('moves tonight above yesterday in the evening', () => {
+    const { el } = open(); // 19:40
+    expect(el.querySelector('.home-cards')?.classList).toContain('evening');
+    expect(el.querySelector('.home-today .eyebrow')?.textContent).toContain('Today so far');
   });
 
-  it('then what is suggested for tonight, last', () => {
-    const { el } = open();
-    const sections = [...el.querySelectorAll('section')].map((s) => s.className);
-    expect(sections[2]).toContain('home-tonight');
-    const card = el.querySelector('.home-tonight')!;
-    expect(card.querySelector('.target')?.textContent).toBe('No charge needed');
-    expect(card.textContent).toContain(
-      'Hold the battery 02:00–05:00 on Wednesday, house on the grid.',
+  it("shows the battery now and last night's charge", () => {
+    const card = open().el.querySelector('.home-battery')!;
+    expect(card.querySelector('.figure')?.textContent).toContain('70%');
+    expect(card.querySelector('.figure')?.textContent).toContain('7.0 kWh');
+    expect(card.querySelector('[role="meter"]')?.getAttribute('aria-valuenow')).toBe('70');
+    expect(card.querySelector('.status')?.textContent).toContain(
+      'Held at 65% overnight, house on the grid.',
     );
-    expect(card.textContent).toContain("the battery's 59% is enough");
-    expect(card.textContent).toContain(
-      'Predicted 59% going in at 02:00, from your latest reading.',
-    );
-    expect(card.textContent).toContain('Expected to leave 39%');
-    expect(card.querySelector('a')?.getAttribute('href')).toBe('/tonight');
+    expect(card.querySelector('.explain-toggle')?.textContent).toContain('Why?');
+    expect(card.querySelector('details path.soc')).not.toBeNull();
   });
 
-  it('gives the times and cost when a charge is suggested', () => {
+  it("gives today's forecast with the weather and its explanation", () => {
+    const card = open({}, fresh(), Date.UTC(2026, 5, 2, 7, 10)).el.querySelector('.home-today')!;
+    const figures = [...card.querySelectorAll('.figure')].map((f) => f.textContent?.trim());
+    expect(figures).toEqual(['7.6 kWh use', '4.2 kWh solar']);
+    expect(card.textContent).toContain('6.4–9.1 likely');
+    expect(card.querySelector('.weather-line')?.textContent).toContain(
+      'Cloudy, 4°C · brighter 13:00–15:00',
+    );
+    expect(card.querySelector('.explain-toggle')?.textContent).toContain('Weather · Why?');
+  });
+
+  it('shows how much today has used so far in the evening', () => {
+    const card = open().el.querySelector('.home-today')!;
+    expect(card.querySelector('.figure')?.textContent).toContain('0.2 kWh used');
+    expect(card.textContent).toContain('forecast 7.6 for the day');
+  });
+
+  it("gives yesterday's savings and how its weather compared", () => {
+    const card = open().el.querySelector('.home-yesterday')!;
+    expect(card.querySelector('.eyebrow')?.textContent).toContain('Yesterday, Monday');
+    expect(card.querySelector('.figure')?.textContent).toContain('£1.20');
+    expect(card.querySelector('.figure')?.textContent).toContain('saved');
+    expect(card.querySelector('.status')?.textContent).toContain(
+      'Cost 64p instead of £1.84 on grid import alone.',
+    );
+    expect(card.querySelector('.weather-line')?.textContent).toContain(
+      'Sunnier than forecast · 30% cloud, not 70%',
+    );
+  });
+
+  it('says when yesterday has no readings yet', () => {
+    const { el } = open({ lookBack: null });
+    expect(el.querySelector('.home-yesterday')?.textContent).toContain(
+      'No readings for yesterday yet.',
+    );
+  });
+
+  it("gives tonight's plan, its one-sentence reason and whether it was sent", () => {
+    const card = open().el.querySelector('.home-tonight')!;
+    expect(card.querySelector('.figure')?.textContent).toContain('No charge');
+    expect(card.querySelector('.figure')?.textContent).toContain('battery held 02:00–05:00');
+    expect(card.querySelector('.badge')?.textContent).toBe('Sent to inverter');
+    (card.querySelector('.explain-toggle') as HTMLButtonElement).click();
+    expect(card.querySelector('a[href="/tonight"]')).not.toBeNull();
+  });
+
+  it('gives the times and cost when a charge is planned, and says when it is not sent', () => {
     const plan = structuredClone(PLAN);
     plan.recommendations[0] = {
       ...plan.recommendations[0],
@@ -183,37 +278,24 @@ describe('Home', () => {
       force_charge_stop: '2026-06-03T04:00:00Z',
       charge_kwh: 2.5,
       charge_cost_pence: 42,
-      hold_stop: '2026-06-03T02:30:00Z',
     };
-    const card = open({ plan }).el.querySelector('.home-tonight')!;
-    expect(card.querySelector('.target')?.textContent).toBe('Charge to 72%');
-    expect(card.textContent).toContain(
-      'Force charge 03:30–05:00 on Wednesday: 2.5 kWh, costing 42p.',
-    );
+    const control = { enabled: true, actions: [] };
+    const card = open({ plan, control }).el.querySelector('.home-tonight')!;
+    expect(card.querySelector('.figure')?.textContent).toContain('72%');
+    expect(card.querySelector('.figure')?.textContent).toContain('03:30–05:00 · about 42p');
+    expect(card.querySelector('.badge')?.textContent).toBe('Not sent yet');
   });
 
-  it('says when yesterday has no score yet', () => {
-    const { el } = open({ replay: { ...REPLAY, review: null } });
-    expect(el.querySelector('.home-yesterday')?.textContent).toContain(
-      'gets its score once its whole cycle is imported',
-    );
+  it('shows no sent badge when automation is off', () => {
+    const card = open({ control: { enabled: false, actions: [] } }).el.querySelector(
+      '.home-tonight',
+    )!;
+    expect(card.querySelector('.badge')).toBeNull();
   });
 
-  it('does not pass off an older charge as last night or yesterday', () => {
-    const replay = structuredClone(REPLAY);
-    replay.in_progress!.day = '2026-05-28';
-    replay.in_progress!.charge_start = '2026-05-28T01:00:00Z';
-    replay.review!.day = { ...replay.review!.day, day: '2026-05-27' };
-    const { el } = open({ replay });
-    expect(el.querySelector('.home-charge h2')?.textContent).toBe(
-      'Charge at 02:00 on Thursday 28 May',
-    );
-    expect(el.querySelector('.home-yesterday')?.textContent).not.toContain('Charge at');
-  });
-
-  it('still answers the first question when the plan fails', () => {
+  it('still shows the other cards when the plan fails', () => {
     const { el } = open({ plan: null });
-    expect(el.querySelector('.home-yesterday')?.textContent).toContain('7.2 kWh');
+    expect(el.querySelector('.home-yesterday')?.textContent).toContain('£1.20');
     expect(el.querySelector('.home-tonight .form-error')?.textContent).toContain(
       'No weather forecast yet',
     );
@@ -289,7 +371,7 @@ describe('Home', () => {
         .flush({ detail: 'Fox ESS is unavailable' }, { status: 502, statusText: 'Bad Gateway' });
       fixture.detectChanges();
       expect(el.querySelector('.form-error')?.textContent).toContain('Fox ESS is unavailable');
-      expect(el.querySelector('.home-yesterday')?.textContent).toContain('7.2 kWh');
+      expect(el.querySelector('.home-yesterday')?.textContent).toContain('£1.20');
     });
 
     it('says when the import itself failed, and still reloads', () => {
