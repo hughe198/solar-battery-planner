@@ -38,7 +38,15 @@ def test_create_and_update_system(client):
     body = resp.json()
     assert body["planning_mode"] == "maximise_own_usage"
     assert body["battery"]["min_soc_percent"] == 10
+    # No grid charge maximum unless one is set.
+    assert body["battery"]["max_grid_charge_percent"] == 100
     assert len(body["arrays"]) == 2
+
+    capped = {**SYSTEM, "battery": {**SYSTEM["battery"], "max_grid_charge_percent": 95}}
+    resp = client.put("/api/system", json=capped, headers=headers)
+    assert resp.json()["battery"]["max_grid_charge_percent"] == 95
+    too_low = {**SYSTEM, "battery": {**SYSTEM["battery"], "max_grid_charge_percent": 20}}
+    assert client.put("/api/system", json=too_low, headers=headers).status_code == 422
 
     updated = {**SYSTEM, "planning_mode": "maximise_export_revenue", "arrays": SYSTEM["arrays"][:1]}
     resp = client.put("/api/system", json=updated, headers=headers)

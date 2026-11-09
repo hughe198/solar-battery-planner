@@ -7,10 +7,14 @@ minute (a period "to 05:30" is stored as ending 05:29), a work mode, and its set
 (fdPwr, W). Periods can't cross midnight, so a charge from 23:40 to 05:30 is written as two
 periods.
 
-Only the periods that overlap tonight's charge are changed, and only where they overlap; the
-user's other periods are written back with every setting as Fox returned it. The exception is
-the user's own forced charge or discharge: if tonight's charge overlaps one, all of it is
-replaced, so no stray piece of it forces the battery outside the plan.
+Applying the plan writes the whole day (`whole_day`): the planner's forced stages, and
+self-use with the planner's levels at every other minute. The user's own periods are replaced,
+having been saved first so Restore can put them back (the owner's choice, 9 November 2026: a
+clean schedule each night rather than the user's periods with the charge fitted around them).
+
+The write test still fits its short test period into the user's schedule (`merge`), changing
+only what overlaps it. A forced period it overlaps goes completely, so no stray piece of it
+forces the battery outside the plan.
 
 An all-day period (00:00 to 23:59) is Fox's default for the times no other period covers. The
 Open API can't set it, and community reports say sending it can stop the other periods working,
@@ -30,6 +34,13 @@ from zoneinfo import ZoneInfo
 
 FORCE_CHARGE = "ForceCharge"
 FORCE_DISCHARGE = "ForceDischarge"
+SELF_USE = "SelfUse"
+# Settings the planner doesn't decide (limits the installer set), carried onto the planner's
+# self-use periods from the inverter's own so nothing they set changes.
+CARRIED = ("importLimit", "exportLimit", "pvLimit", "reactivePower")
+# A whole day is never written as one period: Fox treats 00:00-23:59 as its default, which the
+# API can't set (see the module notes), so a day with nothing forced is written in two halves.
+MIDDAY = 12 * 60
 DAY_MINUTES = 24 * 60
 DEFAULT_MAX_GROUPS = 8
 # The settings a period carries in V3's extraParam (on the period itself in V1).
@@ -344,6 +355,58 @@ def is_copy(period: Period, all_day: Period | None) -> bool:
     """Whether a period runs exactly as the all-day default does, so its times can be given
     to another period and filled again afterwards with nothing changed."""
     return all_day is not None and not period.forced and _settings(period) == _settings(all_day)
+
+
+def self_use_period(
+    fd_soc: float, min_soc: float, max_soc: float | None, like: Period | None
+) -> Period:
+    """A whole-day self-use period with the planner's levels, carrying the installer's limits
+    from `like`, one of the inverter's own periods."""
+    extra = {}
+    if like is not None:
+        settings = {k: like.raw[k] for k in SETTINGS if k in like.raw}
+        settings.update(like.raw.get("extraParam") or {})
+        extra = {k: settings[k] for k in CARRIED if k in settings}
+    return Period(
+        0,
+        DAY_MINUTES - 1,
+        SELF_USE,
+        fd_soc=fd_soc,
+        fd_pwr=0,
+        min_soc_on_grid=min_soc,
+        max_soc=max_soc,
+        raw={"extraParam": extra} if extra else {},
+    )
+
+
+def whole_day(stages: list[Period], self_use: Period) -> list[Period]:
+    """The day's schedule: the planner's forced `stages`, and self-use like `self_use` at every
+    other minute, so the schedule is complete and nothing else runs (whole-day control)."""
+    if stages:
+        rest = _outside(self_use, stages)
+    else:
+        rest = [replace(self_use, end=MIDDAY - 1), replace(self_use, start=MIDDAY)]
+    return sorted(stages + rest, key=lambda p: p.start)
+
+
+def join_equal(periods: list[Period]) -> list[Period]:
+    """The periods with neighbours that run the same way joined into one, so a schedule
+    doesn't build up pieces towards the inverter's limit. A whole day is never made into one
+    period (see `MIDDAY`)."""
+    joined: list[Period] = []
+    for p in sorted(periods, key=lambda p: p.start):
+        last = joined[-1] if joined else None
+        if last and last.end + 1 == p.start and not p.forced and _settings(last) == _settings(p):
+            joined[-1] = replace(last, end=p.end)
+        else:
+            joined.append(p)
+    split = []
+    for p in joined:
+        if p.all_day:
+            split += [replace(p, end=MIDDAY - 1), replace(p, start=MIDDAY)]
+        else:
+            split.append(p)
+    return split
 
 
 def covers_day(periods: list[Period]) -> bool:

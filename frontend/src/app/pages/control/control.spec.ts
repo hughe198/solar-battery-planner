@@ -289,9 +289,9 @@ describe('Control', () => {
     expect(el.textContent).toContain('64%');
     expect(el.textContent).toContain('02:10');
     expect(el.textContent).toContain('force discharge to 10%');
-    expect(el.textContent).toContain('Added');
-    // A copy of Fox's all-day period, which a write drops (D13).
-    expect(el.textContent).toContain('Fills a gap');
+    expect(el.textContent).toContain("Planner's charge");
+    // The rest of the day, which the planner writes as self-use.
+    expect(el.textContent).toContain('Self-use');
     const apply = Array.from(el.querySelectorAll('button')).find((b) =>
       b.textContent?.includes('Authorise and send'),
     )!;

@@ -6,7 +6,7 @@ the schedule is saved so it can be put back exactly.
 """
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone
 from math import ceil
 from typing import Any
@@ -21,8 +21,10 @@ from app.control.schedule import (
     covers_day,
     fill_gaps,
     fingerprint,
+    join_equal,
     matches,
-    merge,
+    self_use_period,
+    whole_day,
     without,
 )
 from app.importers.fox_ess import (
@@ -103,6 +105,12 @@ class Proposal:
     max_soc: float | None = None
     # What's written, in words, e.g. "hold 00:30–03:40; force charge to 80% 03:40–05:30".
     summary: str = ""
+    # The minimum the self-use periods run down to.
+    self_use_min_soc: float | None = None
+    # The owner's grid charge maximum, if any.
+    grid_charge_max: float | None = None
+    # Whether applying saves the inverter's schedule first as the latest manual one.
+    saves_manual: bool = False
 
     @property
     def fingerprint(self) -> str:
@@ -110,9 +118,18 @@ class Proposal:
 
     @property
     def enable_after(self) -> bool:
-        """Whether the schedule is switched on after applying: on for a new charge, otherwise
-        as it was."""
-        return bool(self.after) and (self.schedule.enabled or bool(self.added))
+        """The whole day is written, so the schedule is always switched on."""
+        return bool(self.after)
+
+    @property
+    def changes(self) -> bool:
+        """Whether applying would change the inverter: its periods differ from the whole day
+        written, or its schedule is switched off."""
+        current = self.schedule.periods + (
+            [self.schedule.default] if self.schedule.default else []
+        )
+        by_start = sorted(current, key=lambda p: (p.start, p.end))
+        return by_start != self.after or not self.schedule.enabled
 
 
 def propose(
@@ -122,23 +139,13 @@ def propose(
     rec = plan.recommendations[0]
     battery = system.battery
     notes: list[str] = []
-    previous = [Period.from_fox(g) for g in control.written_groups or []]
-    current, replaced = without(schedule.periods, previous)
 
     start, stop = rec.force_charge_start, rec.force_charge_stop
     hold_start, hold_stop = getattr(rec, "hold_start", None), getattr(rec, "hold_stop", None)
     target = None
     added: list[Period] = []
     power = schedule.clamp("fdpwr", round(battery.max_charge_kw * 1000))
-    wanted_min = max(round(battery.min_soc_percent), MIN_SOC_FLOOR)
-    min_soc = schedule.clamp("minsocongrid", wanted_min)
-    # Fox: fdSoc "must be equal or greater than minSocOnGrid" (D6). No forced period stops below
-    # the minimum written with it, nor below what the inverter accepts.
-    floor = max(schedule.ranges["fdsoc"][0], min_soc)
-    # A setting left out of a V3 period keeps an old value, so every setting a stage depends on
-    # is sent, maxSoc included when the inverter has one, at its top so it never stops a
-    # charge (D7).
-    max_soc = schedule.ranges["maxsoc"][1] if "maxsoc" in schedule.reported else None
+    floor, min_soc, max_soc = _levels(system, schedule)
 
     def stop_level(level: float) -> float:
         return min(max(level, floor), schedule.ranges["fdsoc"][1])
@@ -157,10 +164,18 @@ def propose(
         )
     if rec.charge_kwh > 0 and start is not None and stop is not None and stop > start:
         target = stop_level(ceil(rec.target_soc_percent))
+        # The planner already keeps under the owner's grid charge maximum; this makes sure.
+        cap = getattr(battery, "max_grid_charge_percent", None)
+        if cap is not None and target > max(cap, floor):
+            target = max(cap, floor)
+            notes.append(
+                f"The charge level is written as {target:g}%, your grid charge maximum, "
+                "leaving room for solar."
+            )
         added = charge_periods(
             start, stop, system.timezone, target, power, min_soc, max_soc=max_soc
         )
-        if target != ceil(rec.target_soc_percent):
+        if target not in (ceil(rec.target_soc_percent), cap):
             notes.append(
                 f"The charge level is written as {target:g}%, as it must be at least the "
                 f"{floor:g}% minimum and no more than {schedule.ranges['fdsoc'][1]:g}%."
@@ -212,65 +227,62 @@ def propose(
         )
     if added and max_soc is not None:
         notes.append(f"Maximum charge is written as {max_soc:g}% so it doesn't stop the charge.")
-    if not added:
-        power = min_soc = None
 
-    after, overlapping, trimmed = merge(current, added)
-    removed = replaced + overlapping
-    filled: list[Period] = []
-    all_day = all_day_period(schedule, control)
-    if added or removed:
-        after, filled = fill_gaps(after, all_day)
+    # Whole-day control: the planner's stages, and self-use at every other minute.
+    self_use = self_use_period(floor, min_soc, max_soc, _self_use_like(schedule, control))
+    after = whole_day(added, self_use)
+    current = schedule.periods + ([schedule.default] if schedule.default else [])
+    kept = [p for p in after if any(p == q for q in current)]
+    removed = [q for q in current if not any(q == p for p in after)]
+    filled = [p for p in after if not p.forced and not any(p is k for k in kept)]
     if len(after) > schedule.max_groups:
         raise ControlError(
             f"The inverter's schedule holds at most {schedule.max_groups} periods and this "
-            f"would need {len(after)}. Remove a period in the Fox app and try again."
+            f"would need {len(after)}. This is a bug in the planner."
+        )
+    rest = [p for p in after if not p.forced]
+    notes.append(
+        f"The whole day is written: outside the planner's periods the battery runs in "
+        f"self-use ({_labels(rest)}), down to {min_soc:g}%"
+        + (f" and filling from solar up to {max_soc:g}%" if max_soc is not None else "")
+        + ". Your inverter's own limits (solar, export and import) are kept."
+    )
+    if removed:
+        saved = (
+            "Your schedule as it is now is saved first as your latest manual schedule"
+            if changed_by_hand(schedule, control)
+            else "Your latest manual schedule, saved "
+            + (f"{control.original_saved_at:%d %b}" if control.original_saved_at else "earlier")
+            + ", is kept"
+        )
+        notes.append(
+            "Your current periods are replaced. "
+            + saved
+            + ", and Restore puts it back and stops the planner changing your schedule."
         )
     if added:
         notes.append(
             "Fox schedules repeat every day, so this charge also runs on later nights until "
             "it is changed or removed."
         )
-    if added and not schedule.enabled and current:
-        notes.append(
-            "Your inverter's schedule is switched off. Switching it on for the charge also "
-            "turns on your other periods in it: "
-            + ", ".join(f"{p.work_mode} {p.label()}" for p in current)
-            + "."
-        )
-    for p in overlapping:
-        rest = [t.label() for t in trimmed if t.raw is p.raw]
-        notes.append(
-            f"Your {p.work_mode} period {p.label()} overlaps the planner's, so "
-            + (
-                f"only the overlapping part is replaced; it's kept for {', '.join(rest)}."
-                if rest
-                else (
-                    "all of it is replaced, so none of it forces the battery outside the "
-                    "planner's times."
-                    if p.forced
-                    else "it's replaced."
-                )
-            )
-        )
-    if filled:
-        notes.append(
-            f"Fox removes your all-day {all_day.work_mode} period when the schedule is "
-            "written, and the API can't set it. So the times no other period covers are "
-            f"written as {all_day.work_mode} periods with its settings, and run as before: "
-            f"{_labels(filled)}."
-        )
-    if schedule.switched_off and (added or removed):
+    if not schedule.enabled:
+        notes.append("Your inverter's schedule is switched off; writing it switches it on.")
+    if schedule.switched_off:
         notes.append(
             "These switched-off periods will be lost, as the write replaces the whole list: "
             + ", ".join(f"{p.work_mode} {p.label()}" for p in schedule.switched_off)
             + "."
         )
-    elif added or removed:
+    else:
         notes.append(
             "Fox's current schedule API doesn't show switched-off periods. If you have any in "
-            "the Fox app, this write may remove them."
+            "the Fox app, this write removes them."
         )
+    self_use_min = min_soc
+    saves_manual = changed_by_hand(schedule, control)
+    if not added:
+        power = min_soc = None
+    trimmed: list[Period] = []
     stages = []
     if drain:
         stages.append(f"discharge to {drain_soc:g}% {_labels(drain)}")
@@ -303,11 +315,58 @@ def propose(
         filled=filled,
         max_soc=max_soc if added else None,
         summary="; ".join(stages),
+        self_use_min_soc=self_use_min,
+        grid_charge_max=getattr(battery, "max_grid_charge_percent", None),
+        saves_manual=saves_manual,
     )
 
 
 def _labels(periods: list[Period]) -> str:
     return ", ".join(p.label() for p in periods)
+
+
+def _levels(system: System, schedule: Schedule) -> tuple[float, float, float | None]:
+    """The levels the planner writes: the lowest any period stops at, the minimum, and the
+    maximum (None when the inverter has no maxSoc)."""
+    wanted_min = max(round(system.battery.min_soc_percent), MIN_SOC_FLOOR)
+    min_soc = schedule.clamp("minsocongrid", wanted_min)
+    # Fox: fdSoc "must be equal or greater than minSocOnGrid" (D6). No forced period stops below
+    # the minimum written with it, nor below what the inverter accepts.
+    floor = max(schedule.ranges["fdsoc"][0], min_soc)
+    # A setting left out of a V3 period keeps an old value, so every setting a stage depends on
+    # is sent, maxSoc included when the inverter has one, at its top so it never stops a charge
+    # (D7), and so solar can fill the battery in self-use.
+    max_soc = schedule.ranges["maxsoc"][1] if "maxsoc" in schedule.reported else None
+    return floor, min_soc, max_soc
+
+
+def _self_use_like(schedule: Schedule, control: InverterControl) -> Period | None:
+    """One of the inverter's own non-forced periods, whose installer limits the planner's
+    self-use periods carry: as read now, or from the latest manual schedule saved."""
+    sources = [schedule]
+    if control.original_schedule:
+        sources.append(Schedule.from_fox(control.original_schedule))
+    for s in sources:
+        for p in ([s.default] if s.default else []) + s.periods:
+            if not p.forced:
+                return p
+    return None
+
+
+def changed_by_hand(schedule: Schedule, control: InverterControl) -> bool:
+    """Whether the inverter's schedule is the user's own rather than the one the planner last
+    wrote, so it's saved, as the latest manual schedule, before it's replaced.
+
+    Before the first whole-day write there's no record of what the planner wrote, and, as
+    before, only the schedule from before the planner's very first write is saved."""
+    if control.written_schedule is None:
+        return control.original_schedule is None
+    written = Schedule.from_fox(control.written_schedule)
+
+    def periods(s: Schedule) -> list[Period]:
+        return sorted(s.periods + ([s.default] if s.default else []), key=lambda p: p.start)
+
+    return periods(written) != periods(schedule)
 
 
 def read_schedule(client: FoxEssClient, sn: str) -> Schedule:
@@ -333,7 +392,7 @@ def write_requests(
 
 def apply_requests(sn: str, proposal: Proposal) -> list[tuple[str, dict]]:
     """What `apply` would send for this proposal: nothing when there's nothing to change."""
-    if not proposal.added and not proposal.removed:
+    if not proposal.changes:
         return []
     return write_requests(sn, proposal.after, proposal.enable_after, proposal.schedule.enabled)
 
@@ -558,25 +617,26 @@ def apply(
     proposal: Proposal,
     trigger: ControlTrigger,
 ) -> ControlAction:
-    """Write a proposal. Saves the original schedule first if this is the first write."""
-    if not proposal.added and not proposal.removed:
+    """Write a proposal. A schedule the user set by hand is saved first, so Restore can put it
+    back."""
+    if not proposal.changes:
         return _log(
             db,
             system,
             ControlActionKind.apply,
             trigger,
             ControlStatus.skipped,
-            "No charge needed and no planner periods to remove, so nothing was written.",
+            "Your inverter already has tonight's schedule, so nothing was written.",
             day=proposal.day,
         )
-    if control.original_schedule is None:
+    if changed_by_hand(proposal.schedule, control):
         control.original_schedule = proposal.schedule.to_snapshot()
         control.original_saved_at = datetime.now(timezone.utc)
     if proposal.added:
         what = proposal.summary
         done = f"{what[0].upper()}{what[1:]} written and read back as written."
     else:
-        done = "No charge needed; the planner's force charge periods were removed."
+        done = "No charge needed; the whole day was written as self-use and read back."
     action, reached = _run_write(
         db,
         system,
@@ -598,14 +658,25 @@ def apply(
         # Remove takes out whichever the inverter has (D4).
         earlier = [g for g in control.written_groups or [] if g not in added]
         control.written_groups = earlier + added
+    _remember_written(control, action, reached)
     return action
+
+
+def _remember_written(control: InverterControl, action: ControlAction, reached: bool) -> None:
+    """Keep what the planner left on the inverter, so a later change by hand is noticed.
+    After a write that may or may not have arrived, nothing is known, so the latest manual
+    schedule already saved is kept rather than the planner's half-written one replacing it."""
+    if action.status != ControlStatus.failed and action.read_back:
+        control.written_schedule = action.read_back
+    elif reached:
+        control.written_schedule = None
 
 
 def clear(
     db: Session, system: System, control: InverterControl, client: FoxEssClient
 ) -> ControlAction:
-    """Take the planner's force charge and test periods out of the schedule, keeping
-    everything else."""
+    """Take the planner's force charge and test periods out of the schedule: their times
+    become self-use at the planner's levels, and everything else is kept."""
     ours = [
         Period.from_fox(g) for g in [*(control.written_groups or []), *(control.test_groups or [])]
     ]
@@ -620,7 +691,7 @@ def clear(
             ControlStatus.failed,
             f"Couldn't read the inverter's schedule: {exc}",
         )
-    after, removed = without(schedule.periods, ours)
+    kept, removed = without(schedule.periods, ours)
     if not removed:
         control.written_groups = []
         control.test_groups = []
@@ -632,7 +703,10 @@ def clear(
             ControlStatus.skipped,
             "The inverter has no force charge periods from the planner, so nothing was changed.",
         )
-    action, _ = _run_write(
+    floor, min_soc, max_soc = _levels(system, schedule)
+    self_use = self_use_period(floor, min_soc, max_soc, _self_use_like(schedule, control))
+    after = join_equal(kept + [replace(self_use, start=r.start, end=r.end) for r in removed])
+    action, reached = _run_write(
         db,
         system,
         client,
@@ -641,18 +715,20 @@ def clear(
         schedule,
         after,
         schedule.enabled,
-        "The planner's force charge periods were removed.",
+        "The planner's force charge periods were removed; their times run in self-use.",
     )
     if action.status != ControlStatus.failed:
         control.written_groups = []
         control.test_groups = []
+    _remember_written(control, action, reached)
     return action
 
 
 def restore(
     db: Session, system: System, control: InverterControl, client: FoxEssClient
 ) -> ControlAction:
-    """Put back the schedule saved before the planner first wrote to the inverter."""
+    """Put back the latest manual schedule, and stop the nightly apply, so the planner leaves
+    the user's schedule alone until they turn it back on."""
     if control.original_schedule is None:
         return _log(
             db,
@@ -675,7 +751,8 @@ def restore(
             f"Couldn't read the inverter's schedule: {exc}",
         )
     original = Schedule.from_fox(control.original_schedule)
-    action, _ = _run_write(
+    stopped = control.auto_apply
+    action, reached = _run_write(
         db,
         system,
         client,
@@ -684,9 +761,17 @@ def restore(
         schedule,
         original.periods,
         original.enabled,
-        "Your original schedule was put back and read back as saved.",
+        "Your manual schedule was put back and read back as saved."
+        + (
+            " The nightly apply is turned off, so the planner won't change your schedule "
+            "until you turn it back on."
+            if stopped
+            else ""
+        ),
     )
     if action.status != ControlStatus.failed:
         control.written_groups = []
         control.test_groups = []
+        control.auto_apply = False
+    _remember_written(control, action, reached)
     return action

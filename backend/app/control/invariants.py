@@ -3,12 +3,23 @@
 These are the invariants from docs/inverter-api-test-plan.md that can be judged from one
 proposal: the dry run prints them for a person and an AI reviewer to read, and the tests assert
 them across many generated plans and schedules. Nothing here talks to an inverter.
+
+Applying writes the whole day (see app.control.schedule): the planner's forced stages, and
+self-use at every other minute. So beside the ranges and Fox's rules, the checks are that the
+day is covered exactly once, that nothing forced runs outside the plan, and that everything
+else is self-use at the planner's levels.
 """
 
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from app.control.schedule import FORCE_CHARGE, FORCE_DISCHARGE, Period, charge_periods, v3_group
+from app.control.schedule import (
+    FORCE_CHARGE,
+    FORCE_DISCHARGE,
+    SELF_USE,
+    Period,
+    charge_periods,
+)
 
 Status = Literal["pass", "fail", "warn"]
 DAY_MINUTES = 24 * 60
@@ -30,15 +41,13 @@ def check(proposal: Any, tz: str, raw_schedule: dict[str, Any] | None = None) ->
     schedule exactly as Fox returned it, for what the parsed one leaves out."""
     checks: list[Check] = []
     schedule = proposal.schedule
-    added: list[Period] = proposal.added
-    trimmed: list[Period] = getattr(proposal, "trimmed", [])
-    filled: list[Period] = getattr(proposal, "filled", [])
-    kept = [p for p in proposal.after if not any(p is a for a in added)]
-    untouched = [p for p in kept if not any(p is t for t in [*trimmed, *filled])]
+    after: list[Period] = proposal.after
+    forced = [p for p in after if p.forced]
+    rest = [p for p in after if not p.forced]
 
     # 5. Every value sent is within the range the inverter reports.
     out_of_range = []
-    for p in added:
+    for p in after:
         for key, value in (
             ("fdsoc", p.fd_soc),
             ("fdpwr", p.fd_pwr),
@@ -52,66 +61,55 @@ def check(proposal: Any, tz: str, raw_schedule: dict[str, Any] | None = None) ->
         Check(
             "Values within the inverter's ranges",
             "fail" if out_of_range else "pass",
-            "; ".join(out_of_range) or f"{len(added)} new period(s) checked.",
+            "; ".join(out_of_range) or f"{len(after)} period(s) checked.",
         )
     )
 
-    # 6. Periods are well formed, ours don't overlap anything, and they fit.
+    # 6. Periods are well formed, don't overlap, and fit.
     shape = [
         f"{p.label()} runs {p.start}–{p.end} minutes"
-        for p in proposal.after
+        for p in after
         if not 0 <= p.start <= p.end < DAY_MINUTES
     ]
-    for i, a in enumerate(added):
-        for b in added[i + 1 :] + kept:
+    for i, a in enumerate(after):
+        for b in after[i + 1 :]:
             if a.overlaps(b):
                 shape.append(f"{a.work_mode} {a.label()} overlaps {b.work_mode} {b.label()}")
-    if len(proposal.after) > schedule.max_groups:
-        shape.append(f"{len(proposal.after)} periods, but the inverter holds {schedule.max_groups}")
+    if len(after) > schedule.max_groups:
+        shape.append(f"{len(after)} periods, but the inverter holds {schedule.max_groups}")
     checks.append(
         Check(
             "Periods well formed, not overlapping, and fit",
             "fail" if shape else "pass",
             "; ".join(shape)
-            or f"{len(proposal.after)} of at most {schedule.max_groups} periods, none clash.",
+            or f"{len(after)} of at most {schedule.max_groups} periods, none clash.",
         )
     )
 
-    # 7. The user's periods that aren't overlapped go back exactly as read, in V3's shape.
-    # What's left of a partly overlapped one keeps every setting, with only its times changed,
-    # and so does each copy of the all-day default (D13).
-    changed = [p.label() for p in untouched if p.raw and p.to_fox() != v3_group(p.raw)]
-    for p in [*trimmed, *filled]:
-        times = ("startHour", "startMinute", "endHour", "endMinute")
-        sent = {k: v for k, v in p.to_fox().items() if k not in times}
-        read = {k: v for k, v in v3_group(p.raw).items() if k not in times}
-        if sent != read:
-            changed.append(p.label())
+    # D13 and whole-day control: every minute has a period, so nothing is left to whatever
+    # the inverter does with no schedule.
+    gaps = sorted(set(range(DAY_MINUTES)) - _minutes(after))
     checks.append(
         Check(
-            "Your other periods sent back unchanged",
-            "fail" if changed else "pass",
-            ("Changed: " + ", ".join(changed)) if changed else f"{len(kept)} kept as read.",
+            "The whole day covered",
+            "fail" if gaps else "pass",
+            f"{len(gaps)} minute(s) with no period, from minute {gaps[0]}"
+            if gaps
+            else "Every minute from 00:00 to 23:59 has a period.",
         )
     )
 
     # Fox's all-day default period is never sent.
-    default_sent = [p.label() for p in proposal.after if p.all_day]
+    default_sent = [p.label() for p in after if p.all_day]
     checks.append(
         Check(
             "All-day default period not sent",
             "fail" if default_sent else "pass",
-            ("Sent: " + ", ".join(default_sent))
-            if default_sent
-            else (
-                f"Your all-day {schedule.default.work_mode} period is left to Fox."
-                if schedule.default is not None
-                else "There isn't one."
-            ),
+            ("Sent: " + ", ".join(default_sent)) if default_sent else "None sent.",
         )
     )
 
-    # 9. Forced periods only in the spans the plan gave.
+    # 9. Forced periods only in the spans the plan gave: none of the user's own survive.
     charge_spans = [
         (s, e)
         for s, e in (
@@ -129,7 +127,7 @@ def check(proposal: Any, tz: str, raw_schedule: dict[str, Any] | None = None) ->
         else set()
     )
     stray = []
-    for p in added:
+    for p in forced:
         allowed = {FORCE_CHARGE: allowed_charge, FORCE_DISCHARGE: allowed_discharge}.get(
             p.work_mode, set()
         )
@@ -143,63 +141,72 @@ def check(proposal: Any, tz: str, raw_schedule: dict[str, Any] | None = None) ->
         )
     )
 
-    # D13. Fox drops its all-day default on a write, so with one, every minute needs a period.
-    if schedule.default is not None and (added or proposal.removed):
-        covered = _minutes(proposal.after)
-        gaps = sorted(set(range(DAY_MINUTES)) - covered)
-        checks.append(
-            Check(
-                "Whole day covered once Fox drops its all-day period (defect D13)",
-                "fail" if gaps else "pass",
-                f"{len(gaps)} minute(s) with no period, from minute {gaps[0]}"
-                if gaps
-                else f"{len(filled)} copy(ies) of your all-day period fill the gaps.",
-            )
-        )
-
-    # D12. No piece of the user's own forced period is kept around ours.
-    leftover = [f"{p.work_mode} {p.label()}" for p in trimmed if p.forced]
+    # Everything else is self-use at the planner's levels: none of the user's own settings,
+    # such as an older 5% minimum, carries on.
+    minimum = proposal.self_use_min_soc
+    odd = [
+        f"{p.work_mode} {p.label()}"
+        + (f" minimum {p.min_soc_on_grid:g}%" if p.min_soc_on_grid != minimum else "")
+        for p in rest
+        if p.work_mode != SELF_USE or p.min_soc_on_grid != minimum
+    ]
     checks.append(
         Check(
-            "No leftover of your forced periods (defect D12)",
-            "fail" if leftover else "pass",
-            ("Kept: " + ", ".join(leftover)) if leftover else "None kept around the plan's.",
+            "Self-use at your minimum everywhere else",
+            "fail" if odd else "pass",
+            ("Not so: " + ", ".join(odd))
+            if odd
+            else f"{len(rest)} self-use period(s), down to {minimum:g}%.",
+        )
+    )
+
+    # The grid charge stays at or under the owner's maximum, leaving room for solar.
+    cap = proposal.grid_charge_max
+    over = [
+        f"{p.label()} charges to {p.fd_soc:g}%"
+        for p in forced
+        if p.work_mode == FORCE_CHARGE and cap is not None and (p.fd_soc or 0) > max(cap, minimum)
+    ]
+    checks.append(
+        Check(
+            "Grid charge at or under your maximum",
+            "fail" if over else "pass",
+            ("Over: " + ", ".join(over))
+            if over
+            else (f"No higher than {cap:g}%." if cap is not None else "No maximum set."),
         )
     )
 
     # D6. Fox says fdSoc must be at least minSocOnGrid.
     below = [
         f"{p.work_mode} {p.label()} stops at {p.fd_soc:g}% under the {p.min_soc_on_grid:g}% minimum"
-        for p in added
+        for p in after
         if p.fd_soc is not None and p.min_soc_on_grid is not None and p.fd_soc < p.min_soc_on_grid
     ]
     checks.append(
         Check(
             "Stop level at or above the minimum (Fox's rule, defect D6)",
             "fail" if below else "pass",
-            "; ".join(below) or "Every new period stops at or above its minimum.",
+            "; ".join(below) or "Every period stops at or above its minimum.",
         )
     )
 
     # Things a person should know, though nothing is wrong.
-    mine_changed = [
-        p for p in proposal.removed if p.work_mode not in (FORCE_CHARGE, FORCE_DISCHARGE)
-    ]
-    if mine_changed:
+    if proposal.removed:
         checks.append(
             Check(
-                "Your own periods overlapped (D5)",
+                "Your current periods replaced",
                 "warn",
-                "Only the overlapping part is replaced: "
-                + ", ".join(
-                    f"{p.work_mode} {p.label()}, kept for "
-                    + (", ".join(t.label() for t in trimmed if t.raw is p.raw) or "none of it")
-                    for p in mine_changed
+                f"{len(proposal.removed)} period(s) replaced. "
+                + (
+                    "Your schedule as it is now is saved first, for Restore."
+                    if proposal.saves_manual
+                    else "Your latest manual schedule is already saved, for Restore."
                 ),
             )
         )
     switched_off = schedule.switched_off
-    if switched_off and (proposal.added or proposal.removed):
+    if switched_off and proposal.changes:
         checks.append(
             Check(
                 "Switched-off periods dropped (D2)",
@@ -208,12 +215,12 @@ def check(proposal: Any, tz: str, raw_schedule: dict[str, Any] | None = None) ->
                 + ", ".join(f"{p.work_mode} {p.label()}" for p in switched_off),
             )
         )
-    if proposal.added and not schedule.enabled and kept:
+    if not schedule.enabled and proposal.changes:
         checks.append(
             Check(
-                "Your periods switch on too",
+                "Your schedule switches on",
                 "warn",
-                "The schedule is off now, and switching it on runs your other periods as well.",
+                "The schedule is off now; writing the whole day switches it on.",
             )
         )
     return checks

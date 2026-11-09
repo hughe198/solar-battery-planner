@@ -217,7 +217,7 @@
                     <td>{{ r.work_mode }}</td>
                     <td>{{ r.charge_to_percent ?? '–' }}</td>
                     <td>{{ r.power_w ?? '–' }}</td>
-                    <td>Removed</td>
+                    <td>Yours, replaced</td>
                   </tr>
                 }
                 @for (r of p.after; track $index) {
@@ -312,12 +312,17 @@
           [disabled]="busy() || !s.has_original || !s.writes_allowed"
           (click)="restore()"
         >
-          Restore original schedule
+          Restore my schedule
         </button>
       </div>
+      <p class="muted">
+        Remove takes the planner's charge out and runs those hours in self-use. Restore puts back
+        your own schedule and turns off the nightly apply, so the planner leaves your inverter alone
+        until you turn it back on.
+      </p>
       @if (s.has_original) {
         <p class="muted">
-          Saved {{ s.original_saved_at | date: 'medium' }}: schedule
+          Your latest manual schedule, saved {{ s.original_saved_at | date: 'medium' }}: schedule
           {{ s.original_enabled ? 'on' : 'off' }}, with
           @for (p of s.original; track $index) {
             {{ p.work_mode }} {{ p.start }}–{{ p.end }}{{ $last ? '.' : ',' }}

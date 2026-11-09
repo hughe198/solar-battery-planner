@@ -192,15 +192,16 @@ export class Control implements OnInit {
   }
 
   restore(): void {
-    if (!confirm('Put back the schedule your inverter had before the planner changed it?')) return;
+    if (!confirm('Put back your own schedule and turn off the nightly apply?')) return;
     this.run(this.control.restore(), this.afterWrite);
   }
 
-  /** "Added", "Fills a gap" (a copy of Fox's all-day period, which a write drops) or "Kept". */
+  /** "Planner's charge" for the planner's forced stages, "Self-use" for the rest of the day the
+   * planner writes, or "Kept" for a period already on the inverter exactly so. */
   changeOf(period: SchedulePeriod, p: ControlProposal): string {
     const same = (a: SchedulePeriod) => a.start === period.start && a.end === period.end;
-    if (p.added.some(same)) return 'Added';
-    return (p.filled ?? []).some(same) ? 'Fills a gap' : 'Kept';
+    if (p.added.some(same)) return "Planner's charge";
+    return (p.filled ?? []).some(same) ? 'Self-use' : 'Kept';
   }
 
   /** "HH:MM" in the system's time zone. */

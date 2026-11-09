@@ -190,23 +190,56 @@ def owners_schedule(with_default=True):
     return [ALL_DAY, *groups] if with_default else groups
 
 
-def test_propose_covers_the_whole_day_when_fox_reports_an_all_day_period():
+def test_propose_writes_the_whole_day_in_place_of_the_owners_schedule():
+    # Whole-day control (owner's choice, 9 November 2026): the planner's stages and self-use
+    # at every other minute, at the planner's levels, in place of whatever was there.
     schedule = Schedule.from_fox(FakeInverter(owners_schedule()).scheduler("x"))
     plan = plan_for(utc(2026, 11, 6, 2, 10), utc(2026, 11, 6, 5, 0))
     proposal = service.propose(system_with(), InverterControl(), plan, schedule)
-    covered = {m for p in proposal.after for m in range(p.start, p.end + 1)}
-    assert covered == set(range(24 * 60))
-    assert [p.label() for p in proposal.filled] == ["02:00–02:10", "05:00–05:01", "16:01–19:01"]
-    assert all(p.work_mode == "SelfUse" and p.min_soc_on_grid == 5 for p in proposal.filled)
+    assert [(p.label(), p.work_mode) for p in proposal.after] == [
+        ("00:00–02:10", "SelfUse"),
+        ("02:10–05:00", "ForceCharge"),
+        ("05:00–00:00", "SelfUse"),
+    ]
+    # Every one of the owner's periods goes, the all-day default too.
+    assert len(proposal.removed) == len(owners_schedule())
+    assert proposal.filled == [p for p in proposal.after if p.work_mode == "SelfUse"]
+    # Down to the planner's 10%, not the owner's old 5%, keeping the installer's solar limit.
+    for p in proposal.filled:
+        assert (p.min_soc_on_grid, p.fd_soc, p.fd_pwr) == (10, 10, 0)
+        assert p.to_fox()["extraParam"]["pvLimit"] == 20000
+    assert proposal.saves_manual
+    assert any("whole day is written" in n for n in proposal.notes)
+    assert any("saved first as your latest manual schedule" in n for n in proposal.notes)
 
 
-def test_propose_fills_from_the_saved_all_day_period_once_fox_has_dropped_it():
-    schedule = Schedule.from_fox(FakeInverter(owners_schedule(False)).scheduler("x"))
+def test_self_use_carries_the_installers_limits_from_the_saved_schedule():
+    # Nothing on the inverter but a forced period: the limits come from the manual schedule.
+    only_forced = [group((2, 45), (5, 0), "ForceCharge", fdSoc=67, fdPwr=12000)]
+    schedule = Schedule.from_fox(FakeInverter(only_forced).scheduler("x"))
     saved = Schedule.from_fox(FakeInverter(owners_schedule()).scheduler("x")).to_snapshot()
     control = InverterControl(original_schedule=saved)
     plan = plan_for(utc(2026, 11, 6, 2, 10), utc(2026, 11, 6, 5, 0))
     proposal = service.propose(system_with(), control, plan, schedule)
-    assert [p.label() for p in proposal.filled] == ["02:00–02:10", "05:00–05:01", "16:01–19:01"]
+    assert all(p.to_fox()["extraParam"]["pvLimit"] == 20000 for p in proposal.filled)
+
+
+def test_a_change_by_hand_is_noticed_against_what_the_planner_wrote():
+    schedule = Schedule.from_fox(FakeInverter(owners_schedule()).scheduler("x"))
+    # Nothing written yet: only the very first schedule is saved, as before.
+    assert service.changed_by_hand(schedule, InverterControl())
+    assert not service.changed_by_hand(
+        schedule, InverterControl(original_schedule=schedule.to_snapshot())
+    )
+    # Once the planner has written, any difference from that is the owner's.
+    written = InverterControl(
+        original_schedule={"groups": []}, written_schedule=schedule.to_snapshot()
+    )
+    assert not service.changed_by_hand(schedule, written)
+    edited = Schedule.from_fox(
+        FakeInverter([*owners_schedule(), group((16, 1), (19, 0))]).scheduler("x")
+    )
+    assert service.changed_by_hand(edited, written)
 
 
 def test_matches_reports_differences():
@@ -253,7 +286,21 @@ def test_propose_clamps_to_the_inverters_ranges_and_explains():
     assert (added.fd_soc, added.fd_pwr, added.min_soc_on_grid) == (80, 3600, 10)
     assert any("use 10%, the lowest it writes" in n for n in proposal.notes)
     assert any("repeat every day" in n for n in proposal.notes)
-    assert [p.label() for p in proposal.after] == ["02:00–05:30", "16:00–19:00"]
+    assert [p.label() for p in proposal.after] == ["00:00–02:00", "02:00–05:30", "05:30–00:00"]
+
+
+def test_propose_keeps_the_grid_charge_under_the_owners_maximum():
+    system = system_with()
+    system.battery.max_grid_charge_percent = 95
+    schedule = Schedule.from_fox(FakeInverter().scheduler("x"))
+    proposal = service.propose(
+        system,
+        InverterControl(),
+        plan_for(utc(2026, 1, 11, 2, 0), utc(2026, 1, 11, 5, 0), target=99),
+        schedule,
+    )
+    assert proposal.added[0].fd_soc == 95 and proposal.target_soc_percent == 95
+    assert any("your grid charge maximum" in n for n in proposal.notes)
 
 
 def test_propose_replaces_last_nights_charge_even_when_it_doesnt_overlap():
@@ -263,16 +310,21 @@ def test_propose_replaces_last_nights_charge_even_when_it_doesnt_overlap():
     proposal = service.propose(
         system_with(), control, plan_for(utc(2026, 1, 11, 4, 0), utc(2026, 1, 11, 5, 0)), schedule
     )
-    assert [p.label() for p in proposal.after] == ["04:00–05:00"]
+    assert [p.label() for p in proposal.after] == ["00:00–04:00", "04:00–05:00", "05:00–00:00"]
     assert [p.label() for p in proposal.removed] == ["01:00–02:00"]
 
 
-def test_no_charge_writes_no_force_charge():
+def test_no_charge_writes_a_day_of_self_use():
     schedule = Schedule.from_fox(FakeInverter().scheduler("x"))
     proposal = service.propose(
         system_with(), InverterControl(), plan_for(None, None, charge_kwh=0), schedule
     )
-    assert proposal.added == [] and proposal.after == []
+    assert proposal.added == []
+    # Never as one 00:00-23:59 period, which Fox treats as its default.
+    assert [(p.label(), p.work_mode) for p in proposal.after] == [
+        ("00:00–12:00", "SelfUse"),
+        ("12:00–00:00", "SelfUse"),
+    ]
     assert "No charge is needed" in proposal.notes[0]
 
 
@@ -288,8 +340,13 @@ def test_hold_before_the_charge_is_a_forced_charge_to_the_floor():
         ),
         schedule,
     )
-    labels = [(p.label(), p.fd_soc) for p in proposal.after]
-    assert labels == [("00:00–03:40", 10), ("03:40–05:30", 80), ("23:30–00:00", 10)]
+    labels = [(p.label(), p.work_mode, p.fd_soc) for p in proposal.after]
+    assert labels == [
+        ("00:00–03:40", "ForceCharge", 10),
+        ("03:40–05:30", "ForceCharge", 80),
+        ("05:30–23:30", "SelfUse", 10),
+        ("23:30–00:00", "ForceCharge", 10),
+    ]
     assert proposal.hold_stop == proposal.start
     assert any("battery is held" in n for n in proposal.notes)
 
@@ -302,7 +359,11 @@ def test_no_charge_still_holds_the_battery_through_the_window():
         plan_for(None, None, charge_kwh=0, hold=(utc(2026, 1, 11, 0, 30), utc(2026, 1, 11, 5, 30))),
         schedule,
     )
-    assert [(p.label(), p.fd_soc) for p in proposal.after] == [("00:30–05:30", 10)]
+    assert [(p.label(), p.work_mode, p.fd_soc) for p in proposal.after] == [
+        ("00:00–00:30", "SelfUse", 10),
+        ("00:30–05:30", "ForceCharge", 10),
+        ("05:30–00:00", "SelfUse", 10),
+    ]
     assert proposal.start is None and proposal.target_soc_percent is None
 
 
@@ -323,22 +384,24 @@ def test_discharge_before_a_free_window_is_a_forced_discharge():
     assert modes == [
         ("00:00–03:00", "ForceCharge", 10, 3600),
         ("03:00–04:00", "ForceCharge", 80, 3600),
+        ("04:00–23:00", "SelfUse", 10, 0),
         ("23:00–00:00", "ForceDischarge", 10, 3600),
     ]
     assert proposal.discharge_soc_percent == 10
     assert any("stops at 10% rather than 5%" in n for n in proposal.notes)
 
 
-def test_full_schedule_is_refused():
+def test_a_full_schedule_is_replaced_not_refused():
+    # The owner's periods no longer count towards the limit: they're replaced.
     groups = [group((h, 0), (h, 29)) for h in range(1, 9)]
     schedule = Schedule.from_fox(FakeInverter(groups).scheduler("x"))
-    with pytest.raises(service.ControlError):
-        service.propose(
-            system_with(),
-            InverterControl(),
-            plan_for(utc(2026, 1, 11, 12, 0), utc(2026, 1, 11, 13, 0)),
-            schedule,
-        )
+    proposal = service.propose(
+        system_with(),
+        InverterControl(),
+        plan_for(utc(2026, 1, 11, 12, 0), utc(2026, 1, 11, 13, 0)),
+        schedule,
+    )
+    assert len(proposal.after) == 3 and len(proposal.removed) == 8
 
 
 # --- API -------------------------------------------------------------------------------------
@@ -449,13 +512,24 @@ def test_write_test_ladder_then_apply_clear_restore(client, headers, inverter):
     resp = client.put("/api/control", json={"enabled": True, "auto_apply": True}, headers=headers)
     assert resp.status_code == 200 and resp.json()["auto_apply"] is True
 
+    # Remove takes the planner's forced periods out; their times run in self-use, so the day
+    # stays covered.
     cleared = client.post("/api/control/clear", headers=headers).json()
-    assert cleared["status"] in ("ok", "skipped")
-    assert inverter.groups == original
+    assert cleared["status"] == "ok", cleared["message"]
+    assert all(g["workMode"] == "SelfUse" for g in inverter.groups)
+    minutes = {
+        m
+        for p in (Period.from_fox(g) for g in inverter.groups)
+        for m in range(p.start, p.end + 1)
+    }
+    assert minutes == set(range(24 * 60))
 
+    # Restore puts back the owner's own schedule and stops the nightly apply.
     restored = client.post("/api/control/restore", headers=headers).json()
     assert restored["status"] == "ok", restored["message"]
+    assert "nightly apply is turned off" in restored["message"]
     assert inverter.groups == original and inverter.enable == 1
+    assert client.get("/api/control", headers=headers).json()["auto_apply"] is False
 
     log = client.get("/api/control", headers=headers).json()["actions"]
     assert {a["kind"] for a in log} >= {"opt_in", "test", "apply", "clear", "restore"}
@@ -629,9 +703,14 @@ def test_nightly_applies_once_in_the_evening(client, headers, inverter, weather)
         early = cycle.night_start - timedelta(hours=5)
         assert run_once(db, inverter, weather, early) == []
         evening = cycle.night_start - timedelta(hours=1)
+        # The owner changes the schedule by hand during the day: the nightly apply saves that
+        # as the latest manual schedule, then writes the whole day again.
+        inverter.groups = [{**inverter.groups[0], "workMode": "Feedin"}]
         (action,) = run_once(db, inverter, weather, evening)
         assert action.trigger == ControlTrigger.auto
         assert action.status == ControlStatus.ok, action.message
+        db.refresh(control)
+        assert control.original_schedule["groups"][0]["workMode"] == "Feedin"
         assert run_once(db, inverter, weather, evening + timedelta(minutes=10)) == []
 
 
@@ -639,12 +718,16 @@ def test_apply_with_nothing_to_change_writes_nothing(monkeypatch):
     monkeypatch.setattr(
         service, "_log", lambda db, system, kind, trigger, status, message, **kw: status
     )
-    inverter = FakeInverter()
-    schedule = Schedule.from_fox(inverter.scheduler("x"))
     system = system_with()
     system.fox_ess = SimpleNamespace(device_sn="INV1")
     control = InverterControl()
-    proposal = service.propose(system, control, plan_for(None, None, charge_kwh=0), schedule)
+    plan = plan_for(None, None, charge_kwh=0)
+    # The inverter already holds exactly the whole day the plan would write.
+    empty = Schedule.from_fox(FakeInverter().scheduler("x"))
+    tonight = service.propose(system, control, plan, empty)
+    inverter = FakeInverter([p.to_fox() for p in tonight.after])
+    proposal = service.propose(system, control, plan, Schedule.from_fox(inverter.scheduler("x")))
+    assert not proposal.changes
     status = service.apply(None, system, control, inverter, proposal, ControlTrigger.manual)
     assert status == ControlStatus.skipped
     assert inverter.writes == []

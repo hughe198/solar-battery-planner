@@ -194,6 +194,14 @@ evening's dry run, apply, and check the battery level next morning against the p
 
 - [ ] One night, then several, with the morning level matching the plan.
 
+**Whole-day control (from 9 November 2026).** Apply now writes the whole day, replacing the
+owner's own periods (see docs/inverter-api-test-plan.md). Before relying on it nightly:
+
+- [x] One supervised apply (9 November 2026): the preview lists your periods as "Yours, replaced" and the day as
+  self-use around the planner's charge, at a 10% minimum and up to your grid charge maximum.
+  After sending, the Fox app shows exactly that, every minute covered.
+- [ ] Restore puts back your own schedule and turns off the nightly apply.
+
 ## Stage 7: Automatic apply
 
 Last, after at least a week of stage 6 with no surprises. Writes stay on, and
@@ -223,3 +231,5 @@ pack, the AI's answer or a screenshot.
 | 2026-11-05 | 5 | Write test step 6, remove the live test | Hugh, Claude | Mismatch, then seen working | Same delay as step 5 (D15): a read straight after showed the test charge gone and the gaps filled |
 | 2026-11-05 | 5 | Restore | Hugh, Claude | Pass | The six periods from step 2, every minute covered, copied settings gone, confirmed by a separate read |
 | 2026-11-05 | 5 | Writes switched off again | Hugh, Claude | Pass | `SBP_INVERTER_WRITES=false`, server restarted and confirmed |
+| 2026-11-09 | 6 | First real night applied from the app: hold 02:00–03:00, charge to 89% 03:00–05:00 | Hugh, Claude | Pass | Read back as written; the only difference was `pvLimit` (D14), harmless as the panels peak near 3.2 kW. The preview showed the owner's own periods kept beside the charge, which led to whole-day control |
+| 2026-11-09 | 6 | First whole-day apply: self-use 00:00–02:00, hold 02:00–03:00, charge to 89% 03:00–05:00, self-use 05:00–24:00 | Hugh, Claude | Pass | Four periods, read back as written, 10% minimum and 100% maximum, under the 95% grid charge maximum. Self-use kept the inverter's 20 kW solar limit; Fox set 24 kW on the forced periods (D14, harmless). The saved manual schedule is still 5 November's |

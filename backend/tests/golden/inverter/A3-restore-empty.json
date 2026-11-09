@@ -1,5 +1,5 @@
 {
-  "scenario": "Remove the only period: empty list (D3)",
+  "scenario": "Restore an empty schedule: empty list, off (D3)",
   "requests": [
     {
       "method": "POST",
@@ -34,7 +34,7 @@
     }
   ],
   "outcome": "ok",
-  "message": "The planner's force charge periods were removed.",
+  "message": "Your manual schedule was put back and read back as saved.",
   "inverter_after": {
     "enable": 0,
     "groups": []

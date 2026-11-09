@@ -87,7 +87,29 @@ def add_big_load_settings(engine: Engine) -> None:
                 conn.execute(text(f"ALTER TABLE systems ADD COLUMN {name} {kind}"))
 
 
+def add_whole_day_control(engine: Engine) -> None:
+    """The grid charge maximum on batteries (100%, no limit, for existing systems), and the
+    schedule the planner last wrote on inverter controls (unknown for existing ones)."""
+    inspector = inspect(engine)
+    steps = []
+    if inspector.has_table("batteries"):
+        if "max_grid_charge_percent" not in {c["name"] for c in inspector.get_columns("batteries")}:
+            steps.append(
+                "ALTER TABLE batteries ADD COLUMN max_grid_charge_percent FLOAT NOT NULL "
+                "DEFAULT 100"
+            )
+    if inspector.has_table("inverter_controls"):
+        have = {c["name"] for c in inspector.get_columns("inverter_controls")}
+        if "written_schedule" not in have:
+            steps.append("ALTER TABLE inverter_controls ADD COLUMN written_schedule JSON")
+    if steps:
+        with engine.begin() as conn:
+            for step in steps:
+                conn.execute(text(step))
+
+
 def upgrade(engine: Engine) -> None:
     upgrade_single_window_tariffs(engine)
     add_battery_wear_cost(engine)
     add_big_load_settings(engine)
+    add_whole_day_control(engine)

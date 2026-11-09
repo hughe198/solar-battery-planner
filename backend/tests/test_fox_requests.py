@@ -159,6 +159,20 @@ def system_in(tz="UTC", min_soc=10.0):
     return SimpleNamespace(battery=battery, timezone=tz, fox_ess=SimpleNamespace(device_sn=SN))
 
 
+def forced(groups):
+    """The forced periods among groups as Fox holds them."""
+    return [g for g in groups if g["workMode"] in ("ForceCharge", "ForceDischarge")]
+
+
+def covered(groups):
+    """Every minute the groups cover."""
+    return {
+        m
+        for p in (Period.from_fox(g) for g in groups)
+        for m in range(p.start, p.end + 1)
+    }
+
+
 def golden(name: str, cloud: FoxCloud, outcome, note: str) -> None:
     actual = {
         "scenario": note,
@@ -291,11 +305,17 @@ def test_s5_discharge_hold_charge(writes_on, logged):
 
 
 def test_s6_nothing_to_do_only_reads(writes_on, logged):
+    # The inverter already holds exactly tonight's whole day: one read, no write.
     cloud = FoxCloud([group((16, 0), (18, 59))])
-    _, outcome, _ = apply_scenario(cloud, plan_for(None, None, charge_kwh=0))
+    plan = plan_for(None, None, charge_kwh=0)
+    _, _, control = apply_scenario(cloud, plan)
+    cloud.requests.clear()
+    _, outcome, _ = apply_scenario(cloud, plan, control=control)
     assert outcome.status == ControlStatus.skipped
     assert cloud.writes() == []
-    golden("S6-nothing-to-do", cloud, outcome, "No charge or hold: one read, no write")
+    golden(
+        "S6-nothing-to-do", cloud, outcome, "Tonight's whole day already there: one read, no write"
+    )
 
 
 def test_t1_window_crossing_midnight(writes_on, logged):
@@ -311,29 +331,40 @@ def test_t5_local_wall_clock_in_summer(writes_on, logged):
     plan = plan_for(utc(2026, 6, 11, 1, 0), utc(2026, 6, 11, 3, 0))
     _, outcome, _ = apply_scenario(cloud, plan, system_in("Europe/London"))
     assert outcome.status == ControlStatus.ok, outcome.message
-    assert (cloud.groups[0]["startHour"], cloud.groups[0]["endHour"]) == (2, 3)
+    (charge,) = forced(cloud.groups)
+    assert (charge["startHour"], charge["endHour"]) == (2, 3)
     golden("T5-london-summer", cloud, outcome, "01:00–03:00 UTC is written as 02:00–04:00 BST")
 
 
-def test_e2_users_periods_go_back_field_for_field(writes_on, logged):
+def test_e2_users_periods_are_replaced_and_put_back_by_restore(writes_on, logged):
+    # Whole-day control: the user's periods go, saved first; their installer limits carry on.
     own = [
         group((7, 0), (8, 59), "SelfUse", maxSoc="100", pvLimit=4000, unknownField="kept"),
         group((16, 0), (18, 59), "Feedin", fdSoc=10, fdPwr=0, minSocOnGrid=10),
     ]
     cloud = FoxCloud(own)
     plan = plan_for(utc(2026, 1, 11, 2, 0), utc(2026, 1, 11, 5, 0))
-    _, outcome, _ = apply_scenario(cloud, plan)
+    _, outcome, control = apply_scenario(cloud, plan)
     assert outcome.status == ControlStatus.ok, outcome.message
-    # Every field as read, numeric strings sent as numbers (D10): maxSoc "100" goes as 100.
-    for g in own:
-        assert v3_group(g) in cloud.groups
-    assert cloud.groups[1]["extraParam"]["maxSoc"] == 100
+    assert [(g["workMode"], g["startHour"]) for g in cloud.groups] == [
+        ("SelfUse", 0),
+        ("ForceCharge", 2),
+        ("SelfUse", 5),
+    ]
+    self_use = [g for g in cloud.groups if g["workMode"] == "SelfUse"]
+    assert all(g["extraParam"].get("pvLimit") == 4000 for g in self_use)
+    assert covered(cloud.groups) == set(range(24 * 60))
     golden(
-        "E2-users-periods-kept",
+        "E2-users-periods-replaced",
         cloud,
         outcome,
-        "User's two periods kept exactly, unknown fields too",
+        "User's two periods replaced by the whole day; their solar limit kept",
     )
+    # Restore puts them back field for field, numeric strings sent as numbers (D10).
+    service.restore(None, system_in(), control, cloud.client())
+    for g in own:
+        assert v3_group(g) in cloud.groups
+    assert cloud.groups[0]["extraParam"]["maxSoc"] == 100
 
 
 def test_e5_last_nights_charge_is_replaced(writes_on, logged):
@@ -342,21 +373,22 @@ def test_e5_last_nights_charge_is_replaced(writes_on, logged):
     cloud.requests.clear()
     plan = plan_for(utc(2026, 1, 12, 4, 0), utc(2026, 1, 12, 5, 0))
     _, outcome, _ = apply_scenario(cloud, plan, control=control)
-    assert [(g["startHour"], g["endHour"]) for g in cloud.groups] == [(4, 4)]
+    assert [(g["startHour"], g["endHour"]) for g in forced(cloud.groups)] == [(4, 4)]
     golden(
         "E5-replace-last-night", cloud, outcome, "Yesterday's 01:00–02:00 replaced by 04:00–05:00"
     )
 
 
-def test_a2_clear_keeps_the_users_periods(writes_on, logged):
+def test_a2_clear_turns_the_planners_charge_into_self_use(writes_on, logged):
     own = group((16, 0), (18, 59), "Feedin", fdSoc=10, fdPwr=0, minSocOnGrid=10)
     cloud = FoxCloud([own])
     _, _, control = apply_scenario(cloud, plan_for(utc(2026, 1, 11, 2, 0), utc(2026, 1, 11, 5, 0)))
     cloud.requests.clear()
     outcome = service.clear(None, system_in(), control, cloud.client())
     assert outcome.status == ControlStatus.ok, outcome.message
-    assert cloud.groups == [own]
-    golden("A2-clear", cloud, outcome, "Remove the planner's charge, keep the user's period")
+    assert forced(cloud.groups) == []
+    assert covered(cloud.groups) == set(range(24 * 60))
+    golden("A2-clear", cloud, outcome, "Remove the planner's charge: its hours run in self-use")
 
 
 def test_a4_restore_puts_back_the_original(writes_on, logged):
@@ -384,14 +416,15 @@ def test_d1_hold_only_night_applies(writes_on, logged):
     golden("S2-hold-only", cloud, outcome, "Hold 00:30–05:30, no charge (D1)")
 
 
-def test_d3_clearing_the_last_period_removes_it(writes_on, logged):
+def test_d3_restoring_an_empty_schedule_sends_an_empty_list(writes_on, logged):
+    # D3: an empty list is how every period is removed.
     cloud = FoxCloud()
     _, _, control = apply_scenario(cloud, plan_for(utc(2026, 1, 11, 2, 0), utc(2026, 1, 11, 5, 0)))
     cloud.requests.clear()
-    outcome = service.clear(None, system_in(), control, cloud.client())
+    outcome = service.restore(None, system_in(), control, cloud.client())
     assert outcome.status == ControlStatus.ok, outcome.message
     assert (cloud.groups, cloud.enable) == ([], 0)
-    golden("A3-clear-last-period", cloud, outcome, "Remove the only period: empty list (D3)")
+    golden("A3-restore-empty", cloud, outcome, "Restore an empty schedule: empty list, off (D3)")
 
 
 def test_d4_failed_switch_on_still_records_what_was_written(writes_on, logged):
@@ -404,7 +437,7 @@ def test_d4_failed_switch_on_still_records_what_was_written(writes_on, logged):
     assert control.written_groups, "so the app must remember them for Remove"
     # And Remove does take them out.
     assert service.clear(None, system_in(), control, cloud.client()).status == ControlStatus.ok
-    assert cloud.groups == []
+    assert forced(cloud.groups) == []
 
 
 def test_d4_a_lost_reply_counts_as_maybe_written(writes_on, logged):
@@ -421,7 +454,9 @@ def test_d4_a_lost_reply_counts_as_maybe_written(writes_on, logged):
     _, outcome, control = apply_scenario_unchecked(cloud)
     assert outcome.status == ControlStatus.failed
     assert "may have been written" in outcome.message
-    assert cloud.groups and control.written_groups == cloud.groups
+    assert cloud.groups and control.written_groups == forced(cloud.groups)
+    # Nothing is known of what arrived, so the latest manual schedule saved isn't replaced.
+    assert control.written_schedule is None
 
 
 def test_d4_a_refused_write_records_nothing(writes_on, logged):
@@ -595,24 +630,6 @@ def test_d9_master_switch_read_as_string_or_number(value, on):
     assert Schedule.from_fox({"enable": value, "groups": []}).enabled is on
 
 
-def test_d5_partly_overlapped_period_keeps_the_rest(writes_on, logged):
-    own = group((0, 0), (6, 59), "SelfUse", pvLimit=4000)
-    cloud = FoxCloud([own, group((16, 0), (18, 59), "Feedin")])
-    plan = plan_for(utc(2026, 1, 11, 2, 0), utc(2026, 1, 11, 5, 0))
-    proposal, outcome, _ = apply_scenario(cloud, plan)
-    assert outcome.status == ControlStatus.ok, outcome.message
-    assert [Period.from_fox(g).label() for g in cloud.groups] == [
-        "00:00–02:00",
-        "02:00–05:00",
-        "05:00–07:00",
-        "16:00–19:00",
-    ]
-    assert cloud.groups[0]["extraParam"] == {"pvLimit": 4000}
-    assert any("kept for 00:00–02:00, 05:00–07:00" in n for n in proposal.notes)
-    assert not [c for c in check(proposal, "UTC") if c.status == "fail"]
-    golden("E3-partly-overlapped", cloud, outcome, "User's 00:00–07:00 SelfUse kept around 02:00–05:00")
-
-
 def test_d7_max_soc_on_every_forced_period_when_reported():
     props = PROPERTIES | {"maxsoc": {"range": {"min": 10, "max": 100}}}
     schedule = Schedule.from_fox(FoxCloud(properties=props).client().scheduler(SN))
@@ -643,21 +660,19 @@ def test_all_day_default_period_is_never_sent_and_is_checked(writes_on, logged):
     assert outcome.status == ControlStatus.ok, outcome.message
     sent = [Period.from_fox(g) for g in cloud.groups]
     assert all(not p.all_day for p in sent)
-    # D13: Fox dropped the default, and copies of it cover the times nothing else does.
+    # D13: Fox dropped the default, and the whole day is written, so nothing is left uncovered.
     assert cloud.default is None
     assert [(p.label(), p.work_mode) for p in sent] == [
         ("00:00–02:00", "SelfUse"),
         ("02:00–05:00", "ForceCharge"),
-        ("05:00–16:00", "SelfUse"),
-        ("16:00–19:00", "Feedin"),
-        ("19:00–00:00", "SelfUse"),
+        ("05:00–00:00", "SelfUse"),
     ]
-    assert any("all-day SelfUse period when the schedule is written" in n for n in proposal.notes)
+    assert any("whole day is written" in n for n in proposal.notes)
     golden(
         "E9-all-day-default",
         cloud,
         outcome,
-        "Fox's all-day default isn't sent; copies of it fill the times nothing else covers",
+        "Fox's all-day default isn't sent; the whole day is written instead",
     )
 
     # A write that still leaves a time with no period is reported, not passed.
@@ -742,4 +757,4 @@ def test_layer3_errors_at_each_call_leave_a_known_state(writes_on, logged, path,
     if on_inverter:
         assert control.written_groups, "periods on the inverter must be known to Remove"
     service.clear(None, system, control, cloud.client())
-    assert cloud.groups == []
+    assert forced(cloud.groups) == []

@@ -15,6 +15,8 @@ export interface Battery {
   round_trip_efficiency_percent: number;
   /** Pence of wear per full charge cycle (battery price / rated cycles); 0 to ignore. */
   wear_pence_per_cycle: number;
+  /** The highest level charged to from the grid, leaving room for solar; 100 for no limit. */
+  max_grid_charge_percent: number;
 }
 
 export interface SolarArray {

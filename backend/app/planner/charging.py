@@ -163,6 +163,17 @@ def learn_drain_from_history(db: Session, system: System) -> Drain:
     return learn_drain(BatterySpec.of(system.battery), _recent_records(db, system))
 
 
+def grid_charge_limit_kwh(
+    battery: BatterySpec, max_percent: float | None, start_kwh: float, reachable: float
+) -> float:
+    """The most a night's charge can put in: what the window reaches, but no more than the
+    owner's grid charge maximum, which leaves room for solar. A battery already above it isn't
+    charged (nor discharged to it)."""
+    if max_percent is None:
+        return reachable
+    return min(reachable, max(start_kwh, float(battery.kwh(max_percent))))
+
+
 def charge_hours(rate: ChargeRate, battery: BatterySpec, from_kwh: float, to_kwh: float) -> float:
     """Hours to raise the stored energy from one level to another."""
     if to_kwh <= from_kwh:

@@ -26,6 +26,7 @@ const SYSTEM = {
     max_discharge_kw: 5,
     round_trip_efficiency_percent: 90,
     wear_pence_per_cycle: 0,
+    max_grid_charge_percent: 100,
   },
   tariff: { name: 'Flux', preset: null, standing_charge_pence_per_day: 53, bands: BANDS },
   arrays: [{ name: 'South', kwp: 4, tilt_degrees: 35, azimuth_degrees: 180 }],
@@ -92,5 +93,24 @@ describe('SystemSetup tariff history', () => {
     fixture.componentInstance.submit();
     const req = http.expectOne((r) => r.method === 'PUT' && r.url === '/api/system');
     expect(req.request.body.tariff_effective_from).toBe('2026-03-01');
+  });
+
+  it('shows and saves the grid charge maximum', () => {
+    const fixture = TestBed.createComponent(SystemSetup);
+    fixture.detectChanges();
+    http
+      .expectOne('/api/system')
+      .flush({ ...SYSTEM, battery: { ...SYSTEM.battery, max_grid_charge_percent: 95 } });
+    http.expectOne('/api/system/tariff-history').flush([period(null, null, 7.5)]);
+    http.match('/api/system/tariff-presets').forEach((r) => r.flush([]));
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+    const input = el.querySelector<HTMLInputElement>(
+      'input[formControlName="max_grid_charge_percent"]',
+    )!;
+    expect(input.value).toBe('95');
+    fixture.componentInstance.submit();
+    const req = http.expectOne((r) => r.method === 'PUT' && r.url === '/api/system');
+    expect(req.request.body.battery.max_grid_charge_percent).toBe(95);
   });
 });

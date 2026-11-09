@@ -276,6 +276,25 @@ def test_charges_enough_to_last_through_the_peak_on_a_dull_day():
     assert any("16:00–19:00" in r and "dull" in r for r in own.reasons)
 
 
+def test_never_charges_above_the_owners_grid_charge_maximum():
+    # 95% leaves room for the next day's solar (owner's choice, 9 November 2026), even when
+    # a dull day would want more.
+    def house(k):
+        return 0.5 if 32 <= k < 38 else 0.25
+
+    forecast = make_forecast(house, grey, spread=0.5)
+    uncapped = plan(flux_system(), forecast, start_soc_percent=10).recommendations[0]
+    assert uncapped.target_soc_percent > 95
+    system = flux_system()
+    system.battery.max_grid_charge_percent = 95
+    result = plan(system, forecast, start_soc_percent=10)
+    assert max(c.target_soc_percent for c in result.candidates) == 95
+    assert result.recommendations[0].target_soc_percent == 95
+    # A battery already above it isn't charged.
+    above = plan(system, forecast, start_soc_percent=97).recommendations[0]
+    assert above.target_soc_percent == 97 and above.charge_kwh == 0
+
+
 def test_peak_rule_stays_out_when_no_charge_reaches_the_peak():
     # 43 kWh on the dull day: the battery is empty by mid-morning whatever the charge, so more
     # charge saves nothing at the peak and the cost score alone decides.
