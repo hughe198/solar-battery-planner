@@ -1,7 +1,13 @@
 import { DecimalPipe } from '@angular/common';
 import { Component, computed, input } from '@angular/core';
 import { RouterLink } from '@angular/router';
-import { describeInProgress, localDate, localTime, weekday } from '../../core/charge-summary';
+import {
+  describeInProgress,
+  localDate,
+  localTime,
+  sentBadge,
+  weekday,
+} from '../../core/charge-summary';
 import {
   ControlAction,
   DayForecast,
@@ -402,15 +408,5 @@ export class TonightCard {
   });
 
   /** Whether tonight's plan has been sent to the inverter; null when automation isn't on. */
-  readonly sent = computed(() => {
-    const actions = this.actions();
-    const plan = this.plan();
-    if (!actions || !plan) return null;
-    const applied = actions.find(
-      (a) => a.kind === 'apply' && a.day === plan.day && a.status === 'ok',
-    );
-    return applied
-      ? { sent: true, label: 'Sent to inverter' }
-      : { sent: false, label: 'Not sent yet' };
-  });
+  readonly sent = computed(() => sentBadge(this.actions(), this.plan()?.day));
 }

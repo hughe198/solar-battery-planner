@@ -1,4 +1,4 @@
-import { InProgressCharge } from './models';
+import { ControlAction, InProgressCharge } from './models';
 
 /** "YYYY-MM-DD" in a time zone. */
 export function localDate(moment: number, timeZone?: string): string {
@@ -79,4 +79,19 @@ export function describeInProgress(
       `In progress. Its score comes after ${localTime(c.scored_after, timeZone)} ${scoredOn}, ` +
       'once that data is imported.',
   };
+}
+
+/**
+ * Whether the plan for `day` has been sent to the inverter, for a badge; null when automation
+ * is off (no actions given), as "not sent" means nothing then.
+ */
+export function sentBadge(
+  actions: ControlAction[] | null,
+  day: string | undefined,
+): { sent: boolean; label: string } | null {
+  if (!actions || !day) return null;
+  const applied = actions.some((a) => a.kind === 'apply' && a.day === day && a.status === 'ok');
+  return applied
+    ? { sent: true, label: 'Sent to inverter' }
+    : { sent: false, label: 'Not sent yet' };
 }

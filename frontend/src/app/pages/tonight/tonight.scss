@@ -1,0 +1,31 @@
+.steps {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+
+  li {
+    padding: var(--space-1) 0;
+    font-size: var(--text-sm);
+  }
+
+  li + li {
+    border-top: 1px solid var(--border);
+  }
+}
+
+.tonight-plan .verdict {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-sm);
+}
+
+.tonight-forecast .tile {
+  gap: 2px;
+}
+
+details.disclosure .plan-modes {
+  margin-top: var(--space-2);
+}
+
+details.disclosure .tiles {
+  margin-top: var(--space-3);
+}

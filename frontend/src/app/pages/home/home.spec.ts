@@ -139,6 +139,7 @@ describe('Home', () => {
   let http: HttpTestingController;
 
   beforeEach(async () => {
+    localStorage.clear();
     await TestBed.configureTestingModule({
       imports: [Home],
       providers: [provideRouter([]), provideHttpClient(), provideHttpClientTesting()],

@@ -2,10 +2,13 @@ import { DecimalPipe } from '@angular/common';
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { RouterLink } from '@angular/router';
+import { dayLabel, sentBadge } from '../../core/charge-summary';
+import { ControlService } from '../../core/control.service';
 import { errorMessage } from '../../core/errors';
 import { ForecastService } from '../../core/forecast.service';
 import {
   ChargePlan,
+  ControlAction,
   DayForecast,
   ForecastMethod,
   IntervalForecast,
@@ -15,7 +18,9 @@ import { MODE_LABELS, PlanService, formatPence } from '../../core/plan.service';
 import { SystemService } from '../../core/system.service';
 import { cheapestImport, rateRange } from '../../core/tariff';
 import { USAGE_LABELS } from '../../core/usage.service';
+import { Explain } from '../../shared/explain';
 import { UsageSelector } from '../../shared/usage-selector';
+import { weatherIcon } from '../home/home-cards';
 
 const WIDTH = 720;
 const HEIGHT = 280;
@@ -60,13 +65,20 @@ interface Slot {
  */
 @Component({
   selector: 'app-tonight',
-  imports: [DecimalPipe, RouterLink, UsageSelector],
+  imports: [DecimalPipe, RouterLink, UsageSelector, Explain],
   templateUrl: './tonight.html',
+  styleUrl: './tonight.scss',
 })
 export class Tonight implements OnInit {
   private readonly forecasts = inject(ForecastService);
   private readonly plans = inject(PlanService);
+  private readonly control = inject(ControlService);
   readonly system = toSignal(inject(SystemService).get());
+  readonly weatherIcon = weatherIcon;
+  /** The inverter control's recent actions, or null when automation is off. */
+  readonly controlActions = signal<ControlAction[] | null>(null);
+  /** Whether the plan shown has been sent to the inverter. */
+  readonly sent = computed(() => sentBadge(this.controlActions(), this.plan()?.day));
 
   readonly forecast = signal<DayForecast | null>(null);
   readonly plan = signal<ChargePlan | null>(null);
@@ -395,6 +407,15 @@ export class Tonight implements OnInit {
 
   ngOnInit(): void {
     this.load();
+    this.control.status().subscribe({
+      next: (c) => this.controlActions.set(c.enabled ? c.actions : null),
+      error: () => this.controlActions.set(null),
+    });
+  }
+
+  /** "Tuesday", for a local day "YYYY-MM-DD". */
+  weekdayOf(day: string): string {
+    return dayLabel(day).split(' ')[0];
   }
 
   load(day?: string): void {
