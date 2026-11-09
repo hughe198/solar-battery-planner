@@ -4,8 +4,8 @@
   how close the forecast has been.
 </p>
 <p>
-  <button type="button" class="secondary" (click)="openSavings()">
-    Savings from solar and battery
+  <button type="button" class="secondary savings-open" (click)="openSavings()">
+    Savings from solar and battery ›
   </button>
 </p>
 
@@ -34,31 +34,33 @@
 </dialog>
 
 @if (week(); as w) {
-  <h2>Your last {{ w.days }} days</h2>
-  <div class="tiles">
-    <div class="card tile">
-      <span class="muted">Self-sufficiency</span>
-      <strong>{{
-        w.selfSufficiency === null ? '–' : (w.selfSufficiency | number: '1.0-0') + '%'
-      }}</strong>
-      <span class="muted">of use not from the grid</span>
+  <section class="card history-week">
+    <h2 class="eyebrow">Your last {{ w.days }} days</h2>
+    <div class="tiles">
+      <div class="tile">
+        <span class="muted">Self-sufficiency</span>
+        <strong>{{
+          w.selfSufficiency === null ? '–' : (w.selfSufficiency | number: '1.0-0') + '%'
+        }}</strong>
+        <span class="muted">of use not from the grid</span>
+      </div>
+      <div class="tile">
+        <span class="muted">Imports</span>
+        <strong>{{ pence(w.importCost) }}</strong>
+        <span class="muted">{{ w.importKwh | number: '1.0-1' }} kWh</span>
+      </div>
+      <div class="tile">
+        <span class="muted">Exports</span>
+        <strong>{{ pence(w.exportRevenue) }}</strong>
+        <span class="muted">{{ w.exportKwh | number: '1.0-1' }} kWh</span>
+      </div>
+      <div class="tile">
+        <span class="muted">Net</span>
+        <strong>{{ pence(w.importCost - w.exportRevenue) }}</strong>
+        <span class="muted">imports less exports</span>
+      </div>
     </div>
-    <div class="card tile">
-      <span class="muted">Imports</span>
-      <strong>{{ pence(w.importCost) }}</strong>
-      <span class="muted">{{ w.importKwh | number: '1.0-1' }} kWh</span>
-    </div>
-    <div class="card tile">
-      <span class="muted">Exports</span>
-      <strong>{{ pence(w.exportRevenue) }}</strong>
-      <span class="muted">{{ w.exportKwh | number: '1.0-1' }} kWh</span>
-    </div>
-    <div class="card tile">
-      <span class="muted">Net</span>
-      <strong>{{ pence(w.importCost - w.exportRevenue) }}</strong>
-      <span class="muted">imports less exports</span>
-    </div>
-  </div>
+  </section>
 
   <section class="card">
     <h2>Self-sufficiency and battery range</h2>
@@ -290,40 +292,45 @@
         </div>
       }
     </div>
-    <table class="backtest">
-      <thead>
-        <tr>
-          <th>Day</th>
-          <th>Usage: actual / predicted</th>
-          <th>Solar: actual / predicted</th>
-        </tr>
-      </thead>
-      <tbody>
-        @for (d of b.days; track d.day) {
-          <tr>
-            <td>{{ d.day }}</td>
-            <td>
-              <span class="bar load" [style.width.%]="barWidth(d.load_actual_kwh)"></span>
-              <span
-                class="bar load predicted"
-                [style.width.%]="barWidth(d.load_predicted_kwh)"
-              ></span>
-              {{ d.load_actual_kwh | number: '1.1-1' }} /
-              {{ d.load_predicted_kwh | number: '1.1-1' }}
-            </td>
-            <td>
-              <span class="bar solar" [style.width.%]="barWidth(d.solar_actual_kwh)"></span>
-              <span
-                class="bar solar predicted"
-                [style.width.%]="barWidth(d.solar_predicted_kwh)"
-              ></span>
-              {{ d.solar_actual_kwh | number: '1.1-1' }} /
-              {{ d.solar_predicted_kwh | number: '1.1-1' }}
-            </td>
-          </tr>
-        }
-      </tbody>
-    </table>
+    <details class="disclosure chart-disclosure">
+      <summary>Day by day</summary>
+      <div class="table-scroll">
+        <table class="backtest">
+          <thead>
+            <tr>
+              <th>Day</th>
+              <th>Usage: actual / predicted</th>
+              <th>Solar: actual / predicted</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (d of b.days; track d.day) {
+              <tr>
+                <td>{{ d.day }}</td>
+                <td>
+                  <span class="bar load" [style.width.%]="barWidth(d.load_actual_kwh)"></span>
+                  <span
+                    class="bar load predicted"
+                    [style.width.%]="barWidth(d.load_predicted_kwh)"
+                  ></span>
+                  {{ d.load_actual_kwh | number: '1.1-1' }} /
+                  {{ d.load_predicted_kwh | number: '1.1-1' }}
+                </td>
+                <td>
+                  <span class="bar solar" [style.width.%]="barWidth(d.solar_actual_kwh)"></span>
+                  <span
+                    class="bar solar predicted"
+                    [style.width.%]="barWidth(d.solar_predicted_kwh)"
+                  ></span>
+                  {{ d.solar_actual_kwh | number: '1.1-1' }} /
+                  {{ d.solar_predicted_kwh | number: '1.1-1' }}
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </details>
     <p class="muted">
       Tomorrow's solar range is wider than these errors suggest, because the weather itself is a
       forecast.

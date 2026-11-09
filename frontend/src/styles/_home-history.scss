@@ -181,3 +181,33 @@ dialog.modal {
     color: var(--text);
   }
 }
+
+// History: the week's figures in one card, two to a row on phones.
+.history-week {
+  .tiles {
+    grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+    gap: var(--space-3);
+    margin-bottom: 0;
+  }
+
+  .tile {
+    padding: var(--space-2) 0;
+  }
+}
+
+.savings-open {
+  width: 100%;
+
+  @media (min-width: 40rem) {
+    width: auto;
+  }
+}
+
+// Data: the import figures in one card, like History's week.
+.data-status {
+  .tiles {
+    grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+    gap: var(--space-3);
+    margin-bottom: 0;
+  }
+}

@@ -68,3 +68,29 @@
   justify-content: space-between;
   margin-left: 5.5rem;
 }
+
+// The save button stays in reach at the foot of the screen while the long form scrolls,
+// sitting just above the tab bar on phones.
+.setup .save-bar {
+  position: sticky;
+  bottom: calc(var(--tab-bar-height) + env(safe-area-inset-bottom));
+  z-index: 5;
+  margin: var(--space-4) calc(-1 * var(--gutter)) 0;
+  padding: var(--space-3) var(--gutter);
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+
+  button {
+    width: 100%;
+  }
+
+  @media (min-width: 48rem) {
+    bottom: 0;
+    margin-inline: 0;
+    padding-inline: 0;
+
+    button {
+      width: auto;
+    }
+  }
+}
