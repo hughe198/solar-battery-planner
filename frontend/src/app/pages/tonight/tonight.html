@@ -1,8 +1,4 @@
-<h1>{{ system()?.name ?? 'Tonight' }}</h1>
-<p class="muted">
-  The overnight charge for the day you pick, played out half hour by half hour over the forecast for
-  your home's usage and solar, and on a dull and a bright version of that day.
-</p>
+<h1>Tonight</h1>
 
 @if (shownDay(); as day) {
   <nav class="day-stepper" aria-label="Choose a day">
@@ -29,7 +25,6 @@
       ›
     </button>
   </nav>
-  <app-usage-selector [day]="day" (levelChange)="usageLevel.set($event)" (changed)="load(day)" />
 }
 
 @if (error()) {
@@ -37,141 +32,123 @@
 }
 
 @if (plan(); as p) {
-  <section class="card">
-    <h2>Charge before {{ dayLabel(p.day) }}</h2>
-    <label class="soc-input">
-      Battery level just before the cheap window opens at {{ localTime(p.charge_start) }} (%)
-      <span class="row">
-        <input #soc type="number" min="0" max="100" step="1" [value]="p.start_soc_percent" />
-        <button type="button" class="secondary" (click)="recalculate(soc.value)">
-          Recalculate
-        </button>
-      </span>
-    </label>
-
-    <div class="plan-modes">
-      @for (r of p.recommendations; track r.mode; let first = $first) {
-        <section class="card" [class.chosen]="first">
-          <span class="muted">{{ modeLabels[r.mode] }}{{ first ? ' (your mode)' : '' }}</span>
-          <div class="target">{{ r.target_soc_percent | number: '1.0-0' }}%</div>
-          <p>
-            @if (r.discharge_start) {
-              <strong
-                >Force discharge {{ localTime(r.discharge_start) }}–{{
-                  localTime(r.discharge_stop)
-                }}</strong
-              >
-              to {{ r.discharge_to_percent | number: '1.0-0' }}%:
-              {{ r.discharge_kwh | number: '1.1-1' }} kWh exported, earning
-              {{ pence(r.discharge_revenue_pence) }}.<br />
+  @if (recommendation(); as r) {
+    <section class="card tonight-plan">
+      <p class="eyebrow">
+        <span>Charge before {{ weekdayOf(p.day) }}</span>
+        @if (sent(); as s) {
+          <span class="badge" [class.good]="s.sent" [class.warn]="!s.sent">{{ s.label }}</span>
+        }
+      </p>
+      <p class="figure">
+        @if (r.force_charge_start) {
+          {{ r.target_soc_percent | number: '1.0-0' }}%
+          <small>by {{ localTime(r.force_charge_stop) }}</small>
+        } @else {
+          No charge
+        }
+      </p>
+      <ul class="steps">
+        @if (r.discharge_start) {
+          <li>
+            Export {{ localTime(r.discharge_start) }}–{{ localTime(r.discharge_stop) }} down to
+            {{ r.discharge_to_percent | number: '1.0-0' }}%, earning
+            {{ pence(r.discharge_revenue_pence) }}
+          </li>
+        }
+        @if (r.hold_start) {
+          <li>
+            Hold {{ localTime(r.hold_start) }}–{{ localTime(r.hold_stop) }}, house on the grid
+          </li>
+        }
+        @if (r.force_charge_start) {
+          <li>
+            Force charge {{ localTime(r.force_charge_start) }}–{{
+              localTime(r.force_charge_stop)
+            }}
+            · {{ r.charge_kwh | number: '1.1-1' }} kWh · about {{ pence(r.charge_cost_pence) }}
+            @if (!r.force_charge_reaches_target) {
+              <span class="muted">(may fall a little short)</span>
             }
-            @if (r.hold_start) {
-              <span class="muted"
-                >Hold the battery {{ localTime(r.hold_start) }}–{{ localTime(r.hold_stop) }}, house
-                on the grid.</span
-              ><br />
-            }
-            @if (r.force_charge_start) {
-              <strong
-                >Force charge {{ localTime(r.force_charge_start) }}–{{
-                  localTime(r.force_charge_stop)
-                }}</strong
-              >
-              ({{ duration(r.force_charge_minutes) }}): {{ r.charge_kwh | number: '1.1-1' }} kWh,
-              costing {{ pence(r.charge_cost_pence) }}.
-              @if (!r.force_charge_reaches_target) {
-                <span class="muted">It may fall a little short by the end of the cheap rate.</span>
-              }
-            } @else {
-              No charge needed.
-            }
-          </p>
-          <p class="muted">
-            Expected day: imports {{ pence(r.expected.import_cost_pence) }}, exports
-            {{ pence(r.expected.export_revenue_pence) }}, so it
-            {{ net(r.expected.net_cost_pence) }}.
-          </p>
-          @if (r.downsides.length) {
-            <div class="downsides">
-              <strong>Downsides</strong>
-              <ul>
-                @for (d of r.downsides; track $index) {
-                  <li>{{ d }}</li>
-                }
-              </ul>
-            </div>
-          }
-          @if (!first) {
-            <details>
-              <summary>Why</summary>
-              <ul class="plain">
-                @for (reason of r.reasons; track $index) {
-                  <li>{{ reason }}</li>
-                }
-              </ul>
-            </details>
-          }
-        </section>
+          </li>
+        }
+      </ul>
+      @if (verdict(); as v) {
+        <p class="verdict muted">{{ v }}</p>
       }
-    </div>
-    <p class="muted">
-      Want the planner to set this on your Fox ESS inverter?
-      <a routerLink="/automation">Automation</a> (off unless you turn it on).
+      @for (note of usageNotes(); track $index) {
+        <p class="usage-note">{{ note }}</p>
+      }
+      <app-explain
+        key="tonight-plan"
+        label="Plan"
+        [sentence]="r.summary ?? ''"
+        [points]="r.reasons"
+      />
+      <p class="card-link"><a routerLink="/automation">Review and send in Automation ›</a></p>
+    </section>
+  }
+}
+
+@if (shownDay(); as day) {
+  <section class="card tonight-usage">
+    <p class="eyebrow">
+      <span>How busy is {{ weekdayOf(day) }}?</span>
     </p>
+    <app-usage-selector [day]="day" (levelChange)="usageLevel.set($event)" (changed)="load(day)" />
   </section>
 }
 
 @if (forecast(); as f) {
-  <div class="tiles">
-    <div class="card tile">
-      <span class="muted">Usage</span>
-      <strong
-        >{{ f.load.expected | number: '1.1-1' }} kWh{{
-          usageLevel() !== 'normal' ? ', ' + usageLabels[usageLevel()].toLowerCase() : ''
-        }}</strong
-      >
-      <span class="muted"
-        >likely {{ f.load.low | number: '1.1-1' }}–{{ f.load.high | number: '1.1-1' }} kWh</span
-      >
-    </div>
-    <div class="card tile">
-      <span class="muted">Solar</span>
-      <strong>{{ f.solar.expected | number: '1.1-1' }} kWh</strong>
-      <span class="muted"
-        >likely {{ f.solar.low | number: '1.1-1' }}–{{ f.solar.high | number: '1.1-1' }} kWh</span
-      >
-      @if (goodSolar(); as good) {
-        <span class="muted good-solar">{{ good.text }}</span>
-      }
-    </div>
-    <div class="card tile">
-      <span class="muted">History used</span>
-      <strong>{{ f.history_days }} days</strong>
-      <span class="muted"><a routerLink="/data">Import more</a></span>
-    </div>
-  </div>
-
-  <section class="card">
-    @if (hasBattery() && recommendation(); as r) {
-      <h2>
-        @if (r.force_charge_start) {
-          Why charge to {{ r.target_soc_percent | number: '1.0-0' }}%
-        } @else {
-          Why no charge
+  <section class="card tonight-forecast">
+    <p class="eyebrow">
+      <span>{{ weekdayOf(f.day) }} forecast</span>
+      <span>{{ f.history_days }} days of history</span>
+    </p>
+    <div class="pair">
+      <div class="tile">
+        <span class="label">Usage</span>
+        <strong class="figure"
+          >{{ f.load.expected | number: '1.1-1' }} kWh{{
+            usageLevel() !== 'normal' ? ', ' + usageLabels[usageLevel()].toLowerCase() : ''
+          }}</strong
+        >
+        <span class="label"
+          >likely {{ f.load.low | number: '1.1-1' }}–{{ f.load.high | number: '1.1-1' }} kWh</span
+        >
+      </div>
+      <div class="tile">
+        <span class="label">Solar</span>
+        <strong class="figure">{{ f.solar.expected | number: '1.1-1' }} kWh</strong>
+        <span class="label"
+          >likely {{ f.solar.low | number: '1.1-1' }}–{{ f.solar.high | number: '1.1-1' }} kWh</span
+        >
+        @if (goodSolar(); as good) {
+          <span class="label good-solar">{{ good.text }}</span>
         }
-      </h2>
-      @if (verdict(); as v) {
-        <p class="verdict">{{ v }}</p>
-      }
-      @for (note of usageNotes(); track $index) {
-        <p class="usage-note">{{ note }}</p>
-      }
-    } @else {
-      <h2>Half-hourly forecast</h2>
-      @for (note of usageNotes(); track $index) {
-        <p class="usage-note">{{ note }}</p>
-      }
+      </div>
+    </div>
+    @if (f.weather; as w) {
+      <p class="weather-line">
+        <span class="icon" aria-hidden="true">{{ weatherIcon(w.headline) }}</span>
+        <span
+          ><strong>{{ w.headline }}</strong>
+          @if (w.detail) {
+            · {{ w.detail }}
+          }
+        </span>
+      </p>
+      <app-explain
+        key="tonight-weather"
+        label="Weather"
+        [sentence]="w.summary"
+        [points]="w.points"
+      />
     }
+  </section>
+
+  <details class="card disclosure tonight-chart">
+    <summary>Half-hourly forecast</summary>
     <svg
       class="forecast-chart"
       (mouseleave)="hovered.set(null)"
@@ -285,7 +262,7 @@
       @if (hover(); as h) {
         <strong>{{ h.text }}</strong>
       } @else {
-        <span class="muted">Hover over the chart to read the values.</span>
+        <span class="muted">Tap or hover over the chart to read the values.</span>
       }
     </p>
     <div class="chart-toggles">
@@ -359,18 +336,13 @@
           runs the house from the grid for the rest of the period.
         </p>
       }
-      <ul class="plain">
-        @for (reason of r.reasons; track $index) {
-          <li>{{ reason }}</li>
-        }
-      </ul>
     }
-  </section>
+  </details>
 
   @if (plan(); as p) {
     @if (scenarios().length) {
-      <section class="card">
-        <h2>If the day turns out differently</h2>
+      <details class="card disclosure">
+        <summary>If the day turns out differently</summary>
         <div class="table-scroll">
           <table class="plan-table">
             <thead>
@@ -416,69 +388,151 @@
               : ''
           }}).
         </p>
-      </section>
+      </details>
     }
+
+    <details class="card disclosure">
+      <summary>Both modes, with downsides</summary>
+      <div class="plan-modes">
+        @for (r of p.recommendations; track r.mode; let first = $first) {
+          <section class="card" [class.chosen]="first">
+            <span class="muted">{{ modeLabels[r.mode] }}{{ first ? ' (your mode)' : '' }}</span>
+            <div class="target">{{ r.target_soc_percent | number: '1.0-0' }}%</div>
+            <p>
+              @if (r.discharge_start) {
+                <strong
+                  >Force discharge {{ localTime(r.discharge_start) }}–{{
+                    localTime(r.discharge_stop)
+                  }}</strong
+                >
+                to {{ r.discharge_to_percent | number: '1.0-0' }}%:
+                {{ r.discharge_kwh | number: '1.1-1' }} kWh exported, earning
+                {{ pence(r.discharge_revenue_pence) }}.<br />
+              }
+              @if (r.hold_start) {
+                <span class="muted"
+                  >Hold the battery {{ localTime(r.hold_start) }}–{{ localTime(r.hold_stop) }},
+                  house on the grid.</span
+                ><br />
+              }
+              @if (r.force_charge_start) {
+                <strong
+                  >Force charge {{ localTime(r.force_charge_start) }}–{{
+                    localTime(r.force_charge_stop)
+                  }}</strong
+                >
+                ({{ duration(r.force_charge_minutes) }}): {{ r.charge_kwh | number: '1.1-1' }} kWh,
+                costing {{ pence(r.charge_cost_pence) }}.
+                @if (!r.force_charge_reaches_target) {
+                  <span class="muted"
+                    >It may fall a little short by the end of the cheap rate.</span
+                  >
+                }
+              } @else {
+                No charge needed.
+              }
+            </p>
+            <p class="muted">
+              Expected day: imports {{ pence(r.expected.import_cost_pence) }}, exports
+              {{ pence(r.expected.export_revenue_pence) }}, so it
+              {{ net(r.expected.net_cost_pence) }}.
+            </p>
+            @if (r.downsides.length) {
+              <div class="downsides">
+                <strong>Downsides</strong>
+                <ul>
+                  @for (d of r.downsides; track $index) {
+                    <li>{{ d }}</li>
+                  }
+                </ul>
+              </div>
+            }
+            @if (!first) {
+              <details>
+                <summary>Why</summary>
+                <ul class="plain">
+                  @for (reason of r.reasons; track $index) {
+                    <li>{{ reason }}</li>
+                  }
+                </ul>
+              </details>
+            }
+          </section>
+        }
+      </div>
+    </details>
+
+    <details class="card disclosure">
+      <summary>Try a different starting level</summary>
+      <label class="soc-input">
+        Battery level just before the cheap window opens at {{ localTime(p.charge_start) }} (%)
+        <span class="row">
+          <input #soc type="number" min="0" max="100" step="1" [value]="p.start_soc_percent" />
+          <button type="button" class="secondary" (click)="recalculate(soc.value)">
+            Recalculate
+          </button>
+        </span>
+      </label>
+    </details>
   }
 
-  <section class="card">
-    <details>
-      <summary>How this was predicted</summary>
-      <ul class="plain">
-        <li><strong>Usage:</strong> {{ methodLabels[f.load_method] }}.</li>
-        <li><strong>Solar:</strong> {{ methodLabels[f.solar_method] }}.</li>
-        @if (goodSolar(); as good) {
-          <li>
-            <strong>Good solar hours:</strong> the time your panels are forecast to make at least
-            {{ good.kw | number: '1.0-1' }} kW, a tenth of their
-            {{ good.kwp | number: '1.0-1' }} kWp.
-          </li>
-        }
-        @if (system(); as s) {
-          @for (array of s.arrays; track $index) {
-            @if (f.array_performance[$index] !== undefined) {
-              <li class="muted">
-                {{ array.name }} ({{ array.kwp }} kWp) delivers about
-                {{ f.array_performance[$index] * 100 | number: '1.0-0' }}% of its ideal output.
-              </li>
-            }
+  <details class="card disclosure">
+    <summary>How this was predicted</summary>
+    <ul class="plain">
+      <li><strong>Usage:</strong> {{ methodLabels[f.load_method] }}.</li>
+      <li><strong>Solar:</strong> {{ methodLabels[f.solar_method] }}.</li>
+      @if (goodSolar(); as good) {
+        <li>
+          <strong>Good solar hours:</strong> the time your panels are forecast to make at least
+          {{ good.kw | number: '1.0-1' }} kW, a tenth of their {{ good.kwp | number: '1.0-1' }} kWp.
+        </li>
+      }
+      @if (system(); as s) {
+        @for (array of s.arrays; track $index) {
+          @if (f.array_performance[$index] !== undefined) {
+            <li class="muted">
+              {{ array.name }} ({{ array.kwp }} kWp) delivers about
+              {{ f.array_performance[$index] * 100 | number: '1.0-0' }}% of its ideal output.
+            </li>
           }
         }
-      </ul>
-    </details>
-  </section>
-
-  @if (system(); as s) {
-    <div class="tiles">
-      <div class="card tile">
-        <span class="muted">Battery</span>
-        <strong>{{ s.battery.capacity_kwh | number: '1.0-1' }} kWh</strong>
-        <span class="muted">{{ usableKwh() | number: '1.0-1' }} kWh usable</span>
-      </div>
-      <div class="card tile">
-        <span class="muted">Solar</span>
-        <strong>{{ totalKwp() | number: '1.0-2' }} kWp</strong>
-        <span class="muted">{{ s.arrays.length }} array{{ s.arrays.length === 1 ? '' : 's' }}</span>
-      </div>
-      @if (cheapest(); as c) {
-        <div class="card tile">
-          <span class="muted">Cheapest import</span>
-          <strong>{{ c.rate | number: '1.0-2' }}p</strong>
-          <span class="muted">{{ c.start.slice(0, 5) }}–{{ c.end.slice(0, 5) }}</span>
-        </div>
       }
-      @if (exportRange(); as e) {
-        <div class="card tile">
-          <span class="muted">Export</span>
-          <strong
-            >{{ e.min | number: '1.0-2' }}p{{
-              e.max > e.min ? '–' + (e.max | number: '1.0-2') + 'p' : ''
-            }}</strong
+    </ul>
+    @if (system(); as s) {
+      <div class="tiles">
+        <div class="tile">
+          <span class="muted">Battery</span>
+          <strong>{{ s.battery.capacity_kwh | number: '1.0-1' }} kWh</strong>
+          <span class="muted">{{ usableKwh() | number: '1.0-1' }} kWh usable</span>
+        </div>
+        <div class="tile">
+          <span class="muted">Solar</span>
+          <strong>{{ totalKwp() | number: '1.0-2' }} kWp</strong>
+          <span class="muted"
+            >{{ s.arrays.length }} array{{ s.arrays.length === 1 ? '' : 's' }}</span
           >
-          <span class="muted">{{ s.tariff.name }}</span>
         </div>
-      }
-    </div>
-  }
+        @if (cheapest(); as c) {
+          <div class="tile">
+            <span class="muted">Cheapest import</span>
+            <strong>{{ c.rate | number: '1.0-2' }}p</strong>
+            <span class="muted">{{ c.start.slice(0, 5) }}–{{ c.end.slice(0, 5) }}</span>
+          </div>
+        }
+        @if (exportRange(); as e) {
+          <div class="tile">
+            <span class="muted">Export</span>
+            <strong
+              >{{ e.min | number: '1.0-2' }}p{{
+                e.max > e.min ? '–' + (e.max | number: '1.0-2') + 'p' : ''
+              }}</strong
+            >
+            <span class="muted">{{ s.tariff.name }}</span>
+          </div>
+        }
+      </div>
+    }
+  </details>
 } @else if (loading()) {
   <p class="muted">Loading forecast…</p>
 }

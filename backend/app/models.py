@@ -113,6 +113,9 @@ class System(Base):
     usage_expectations: Mapped[list["UsageExpectation"]] = relationship(
         back_populates="system", cascade="all, delete-orphan", order_by="UsageExpectation.day"
     )
+    forecast_snapshots: Mapped[list["ForecastSnapshot"]] = relationship(
+        back_populates="system", cascade="all, delete-orphan"
+    )
 
 
 class Battery(Base):
@@ -436,3 +439,37 @@ class UsageExpectation(Base):
     car_kwh: Mapped[float | None] = mapped_column(Float, default=None)
 
     system: Mapped[System] = relationship(back_populates="usage_expectations")
+
+
+class ForecastSnapshot(Base):
+    """What was forecast for a local day before it began, so the day can be looked back on
+    honestly: the forecast is otherwise recalculated, and then it uses the actual weather.
+
+    Saved whenever that day's plan is made, and updated until its cheap window ends; after that
+    it is left alone. Totals cover the local day only.
+    """
+
+    __tablename__ = "forecast_snapshots"
+    __table_args__ = (UniqueConstraint("system_id", "day"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    system_id: Mapped[int] = mapped_column(
+        ForeignKey("systems.id", ondelete="CASCADE"), index=True
+    )
+    day: Mapped[date] = mapped_column(Date)
+    made_at: Mapped[datetime] = mapped_column(default=_now)
+    load_kwh: Mapped[float] = mapped_column(Float)
+    load_low_kwh: Mapped[float] = mapped_column(Float)
+    load_high_kwh: Mapped[float] = mapped_column(Float)
+    solar_kwh: Mapped[float] = mapped_column(Float)
+    solar_low_kwh: Mapped[float] = mapped_column(Float)
+    solar_high_kwh: Mapped[float] = mapped_column(Float)
+    # Daytime cloud cover and the day's mean temperature that the forecast used.
+    cloud_percent: Mapped[float | None] = mapped_column(Float, default=None)
+    temperature_c: Mapped[float | None] = mapped_column(Float, default=None)
+    weather_headline: Mapped[str | None] = mapped_column(String(64), default=None)
+    # The charge the plan chose in the system's mode, when it started from a real reading or
+    # the battery's minimum (not a level the user typed in to try something out).
+    target_soc_percent: Mapped[float | None] = mapped_column(Float, default=None)
+
+    system: Mapped[System] = relationship(back_populates="forecast_snapshots")

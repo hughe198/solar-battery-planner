@@ -3,14 +3,24 @@
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, Query
+import numpy as np
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.forecast import _system
 from app.database import get_db
-from app.models import UsageRecord, User
+from app.forecasting.look_back import (
+    ChargeHindsight,
+    DayActual,
+    DayForecastKept,
+    daylight_cloud,
+    look_back,
+)
+from app.forecasting.weather_story import RECENT_DAYS, recent_daily_solar
+from app.models import ForecastSnapshot, UsageRecord, User, WeatherRecord
+from app.planner.replay import Replayer
 from app.planner.simulator import Cycle, cycle_for
 from app.security import current_user
 from app.tariffs import TariffTimeline
@@ -155,6 +165,153 @@ def recent_history(
             )
         )
     return History(points=points, days=summaries)
+
+
+class LookBackOut(BaseModel):
+    """A past day in a sentence, with the detail: its weather against the forecast made the night
+    before, and what the charge and the day saved."""
+
+    day: date
+    complete: bool
+    basis: str  # "forecast", "recent" or "none"
+    headline: str
+    detail: str
+    weather_headline: str | None
+    summary: str
+    points: list[str]
+    load_kwh: float
+    solar_kwh: float
+    net_cost_pence: float
+    grid_only_pence: float
+    saved_pence: float
+    forecast_load_kwh: float | None
+    forecast_solar_kwh: float | None
+    charged_soc_percent: float | None
+    best_soc_percent: float | None
+
+
+@router.get("/look-back", response_model=LookBackOut)
+def look_back_day(
+    day: date | None = Query(default=None, description="Local day; yesterday by default"),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> LookBackOut:
+    """How a past day went against what was forecast for it. 404 when it has no readings."""
+    system = _system(user)
+    zone = ZoneInfo(system.timezone)
+    today = datetime.now(zone).date()
+    day = day or today - timedelta(days=1)
+    if day >= today:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Pick a day that has ended")
+    start = datetime.combine(day, time(), zone).astimezone(timezone.utc).replace(tzinfo=None)
+    end = (
+        datetime.combine(day + timedelta(days=1), time(), zone)
+        .astimezone(timezone.utc)
+        .replace(tzinfo=None)
+    )
+    rows = db.scalars(
+        select(UsageRecord).where(
+            UsageRecord.system_id == system.id,
+            UsageRecord.start >= start,
+            UsageRecord.start < end,
+        )
+    ).all()
+    if not rows:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No readings for that day yet")
+    book = TariffTimeline.from_system(system)
+    imp = exp = grid_only = 0.0
+    for r in rows:
+        at = r.start.replace(tzinfo=timezone.utc)
+        rate = book.rate_at(at, "import")
+        imp += r.grid_import_kwh * rate
+        exp += r.grid_export_kwh * book.rate_at(at, "export")
+        grid_only += r.load_kwh * rate
+    weather = db.scalars(
+        select(WeatherRecord).where(
+            WeatherRecord.system_id == system.id,
+            WeatherRecord.start >= start,
+            WeatherRecord.start < end,
+        )
+    ).all()
+    temps = [w.temperature_c for w in weather if w.temperature_c is not None]
+    actual = DayActual(
+        day=day,
+        complete=len(rows) >= half_hours_in(day, zone),
+        load_kwh=sum(r.load_kwh for r in rows),
+        solar_kwh=sum(r.solar_kwh for r in rows),
+        import_kwh=sum(r.grid_import_kwh for r in rows),
+        export_kwh=sum(r.grid_export_kwh for r in rows),
+        import_cost_pence=imp,
+        export_revenue_pence=exp,
+        grid_only_pence=grid_only,
+        cloud_percent=daylight_cloud(
+            [w.cloud_cover_percent for w in weather],
+            [w.shortwave_radiation_wm2 for w in weather],
+        ),
+        temperature_c=sum(temps) / len(temps) if temps else None,
+        has_panels=bool(system.arrays),
+    )
+
+    snap = db.scalar(
+        select(ForecastSnapshot).where(
+            ForecastSnapshot.system_id == system.id, ForecastSnapshot.day == day
+        )
+    )
+    kept = (
+        DayForecastKept(
+            load_kwh=snap.load_kwh,
+            solar_kwh=snap.solar_kwh,
+            cloud_percent=snap.cloud_percent,
+            temperature_c=snap.temperature_c,
+            target_soc_percent=snap.target_soc_percent,
+        )
+        if snap
+        else None
+    )
+    recent = db.scalars(
+        select(UsageRecord).where(
+            UsageRecord.system_id == system.id,
+            UsageRecord.start >= start - timedelta(days=RECENT_DAYS + 1),
+            UsageRecord.start < start,
+        )
+    ).all()
+    recent_solar = recent_daily_solar(
+        [r.start.replace(tzinfo=timezone.utc).astimezone(zone).date() for r in recent],
+        np.array([r.solar_kwh for r in recent], dtype=float),
+        day,
+    )
+
+    charge = None
+    if system.battery is not None:
+        replayed = Replayer(db, system).replay(system.planning_mode, days=3)
+        found = next((d for d in replayed.days if d.day == day), None)
+        if found is not None:
+            charge = ChargeHindsight(
+                charged_soc_percent=found.soc_after_charge_percent,
+                best_soc_percent=found.best_soc_percent,
+                missed_saving_pence=found.missed_saving_pence,
+            )
+
+    story = look_back(actual, kept, recent_solar, charge)
+    return LookBackOut(
+        day=day,
+        complete=actual.complete,
+        basis=story.basis,
+        headline=story.headline,
+        detail=story.detail,
+        weather_headline=story.weather_headline,
+        summary=story.summary,
+        points=story.points,
+        load_kwh=round(actual.load_kwh, 2),
+        solar_kwh=round(actual.solar_kwh, 2),
+        net_cost_pence=story.net_cost_pence,
+        grid_only_pence=round(grid_only, 1),
+        saved_pence=story.saved_pence,
+        forecast_load_kwh=kept.load_kwh if kept else None,
+        forecast_solar_kwh=kept.solar_kwh if kept else None,
+        charged_soc_percent=charge.charged_soc_percent if charge else None,
+        best_soc_percent=charge.best_soc_percent if charge else None,
+    )
 
 
 @router.get("/savings", response_model=Savings)

@@ -370,10 +370,12 @@
             <tbody>
               @for (a of s.actions; track a.id) {
                 <tr class="result-{{ a.status }}">
-                  <td>{{ a.created_at | date: 'short' }}</td>
-                  <td>{{ kindLabels[a.kind] }}{{ a.trigger === 'auto' ? ' (automatic)' : '' }}</td>
-                  <td>{{ statusLabels[a.status] }}</td>
-                  <td>
+                  <td data-label="When">{{ a.created_at | date: 'short' }}</td>
+                  <td data-label="What">
+                    {{ kindLabels[a.kind] }}{{ a.trigger === 'auto' ? ' (automatic)' : '' }}
+                  </td>
+                  <td data-label="Result">{{ statusLabels[a.status] }}</td>
+                  <td data-label="Details">
                     {{ a.message }}
                     @if (a.sent || a.read_back) {
                       <details>

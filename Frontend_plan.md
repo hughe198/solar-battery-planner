@@ -70,8 +70,8 @@ So:
   "Yesterday was sunnier than forecast (30% cloud, not 70%), so solar made 11.2 kWh against 7.5. The
   battery was full by 13:00 and 2.1 kWh went to export at 15p, so a lower charge would have saved
   about 18p."
-- **Until a snapshot exists** (the first day, or a gap), it falls back to the replay that History
-  already uses and says that it's a replay.
+- **Until a snapshot exists** (the first day, or a gap), it compares the day with the home's last
+  14 days instead, and says so.
 
 The weather for yesterday itself comes from the weather records the app already imports.
 
@@ -129,8 +129,8 @@ step and safety check exactly as it is, and is only restyled.
   `resource` / `httpResource`, so one slow call (such as weather) doesn't hold up the others.
 - **Backend:** add `summary` (one sentence) alongside the existing `reasons` on each recommendation.
   Add the `weather` block to the day forecast, a `forecast_snapshots` table created at startup like
-  `usage_expectations`, and a `GET /api/history/yesterday` that returns the look back (outcome,
-  weather, snapshot comparison, sentence and points).
+  `usage_expectations`, and a `GET /api/history/look-back` (yesterday unless `day` is given) that
+  returns the look back (outcome, weather, snapshot comparison, sentence and points).
 - **Tests:** component tests for `app-explain` and the card order, backend tests for the weather
   sentences (sunny, dull, cold, mild, changeable) and the snapshot comparison, and phone-width
   screenshots of each page for review.

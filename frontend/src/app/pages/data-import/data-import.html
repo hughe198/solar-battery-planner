@@ -11,8 +11,8 @@
   <p class="form-error" role="alert">{{ error() }}</p>
 }
 
-<section class="card privacy">
-  <h2>How your data is used</h2>
+<details class="card disclosure privacy">
+  <summary>How your data is used</summary>
   <ul>
     <li>
       Your data is used only to predict your household's usage and solar generation and to recommend
@@ -21,8 +21,8 @@
     <li>
       Your Fox ESS API key is stored encrypted. By default it is used only to
       <strong>read</strong> your inverter's history and settings, and the planner never changes your
-      inverter. If you turn on <a routerLink="/automation">inverter control</a> (off unless you choose
-      it), the key is also used to <strong>write</strong> the overnight force charge to your
+      inverter. If you turn on <a routerLink="/automation">inverter control</a> (off unless you
+      choose it), the key is also used to <strong>write</strong> the overnight force charge to your
       inverter's schedule, each change is logged, and you can undo it or turn control off at any
       time. Disconnecting Fox ESS or deleting your data turns control off.
     </li>
@@ -35,32 +35,35 @@
       page. Deletion is immediate and permanent.
     </li>
   </ul>
-</section>
+</details>
 
 @if (status(); as s) {
-  <div class="tiles">
-    <div class="card tile">
-      <span class="muted">Usage history</span>
-      <strong>{{ s.usage.count | number }} half hours</strong>
-      <span class="muted">
-        @if (s.usage.first) {
-          {{ s.usage.first | date: 'd MMM y' }} – {{ s.usage.last | date: 'd MMM y' }}
-        } @else {
-          nothing imported yet
+  <section class="card data-status">
+    <h2 class="eyebrow">What's imported</h2>
+    <div class="tiles">
+      <div class="tile">
+        <span class="muted">Usage history</span>
+        <strong>{{ s.usage.count | number }} half hours</strong>
+        <span class="muted">
+          @if (s.usage.first) {
+            {{ s.usage.first | date: 'd MMM y' }} – {{ s.usage.last | date: 'd MMM y' }}
+          } @else {
+            nothing imported yet
+          }
+        </span>
+      </div>
+      <div class="tile">
+        <span class="muted">Weather matched</span>
+        <strong>{{ s.matched_intervals | number }} of {{ s.usage.count | number }}</strong>
+        <span class="muted">half hours</span>
+        @if (s.matched_intervals < s.usage.count && !jobActive()) {
+          <button type="button" class="link" (click)="fetchWeather()" [disabled]="busy()">
+            Fetch missing weather
+          </button>
         }
-      </span>
+      </div>
     </div>
-    <div class="card tile">
-      <span class="muted">Weather matched</span>
-      <strong>{{ s.matched_intervals | number }} of {{ s.usage.count | number }}</strong>
-      <span class="muted">half hours</span>
-      @if (s.matched_intervals < s.usage.count && !jobActive()) {
-        <button type="button" class="link" (click)="fetchWeather()" [disabled]="busy()">
-          Fetch missing weather
-        </button>
-      }
-    </div>
-  </div>
+  </section>
 
   <section class="card">
     <h2>Fox ESS cloud</h2>

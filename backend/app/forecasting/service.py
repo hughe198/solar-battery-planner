@@ -31,6 +31,13 @@ from app.forecasting.usage import (
     car_load,
     detect_car_charging,
 )
+from app.forecasting.weather_story import (
+    DayWeather,
+    WeatherStory,
+    recent_daily_solar,
+    recent_mean_temperature,
+    tell,
+)
 from app.importers.base import INTERVAL
 from app.models import System, UsageExpectation, UsageLevel, UsageRecord, WeatherRecord
 from app.weather.open_meteo import HourlyWeather, OpenMeteoClient, WeatherError
@@ -516,6 +523,9 @@ class HistoryForecaster:
                 lived * spread.load_day[0] + empty * AWAY_DAY_RANGE[0] + car_total,
                 lived * spread.load_day[1] + empty * AWAY_DAY_RANGE[1] + car_total,
             )
+        story = self._weather_story(
+            system, models, history, day, weather, calendar, load, solar, solar_ratio
+        )
         return DayForecast(
             day=day,
             intervals=intervals,
@@ -527,6 +537,48 @@ class HistoryForecaster:
             array_performance=[round(float(m), 3) for m in models.solar.multipliers],
             backtest=checked[0] if checked else None,
             usage_notes=notes,
+            weather=story,
+        )
+
+    def _weather_story(
+        self,
+        system: System,
+        models: Models,
+        history: History,
+        day: date,
+        weather: HalfHourWeather,
+        calendar: Calendar,
+        load: np.ndarray,
+        solar: np.ndarray,
+        solar_ratio: tuple[float, float],
+    ) -> WeatherStory | None:
+        """What the weather does to `day` (just that local day, when the forecast covers a
+        whole charge cycle), against the home's recent days."""
+        index = np.array([i for i, d in enumerate(calendar.local_day) if d == day], dtype=int)
+        if not len(index):
+            return None
+        heating = daily_heating_degrees(calendar, weather.temperature_c)
+        cold = models.load.heating_part(calendar, heating)
+        w = weather.take(index)
+        recent_calendar, recent_solar = _recent_solar(self.db, system)
+        return tell(
+            DayWeather(
+                starts=w.starts,
+                cloud_percent=w.cloud_cover_percent,
+                temperature_c=w.temperature_c,
+                sun_wm2=w.ghi,
+                solar_kwh=solar[index],
+                load_kwh=load[index],
+                cold_kwh=cold[index],
+                has_panels=bool(system.arrays),
+                solar_low_kwh=float(solar[index].sum() * solar_ratio[0]),
+                solar_high_kwh=float(solar[index].sum() * solar_ratio[1]),
+            ),
+            system.timezone,
+            recent_daily_solar(recent_calendar.local_day, recent_solar, day),
+            recent_mean_temperature(
+                history.calendar.local_day, history.weather.temperature_c, day
+            ),
         )
 
 

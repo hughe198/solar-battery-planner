@@ -1,56 +1,9 @@
 <header>
   <a routerLink="/" class="brand">Solar Battery Planner</a>
   @if (auth.user(); as user) {
-    <nav>
-      <a
-        class="nav-button"
-        routerLink="/"
-        routerLinkActive="active"
-        [routerLinkActiveOptions]="{ exact: true }"
-        ariaCurrentWhenActive="page"
-        >Home</a
-      >
-      <a
-        class="nav-button"
-        routerLink="/tonight"
-        routerLinkActive="active"
-        ariaCurrentWhenActive="page"
-        >Tonight</a
-      >
-      <a
-        class="nav-button"
-        routerLink="/history"
-        routerLinkActive="active"
-        ariaCurrentWhenActive="page"
-        >History</a
-      >
-      <a
-        class="nav-button"
-        routerLink="/automation"
-        routerLinkActive="active"
-        ariaCurrentWhenActive="page"
-        >Automation</a
-      >
-      <span class="nav-divider" aria-hidden="true"></span>
-      <a
-        class="nav-button"
-        routerLink="/setup"
-        routerLinkActive="active"
-        ariaCurrentWhenActive="page"
-        >System</a
-      >
-      <a
-        class="nav-button"
-        routerLink="/data"
-        routerLinkActive="active"
-        ariaCurrentWhenActive="page"
-        >Data</a
-      >
-      <span class="muted user">{{ user.email }}</span>
-      <button type="button" class="nav-button" (click)="logout()">Sign out</button>
-    </nav>
+    <app-tab-bar [email]="user.email" (signOut)="logout()" />
   }
 </header>
-<main>
+<main [class.with-tab-bar]="auth.user()">
   <router-outlet />
 </main>

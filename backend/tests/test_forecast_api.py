@@ -63,6 +63,10 @@ def test_forecast_without_history_uses_priors(client, headers):
     assert body["load"]["expected"] == pytest.approx(2700 / 365, rel=0.01)
     assert body["load"]["low"] < body["load"]["expected"] < body["load"]["high"]
     assert body["solar"]["expected"] > 0
+    weather = body["weather"]
+    assert weather["summary"].endswith(".")
+    assert weather["headline"]
+    assert weather["points"][0].startswith("Solar:")
 
 
 def test_forecast_learns_from_history_and_reports_accuracy(client, headers):

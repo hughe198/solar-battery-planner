@@ -1,0 +1,87 @@
+// Design tokens: the only place colours, spacing, radii and type sizes are set.
+// Components use these custom properties, never raw values, so light and dark stay in step.
+
+:root {
+  // Colours
+  --bg: #f6f7f4;
+  --surface: #ffffff;
+  --surface-sunk: #eff1ec;
+  --text: #1d2420;
+  --muted: #5d6a63;
+  --border: #d9ded9;
+  --accent: #d97706;
+  --accent-text: #ffffff;
+  --accent-soft: #fdf1e1;
+  --error: #b42318;
+  --load: #2563eb;
+  --solar: var(--accent);
+  --battery: #15803d;
+  --good: #15803d;
+  --good-soft: #e3f4e8;
+  --warn: #92400e;
+  --warn-soft: #fff4d6;
+  --rating-good: #bbe5c8;
+  --rating-fair: #fbdf9d;
+  --rating-poor: #f6b3a8;
+  --rating-text: #1d2420;
+
+  // Spacing, on a 4px grid
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+
+  // Shape
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 14px;
+
+  // Type
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.15rem;
+  --text-xl: 1.5rem;
+  --text-figure: 1.9rem;
+
+  // Layout
+  --page-width: 52rem;
+  --gutter: 0.75rem;
+  --tab-bar-height: 3.75rem;
+
+  color-scheme: light;
+}
+
+@media (min-width: 40rem) {
+  :root {
+    --gutter: 1rem;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121614;
+    --surface: #1b211e;
+    --surface-sunk: #161b18;
+    --text: #e8ece9;
+    --muted: #9aa69f;
+    --border: #2e3732;
+    --accent: #f59e0b;
+    --accent-text: #1b1300;
+    --accent-soft: #3a2a10;
+    --error: #f97066;
+    --load: #60a5fa;
+    --battery: #4ade80;
+    --good: #4ade80;
+    --good-soft: #173a26;
+    --warn: #fcd34d;
+    --warn-soft: #3b2f10;
+    --rating-good: #1f5a38;
+    --rating-fair: #6e5316;
+    --rating-poor: #7c2d24;
+    --rating-text: #f2f5f3;
+    color-scheme: dark;
+  }
+}

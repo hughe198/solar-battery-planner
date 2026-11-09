@@ -196,7 +196,9 @@
   @if (error()) {
     <p class="form-error" role="alert">{{ error() }}</p>
   }
-  <button type="submit" [disabled]="busy()">
-    {{ isNew() ? 'Save and continue' : 'Save changes' }}
-  </button>
+  <div class="save-bar">
+    <button type="submit" [disabled]="busy()">
+      {{ isNew() ? 'Save and continue' : 'Save changes' }}
+    </button>
+  </div>
 </form>

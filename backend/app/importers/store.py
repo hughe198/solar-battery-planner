@@ -12,6 +12,7 @@ from app.importers.base import UsageInterval
 from app.importers.fox_ess import FoxEssClient, FoxEssError, FoxEssImporter, local_day_bounds
 from app.models import (
     ControlAction,
+    ForecastSnapshot,
     FoxEssConnection,
     ImportJob,
     InverterControl,
@@ -35,7 +36,8 @@ def _naive_utc(moment: datetime) -> datetime:
 
 def delete_imported_data(db: Session, system: System) -> None:
     """Remove everything imported for the system, including the stored Fox ESS key, and the
-    inverter control opt-in and its log (they need the key)."""
+    inverter control opt-in and its log (they need the key), and the forecasts kept for looking
+    back (they were made from the imported history)."""
     for model in (
         UsageRecord,
         WeatherRecord,
@@ -43,6 +45,7 @@ def delete_imported_data(db: Session, system: System) -> None:
         FoxEssConnection,
         InverterControl,
         ControlAction,
+        ForecastSnapshot,
     ):
         db.execute(delete(model).where(model.system_id == system.id))
     db.expire(system)

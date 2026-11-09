@@ -1,0 +1,35 @@
+.home-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0 var(--space-3);
+
+  .data-freshness {
+    margin: 0 0 var(--space-2);
+    font-size: var(--text-sm);
+  }
+}
+
+// The cards keep their order in the page; after 16:00 tonight's plan moves above yesterday.
+.home-cards {
+  display: flex;
+  flex-direction: column;
+
+  &.evening app-tonight-card {
+    order: 2;
+  }
+
+  &.evening app-yesterday-card {
+    order: 3;
+  }
+}
+
+@media (min-width: 48rem) {
+  .home-cards {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 var(--space-4);
+    align-items: start;
+  }
+}

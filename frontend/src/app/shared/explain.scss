@@ -1,0 +1,55 @@
+:host {
+  display: block;
+  margin-top: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px dashed var(--border);
+}
+
+.explain-toggle {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 2.25rem;
+  color: var(--accent);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+
+  &:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+}
+
+.explain-label {
+  color: var(--muted);
+}
+
+.explain-chevron::after {
+  content: '▸';
+  display: inline-block;
+  transition: transform 0.15s;
+}
+
+.explain-chevron.sentence::after {
+  transform: rotate(90deg);
+}
+
+.explain-chevron.points::after {
+  transform: rotate(-90deg);
+}
+
+.explain-sentence {
+  margin: var(--space-1) 0 0;
+}
+
+.explain-points {
+  margin: var(--space-2) 0 0;
+  padding-left: 1.2rem;
+
+  li + li {
+    margin-top: var(--space-1);
+  }
+}

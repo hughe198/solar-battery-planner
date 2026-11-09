@@ -1,0 +1,150 @@
+.plan-modes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
+
+  .chosen {
+    border-color: var(--accent);
+    border-width: 2px;
+  }
+
+  .downsides {
+    border-left: 3px solid var(--accent);
+    padding-left: 0.75rem;
+    margin: 0.75rem 0;
+    font-size: 0.9rem;
+
+    ul {
+      margin: 0.25rem 0 0;
+      padding-left: 1.1rem;
+    }
+  }
+
+  .target {
+    font-size: 2rem;
+    font-weight: 700;
+    line-height: 1.1;
+  }
+}
+
+table.plan-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  margin-bottom: 0.5rem;
+
+  th,
+  td {
+    text-align: right;
+    padding: 0.3rem 0.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  th:first-child,
+  td:first-child {
+    text-align: left;
+    padding-left: 0;
+  }
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.soc-input {
+  max-width: 16rem;
+}
+
+ul.plain {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+table.backtest {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  margin-bottom: 0.5rem;
+
+  th,
+  td {
+    text-align: left;
+    padding: 0.3rem 0.5rem 0.3rem 0;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+
+  .bar {
+    display: block;
+    height: 0.35rem;
+    border-radius: 2px;
+    margin-bottom: 2px;
+
+    &.load {
+      background: var(--load);
+    }
+
+    &.solar {
+      background: var(--accent);
+    }
+
+    &.predicted {
+      opacity: 0.45;
+    }
+  }
+}
+
+// Expected usage for the day shown on Tonight: Away / Low / Normal / High.
+.usage-selector {
+  max-width: 26rem;
+  margin: 0 auto 1rem;
+  text-align: center;
+
+  .segmented {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.25rem;
+
+    button {
+      min-height: 2.5rem;
+      padding: 0.25rem 0.5rem;
+    }
+  }
+
+  .usage-hint {
+    margin: 0.4rem 0 0;
+    font-size: 0.9rem;
+  }
+
+  .car-charge,
+  .holiday {
+    margin-top: 0.75rem;
+    text-align: left;
+  }
+
+  .holiday .row {
+    margin-top: 0.5rem;
+  }
+}
+
+.usage-note {
+  margin: 0.25rem 0 0.5rem;
+}
+
+// A day the user marked as other than normal, in the look back calendar.
+.usage-mark {
+  display: block;
+  font-size: 0.7rem;
+  line-height: 1;
+  color: var(--muted);
+}
+
+.mark-past {
+  margin: 0.75rem 0;
+
+  .usage-selector {
+    margin: 0.5rem 0 0;
+    max-width: 22rem;
+  }
+}

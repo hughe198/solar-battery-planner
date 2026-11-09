@@ -319,6 +319,83 @@ class Explainer:
             )
         return lines
 
+    def summary(
+        self,
+        mode: PlanningMode,
+        target_kwh: float,
+        start_kwh: float,
+        results: dict[str, Outcome],
+        expected: Scenario,
+        day_starts: list[datetime],
+        for_peak: bool,
+        drain: Discharge | None = None,
+    ) -> str:
+        """The plan in one sentence: what it does and the main reason why."""
+        sentence = self._summary(
+            mode, target_kwh, start_kwh, results, expected, day_starts, for_peak
+        )
+        if drain is None:
+            return sentence
+        return (
+            f"Exporting {drain.export_kwh:.1f} kWh before the free window earns "
+            f"{pence(drain.revenue_pence)}; then {sentence[0].lower()}{sentence[1:]}"
+        )
+
+    def _summary(
+        self,
+        mode: PlanningMode,
+        target_kwh: float,
+        start_kwh: float,
+        results: dict[str, Outcome],
+        expected: Scenario,
+        day_starts: list[datetime],
+        for_peak: bool,
+    ) -> str:
+        b, prices = self.battery, self.prices
+        e = results["expected"]
+        added = target_kwh - start_kwh
+        if added <= 0.05:
+            what = f"No charge needed: the battery's {b.percent(start_kwh):.0f}%"
+            if e.reserve_at is None:
+                return f"{what} should last until solar and the next cheap window."
+            return (
+                f"{what} lasts until {self.clock(e.reserve_at)}, and topping it up would cost "
+                "more than the little import it saves."
+            )
+
+        cost = b.grid_kwh_to_store(added) * prices.charge
+        what = f"Charging to {b.percent(target_kwh):.0f}% " + (
+            f"for about {pence(cost)}" if cost >= 0.5 else "for free"
+        )
+        solar, load = e.solar_kwh, e.load_kwh
+        stored_cost = prices.charge / b.charge_efficiency
+        if mode is PlanningMode.maximise_export_revenue and prices.day_export_mean > stored_cost:
+            return (
+                f"{what}, because export pays more than charging costs, so every kWh of solar "
+                "the battery doesn't need can be sold."
+            )
+        if for_peak:
+            return (
+                f"{what}, so the battery lasts through the evening peak even if the day is dull."
+            )
+        if e.full_at is not None:
+            return (
+                f"{what}: solar ({solar:.1f} kWh) should fill the battery by "
+                f"{self.clock(e.full_at)}, so charging more would mostly be exported."
+            )
+        if solar < 0.5 * load:
+            return (
+                f"{what}, because the day looks dull: {solar:.1f} kWh of solar against "
+                f"{load:.1f} kWh of use, so solar won't cover much of it."
+            )
+        sunny = np.flatnonzero(expected.day_solar >= expected.day_load)
+        if len(sunny):
+            return (
+                f"{what}, enough to last until solar takes over at about "
+                f"{self.clock(day_starts[sunny[0]])}."
+            )
+        return f"{what}, which covers the house best for the {solar:.1f} kWh of solar expected."
+
     def reasons(
         self,
         mode: PlanningMode,
@@ -564,6 +641,16 @@ def plan(
                 bright=results["bright"],
                 reasons=reasons,
                 downsides=downsides,
+                summary=explainer.summary(
+                    mode,
+                    float(targets[chosen]),
+                    start_kwh,
+                    results,
+                    runs["expected"][0],
+                    day_starts,
+                    chosen > cheapest,
+                    drain,
+                ),
             )
         )
 
@@ -657,4 +744,5 @@ def plan(
         solar_method=forecast.solar_method,
         history_days=forecast.history_days,
         usage_notes=list(forecast.usage_notes),
+        weather=forecast.weather,
     )

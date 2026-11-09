@@ -1,5 +1,6 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
+import { ApplicationRef } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import {
@@ -139,6 +140,7 @@ describe('Tonight', () => {
   let http: HttpTestingController;
 
   beforeEach(async () => {
+    localStorage.clear();
     await TestBed.configureTestingModule({
       imports: [Tonight],
       providers: [provideRouter([]), provideHttpClient(), provideHttpClientTesting()],
@@ -146,7 +148,11 @@ describe('Tonight', () => {
     http = TestBed.inject(HttpTestingController);
   });
 
-  function render(forecast: DayForecast, plan: ChargePlan | null = null) {
+  function render(
+    forecast: DayForecast,
+    plan: ChargePlan | null = null,
+    control: object = { enabled: false, actions: [] },
+  ) {
     const fixture = TestBed.createComponent(Tonight);
     fixture.detectChanges();
     http.expectOne('/api/system').flush(SYSTEM);
@@ -156,6 +162,7 @@ describe('Tonight', () => {
     );
     if (plan) req.flush(plan);
     else req.flush({ detail: 'No battery' }, { status: 422, statusText: 'Unprocessable' });
+    http.expectOne('/api/control').flush(control);
     fixture.detectChanges();
     return fixture.nativeElement as HTMLElement;
   }
@@ -211,7 +218,11 @@ describe('Tonight', () => {
     // One plot: 100% is level with the top of the kWh axis, and usage is back.
     expect(el.querySelector('svg path.series.load')?.getAttribute('d')).toMatch(/^M/);
     expect(svgText(el)).toContain('100%');
-    expect(el.textContent).toContain('Why charge to 64%');
+    expect(el.querySelector('.tonight-plan .figure')?.textContent).toContain('64%');
+    // The reasons are a tap away.
+    expect(el.textContent).not.toContain('Solar takes over by mid-morning.');
+    (el.querySelector('.tonight-plan .explain-toggle') as HTMLButtonElement).click();
+    TestBed.inject(ApplicationRef).tick();
     expect(el.textContent).toContain('Solar takes over by mid-morning.');
     expect(el.textContent).toContain('assumes 12% when the cheap window opens');
   });
@@ -340,7 +351,7 @@ describe('Tonight', () => {
     const el = fixture.nativeElement as HTMLElement;
     const readout = () => el.querySelector('.chart-readout')?.textContent?.trim();
 
-    expect(readout()).toContain('Hover over the chart');
+    expect(readout()).toContain('hover over the chart');
     expect(el.querySelector('svg circle.dot')).toBeNull();
 
     // The chart opens at 21:00 BST and the window at 23:30, so half hour 5 is the first planned.
@@ -360,7 +371,7 @@ describe('Tonight', () => {
 
     el.querySelector('svg')!.dispatchEvent(new MouseEvent('mouseleave'));
     fixture.detectChanges();
-    expect(readout()).toContain('Hover over the chart');
+    expect(readout()).toContain('hover over the chart');
     expect(el.querySelector('svg line.crosshair')).toBeNull();
   });
 
@@ -592,9 +603,11 @@ describe('Tonight', () => {
     expect(el.textContent).toContain('8.1–11.2 kWh');
     expect(el.textContent).toContain('until you import solar data');
     expect(el.textContent).toContain('South (4 kWp) delivers about 82%');
-    expect(el.querySelector('section.card details summary')?.textContent).toBe(
-      'How this was predicted',
+    const summaries = [...el.querySelectorAll('details.disclosure > summary')].map((d) =>
+      d.textContent?.trim(),
     );
+    expect(summaries).toContain('How this was predicted');
+    expect(summaries[0]).toBe('Half-hourly forecast');
     expect(el.textContent).toContain('9 kWh usable');
     expect(el.textContent).toContain('7.5p');
     expect(el.querySelectorAll('svg path').length).toBe(4);
@@ -611,7 +624,11 @@ describe('Tonight', () => {
     expect(modes[0].textContent).toContain('Maximise own usage (your mode)');
     expect(modes[0].textContent).toContain('52%');
     expect(modes[1].textContent).toContain('95%');
-    expect(el.textContent).toContain('Why charge to 52%');
+    const top = el.querySelector('.tonight-plan')!;
+    expect(top.querySelector('.figure')?.textContent).toContain('52%');
+    expect(top.querySelector('.steps')?.textContent).toMatch(/Force charge 05:20–\s*06:30/);
+    expect(top.querySelector('.explain-toggle')?.textContent).toContain('Plan · Why?');
+    expect(top.querySelector('.badge')).toBeNull();
     expect(el.textContent).toContain('costing 33p');
     // Europe/London is an hour ahead of UTC in June.
     expect(modes[0].textContent).toMatch(/Force charge 05:20–\s*06:30/);
@@ -624,6 +641,34 @@ describe('Tonight', () => {
     expect(el.textContent).toContain('3.6 kW, 1.2 kW above 90%');
     expect(el.querySelectorAll('table.plan-table')[0].querySelectorAll('tbody tr').length).toBe(3);
     expect(el.querySelector('svg path.battery')?.getAttribute('d')).toMatch(/^M/);
+  });
+
+  it('says whether the plan has been sent to the inverter', () => {
+    const sent = { enabled: true, actions: [{ kind: 'apply', day: PLAN.day, status: 'ok' }] };
+    expect(render(FORECAST, PLAN, sent).querySelector('.tonight-plan .badge')?.textContent).toBe(
+      'Sent to inverter',
+    );
+  });
+
+  it('puts the usage choice and the forecast with its weather near the top', () => {
+    const forecast = {
+      ...FORECAST,
+      weather: {
+        headline: 'Cloudy, 4°C',
+        detail: '',
+        summary: 'Cloudy skies put solar about 40% below your recent average.',
+        points: [],
+      },
+    } as unknown as DayForecast;
+    const el = render(forecast, PLAN);
+    const order = [...el.querySelectorAll('section.card, details.card')].map((c) => c.className);
+    expect(order[0]).toContain('tonight-plan');
+    expect(order[1]).toContain('tonight-usage');
+    expect(order[2]).toContain('tonight-forecast');
+    const card = el.querySelector('.tonight-forecast')!;
+    expect(card.querySelector('.weather-line')?.textContent).toContain('Cloudy, 4°C');
+    expect(card.querySelector('.explain-toggle')?.textContent).toContain('Weather · Why?');
+    expect(el.querySelector('details.tonight-chart')?.hasAttribute('open')).toBe(false);
   });
 
   it('recalculates from a new starting level', () => {

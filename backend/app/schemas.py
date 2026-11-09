@@ -301,6 +301,23 @@ class BacktestOut(BaseModel):
     days: list[BacktestDayOut]
 
 
+class WeatherStoryOut(BaseModel):
+    """What the weather does to a day: a headline, one sentence, and the detail."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    headline: str
+    detail: str
+    summary: str
+    points: list[str]
+    daylight_cloud_percent: float | None
+    mean_temperature_c: float | None
+    solar_kwh: float | None
+    recent_solar_kwh: float | None
+    recent_temperature_c: float | None
+    cold_kwh: float
+
+
 class DayForecastOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -314,6 +331,7 @@ class DayForecastOut(BaseModel):
     array_performance: list[float]
     backtest: BacktestOut | None
     usage_notes: list[str] = []
+    weather: WeatherStoryOut | None = None
 
 
 class AccuracyOut(BaseModel):
@@ -360,6 +378,7 @@ class RecommendationOut(BaseModel):
     bright: OutcomeOut
     reasons: list[str]
     downsides: list[str]
+    summary: str = ""
 
 
 class CandidateOut(BaseModel):
@@ -408,6 +427,7 @@ class ChargePlanOut(BaseModel):
     solar_method: str
     history_days: int
     usage_notes: list[str] = []
+    weather: WeatherStoryOut | None = None
 
 
 class ReplayDayOut(BaseModel):
