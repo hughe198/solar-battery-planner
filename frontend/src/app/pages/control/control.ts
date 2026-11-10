@@ -16,7 +16,10 @@ import {
   InverterControl,
   PlanLock,
   PlanLockMode,
+  RecentNight,
   SchedulePeriod,
+  Tonight,
+  TonightSent,
 } from '../../core/models';
 import { MODE_LABELS, PlanService } from '../../core/plan.service';
 import { SystemService } from '../../core/system.service';
@@ -30,6 +33,9 @@ export const STEP_DETAILS: Record<number, string> = {
   5: 'Optional: adds a 10-minute force charge at 500 W starting in about 5 minutes. Watch the battery charge in the Fox app.',
   6: 'Removes the live test period and checks your schedule matches step 1 again.',
 };
+
+/** How tonight's charge reaches the inverter. */
+export type SendRoute = 'now' | 'once' | 'nightly';
 
 const STATUS_LABELS: Record<ControlStatus, string> = {
   ok: 'Done',
@@ -114,6 +120,74 @@ export class Control implements OnInit {
   /** The user has authorised one send at the last minute. */
   readonly lastMinuteAuthorised = signal(false);
 
+  /** How tonight's charge is sent, as picked; until then, what's already arranged. */
+  readonly route = signal<SendRoute | null>(null);
+  readonly chosenRoute = computed<SendRoute>(() => {
+    const picked = this.route();
+    if (picked) return picked;
+    const s = this.status();
+    if (s?.auto_apply) return 'nightly';
+    if (s?.tonight?.will_send === 'last_minute') return 'once';
+    return 'now';
+  });
+  /** Good nights among the recent ones, towards the week wanted before automatic apply. */
+  readonly goodNights = computed(
+    () => (this.status()?.recent_nights ?? []).filter((n) => n.rating === 'good').length,
+  );
+  /** Oldest first, as the dry-run nights are listed. */
+  readonly recentNights = computed(() => [...(this.status()?.recent_nights ?? [])].reverse());
+
+  /** The line under a recent night when there's no verdict to colour it. */
+  nightNote(n: RecentNight, tonight: string | undefined): string {
+    if (!n.sent) {
+      return n.day === tonight ? 'Not sent yet.' : 'Not sent from the app.';
+    }
+    if (n.sent.status === 'failed') return 'The send failed: see the log below.';
+    return n.day === tonight
+      ? 'Tonight. Its verdict comes once the next day has been metered.'
+      : "Verdict: waiting for the day's readings.";
+  }
+
+  /** Whether tonight's plan was fixed by sending it and can still be let go. */
+  readonly canRelease = computed(() => {
+    const t = this.status()?.tonight;
+    return !!t && t.fixed_by === 'sent' && new Date(t.locks_at).getTime() > Date.now();
+  });
+
+  /** "Sent by hand at 18:06" and how it went, for the night's sent card. */
+  sentLine(sent: TonightSent): string {
+    const how = sent.trigger === 'manual' ? 'Sent by hand' : 'Sent automatically';
+    const result: Record<ControlStatus, string> = {
+      ok: 'and read back as written.',
+      mismatch: 'but read back differently: see the log below.',
+      failed: 'but it failed: see the log below, and check the Fox app.',
+      skipped: '',
+    };
+    return `${how} at ${this.when(sent.at)}, ${result[sent.status]}`;
+  }
+
+  /** Whether the plan still moves, for the night's card. */
+  fixedLine(t: Tonight): string {
+    if (t.fixed_by === 'sent') {
+      return "Tonight's plan is fixed at what was sent, so Tonight and Home show the same.";
+    }
+    if (t.fixed_by === 'time') {
+      return `Tonight's plan locked at ${this.when(t.locked_at ?? t.locks_at)}.`;
+    }
+    return (
+      "Tonight's plan follows the forecast again until it's fixed at " +
+      `${this.when(t.locks_at)}; your inverter keeps what was sent until a new plan is sent.`
+    );
+  }
+
+  releaseFixed(): void {
+    this.run(this.control.releaseFixed(), (s) => {
+      this.status.set(s);
+      this.proposal.set(null);
+      this.loadLock();
+    });
+  }
+
   ngOnInit(): void {
     this.refresh();
     this.loadLock();
@@ -164,7 +238,7 @@ export class Control implements OnInit {
   }
 
   /** "23:20" today, otherwise "23:20 Wednesday", in the system's time zone. */
-  private when(iso: string): string {
+  when(iso: string): string {
     const zone = this.system()?.timezone;
     const day = (t: number) =>
       new Intl.DateTimeFormat('en-CA', { dateStyle: 'short', timeZone: zone }).format(t);
@@ -200,6 +274,8 @@ export class Control implements OnInit {
     this.last.set(action);
     this.proposal.set(null);
     this.refresh();
+    // A send by hand fixes tonight's plan.
+    this.loadLock();
   };
 
   turnOn(): void {
@@ -269,15 +345,16 @@ export class Control implements OnInit {
   }
 
   restore(): void {
-    if (!confirm('Put back the schedule your inverter had before the planner changed it?')) return;
+    if (!confirm('Put back your own schedule and turn off the nightly apply?')) return;
     this.run(this.control.restore(), this.afterWrite);
   }
 
-  /** "Added", "Fills a gap" (a copy of Fox's all-day period, which a write drops) or "Kept". */
+  /** "Planner's charge" for the planner's forced stages, "Self-use" for the rest of the day the
+   * planner writes, or "Kept" for a period already on the inverter exactly so. */
   changeOf(period: SchedulePeriod, p: ControlProposal): string {
     const same = (a: SchedulePeriod) => a.start === period.start && a.end === period.end;
-    if (p.added.some(same)) return 'Added';
-    return (p.filled ?? []).some(same) ? 'Fills a gap' : 'Kept';
+    if (p.added.some(same)) return "Planner's charge";
+    return (p.filled ?? []).some(same) ? 'Self-use' : 'Kept';
   }
 
   /** "HH:MM" in the system's time zone. */

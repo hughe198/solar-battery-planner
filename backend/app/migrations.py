@@ -87,6 +87,27 @@ def add_big_load_settings(engine: Engine) -> None:
                 conn.execute(text(f"ALTER TABLE systems ADD COLUMN {name} {kind}"))
 
 
+def add_whole_day_control(engine: Engine) -> None:
+    """The grid charge maximum on batteries (100%, no limit, for existing systems), and the
+    schedule the planner last wrote on inverter controls (unknown for existing ones)."""
+    inspector = inspect(engine)
+    steps = []
+    if inspector.has_table("batteries"):
+        if "max_grid_charge_percent" not in {c["name"] for c in inspector.get_columns("batteries")}:
+            steps.append(
+                "ALTER TABLE batteries ADD COLUMN max_grid_charge_percent FLOAT NOT NULL "
+                "DEFAULT 100"
+            )
+    if inspector.has_table("inverter_controls"):
+        have = {c["name"] for c in inspector.get_columns("inverter_controls")}
+        if "written_schedule" not in have:
+            steps.append("ALTER TABLE inverter_controls ADD COLUMN written_schedule JSON")
+    if steps:
+        with engine.begin() as conn:
+            for step in steps:
+                conn.execute(text(step))
+
+
 def add_plan_lock_settings(engine: Engine) -> None:
     """When the plan locks (just before the window for existing systems), and the one-night
     "send at the last minute" request on inverter control."""
@@ -102,8 +123,23 @@ def add_plan_lock_settings(engine: Engine) -> None:
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {kind}"))
 
 
+def add_plan_fixed_by(engine: Engine) -> None:
+    """Why a kept plan is kept: all kept so far were kept when their lock time came."""
+    inspector = inspect(engine)
+    if not inspector.has_table("locked_plans"):
+        return
+    if "fixed_by" in {c["name"] for c in inspector.get_columns("locked_plans")}:
+        return
+    with engine.begin() as conn:
+        conn.execute(
+            text("ALTER TABLE locked_plans ADD COLUMN fixed_by VARCHAR(10) NOT NULL DEFAULT 'time'")
+        )
+
+
 def upgrade(engine: Engine) -> None:
     upgrade_single_window_tariffs(engine)
     add_battery_wear_cost(engine)
     add_big_load_settings(engine)
+    add_whole_day_control(engine)
     add_plan_lock_settings(engine)
+    add_plan_fixed_by(engine)

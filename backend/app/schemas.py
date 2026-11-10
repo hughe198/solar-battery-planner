@@ -46,6 +46,8 @@ class BatteryIn(BaseModel):
     max_discharge_kw: float = Field(gt=0, le=50)
     round_trip_efficiency_percent: float = Field(default=90, gt=50, le=100)
     wear_pence_per_cycle: float = Field(default=0, ge=0, le=1000)
+    # The highest level charged to from the grid, leaving room for solar.
+    max_grid_charge_percent: float = Field(default=100, ge=50, le=100)
 
 
 class SolarArrayIn(BaseModel):
@@ -456,6 +458,8 @@ class PlanLockOut(BaseModel):
     day: date
     locks_at: datetime
     locked_at: datetime | None
+    # Why it's kept, once it is: "time" (its lock time came) or "sent" (sent by hand first).
+    fixed_by: Literal["time", "sent"] | None = None
 
     _as_utc = field_validator("locks_at", "locked_at")(_utc)
 
@@ -633,6 +637,50 @@ class DryRunNightOut(BaseModel):
     _as_utc = field_validator("at")(_utc)
 
 
+class TonightSentOut(BaseModel):
+    """The latest write of a night's charge to the inverter: by hand, at the last minute or
+    automatically."""
+
+    at: datetime
+    trigger: ControlTrigger
+    status: ControlStatus
+    message: str
+    target_soc_percent: float | None
+    periods: list[PeriodOut]
+
+    _as_utc = field_validator("at")(_utc)
+
+
+class RecentNightOut(BaseModel):
+    """One of the last few charge nights: what was sent, and how it went once metered.
+
+    `rating` is "good" (read back as sent, and about right), "fair" (more or less than needed,
+    or read back differently), "poor" (the send failed, or it ran short at the peak rate), or
+    None while waiting for the day's readings, or when nothing was sent from the app."""
+
+    day: date
+    sent: TonightSentOut | None
+    verdict: DryRunVerdictOut | None = None
+    rating: Literal["good", "fair", "poor"] | None = None
+
+
+class TonightOut(BaseModel):
+    """The next charge night, as the Automation page shows it until its cheap window ends."""
+
+    day: date
+    locks_at: datetime
+    # When its plan was kept, and why ("time" or "sent"); None while it follows the forecast.
+    locked_at: datetime | None
+    fixed_by: Literal["time", "sent"] | None
+    # What was sent for it, if anything has been.
+    sent: TonightSentOut | None
+    # When it will be sent, if not yet: at the lock time, once ("last_minute") or because the
+    # automatic apply is on ("auto").
+    will_send: Literal["last_minute", "auto"] | None
+
+    _as_utc = field_validator("locks_at", "locked_at")(_utc)
+
+
 class ControlStatusOut(BaseModel):
     connected: bool
     enabled: bool
@@ -661,6 +709,11 @@ class ControlStatusOut(BaseModel):
     planner_periods: list[PeriodOut]
     test_periods: list[PeriodOut]
     actions: list[ControlActionOut]
+    tonight: TonightOut | None = None
+    # Trust ladder stage 6: the last few charge nights, newest first, and how many good ones
+    # in a row are wanted before automatic apply.
+    recent_nights: list[RecentNightOut] = []
+    recent_nights_needed: int = 7
 
     _as_utc = field_validator("consented_at", "original_saved_at")(_utc)
 

@@ -1,5 +1,5 @@
 {
-  "scenario": "No charge or hold: one read, no write",
+  "scenario": "Tonight's whole day already there: one read, no write",
   "requests": [
     {
       "method": "POST",
@@ -10,16 +10,33 @@
     }
   ],
   "outcome": "skipped",
-  "message": "No charge needed and no planner periods to remove, so nothing was written.",
+  "message": "Your inverter already has tonight's schedule, so nothing was written.",
   "inverter_after": {
     "enable": 1,
     "groups": [
       {
-        "startHour": 16,
+        "startHour": 0,
         "startMinute": 0,
-        "endHour": 18,
+        "endHour": 11,
         "endMinute": 59,
-        "workMode": "SelfUse"
+        "workMode": "SelfUse",
+        "extraParam": {
+          "fdSoc": 10,
+          "fdPwr": 0,
+          "minSocOnGrid": 10
+        }
+      },
+      {
+        "startHour": 12,
+        "startMinute": 0,
+        "endHour": 23,
+        "endMinute": 59,
+        "workMode": "SelfUse",
+        "extraParam": {
+          "fdSoc": 10,
+          "fdPwr": 0,
+          "minSocOnGrid": 10
+        }
       }
     ]
   }

@@ -16,6 +16,18 @@
         "isDefault": false,
         "groups": [
           {
+            "startHour": 0,
+            "startMinute": 0,
+            "endHour": 1,
+            "endMinute": 59,
+            "workMode": "SelfUse",
+            "extraParam": {
+              "fdSoc": 10,
+              "fdPwr": 0,
+              "minSocOnGrid": 10
+            }
+          },
+          {
             "startHour": 2,
             "startMinute": 0,
             "endHour": 5,
@@ -24,6 +36,18 @@
             "extraParam": {
               "fdSoc": 80,
               "fdPwr": 3600,
+              "minSocOnGrid": 10
+            }
+          },
+          {
+            "startHour": 5,
+            "startMinute": 30,
+            "endHour": 23,
+            "endMinute": 59,
+            "workMode": "SelfUse",
+            "extraParam": {
+              "fdSoc": 10,
+              "fdPwr": 0,
               "minSocOnGrid": 10
             }
           }
@@ -52,6 +76,18 @@
     "enable": 1,
     "groups": [
       {
+        "startHour": 0,
+        "startMinute": 0,
+        "endHour": 1,
+        "endMinute": 59,
+        "workMode": "SelfUse",
+        "extraParam": {
+          "fdSoc": 10,
+          "fdPwr": 0,
+          "minSocOnGrid": 10
+        }
+      },
+      {
         "startHour": 2,
         "startMinute": 0,
         "endHour": 5,
@@ -60,6 +96,18 @@
         "extraParam": {
           "fdSoc": 80,
           "fdPwr": 3600,
+          "minSocOnGrid": 10
+        }
+      },
+      {
+        "startHour": 5,
+        "startMinute": 30,
+        "endHour": 23,
+        "endMinute": 59,
+        "workMode": "SelfUse",
+        "extraParam": {
+          "fdSoc": 10,
+          "fdPwr": 0,
           "minSocOnGrid": 10
         }
       }

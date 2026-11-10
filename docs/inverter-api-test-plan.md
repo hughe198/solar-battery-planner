@@ -100,9 +100,9 @@ named after it in `backend/tests/test_fox_requests.py`.
 | --- | --- |
 | D1 | The success message is built from the stages written, so a hold-only night reads "Hold 00:30–05:30 written…" (golden `S2-hold-only`) |
 | D2 | V3 hides switched-off periods, so they can't be kept. The owner accepted that. The preview names any that are reported, and otherwise warns that any in the Fox app may be lost |
-| D3 | The empty list is sent through V3, then the schedule is switched off (golden `A3-clear-last-period`) |
+| D3 | The empty list is sent through V3, then the schedule is switched off: now reached when Restore puts back an empty schedule (golden `A3-restore-empty`) |
 | D4 | If the periods reached the inverter, or a timeout means they may have, the app keeps track of them so Remove and Restore still find them, and says so in the log |
-| D5 | Only the overlapping part of a user's period is replaced; the rest is kept with every setting (golden `E3-partly-overlapped`) |
+| D5 | Superseded by whole-day control (9 November 2026): the user's periods are all replaced by the planner's whole day, after being saved as the latest manual schedule for Restore (golden `E2-users-periods-replaced`). The write test still keeps the rest of a period its test period overlaps |
 | D6 | The minimum written is at least 10% (owner's decision), and no forced period stops below it |
 | D7 | `maxSoc` goes on every forced period when the inverter reports one |
 | D8 | Both ends of a stage round up to the minute, so stages meeting on a second don't overlap, and overlapping stages are refused |
@@ -114,6 +114,19 @@ named after it in `backend/tests/test_fox_requests.py`.
 | D15 | A read-back that differs from what was written is re-read after 10, 20 and 30 seconds, and only reported as a mismatch if it still differs after a minute (`test_read_back_waits_for_fox_to_catch_up`) |
 
 D14 is still open: see the findings below.
+
+**Whole-day control (9 November 2026, the owner's choice).** Apply no longer fits the charge
+around the user's periods. It writes the whole day: the planner's forced stages, and `SelfUse`
+at every other minute at the planner's levels (10% minimum, `maxSoc` at the top of its range so
+solar can fill the battery), with the installer's limits (`pvLimit`, `exportLimit`,
+`importLimit`, `reactivePower`) copied from the inverter's own periods. That also settles D13
+for applies: the day is always covered. The checks become: the day covered exactly once,
+nothing forced outside the plan's times, self-use everywhere else at the minimum, and the grid
+charge at or under the battery's grid charge maximum. Before each write the schedule is saved
+as the latest manual one unless it's what the planner last wrote (`InverterControl.
+written_schedule`); Restore puts it back and turns off the nightly apply. Remove turns only the
+planner's forced periods into self-use. Goldens S1–S6, T1, T5, E2, E5, E9, A2–A4 were regenerated
+and reviewed by the owner.
 
 The original findings:
 

@@ -26,6 +26,7 @@ from app.planner.base import (
     Verdict,
 )
 from app.planner.charging import (
+    grid_charge_limit_kwh,
     learn_drain_from_history,
     learn_rate_from_history,
     reachable_kwh,
@@ -104,6 +105,16 @@ class Replayer:
         self.rate = learn_rate_from_history(db, system)
         self.zone = ZoneInfo(system.timezone)
 
+    def _reachable(self, b: BatterySpec, start_kwh: float, window: timedelta) -> float:
+        """The most a night's charge could have put in, within the owner's grid charge
+        maximum, so hindsight doesn't call a charge too little for keeping under it."""
+        return grid_charge_limit_kwh(
+            b,
+            getattr(self.system.battery, "max_grid_charge_percent", None),
+            start_kwh,
+            reachable_kwh(self.rate, b, start_kwh, window),
+        )
+
     def _records(self, days: int) -> dict[datetime, UsageRecord]:
         latest = self.db.scalar(
             select(func.max(UsageRecord.start)).where(UsageRecord.system_id == self.system.id)
@@ -135,7 +146,7 @@ class Replayer:
         b = self.battery
         start_kwh = float(b.kwh(before.battery_soc_percent))
         actual_kwh = float(b.kwh(after.battery_soc_percent))
-        reachable = reachable_kwh(self.rate, b, start_kwh, cycle.window)
+        reachable = self._reachable(b, start_kwh, cycle.window)
         targets = np.unique(
             np.concatenate(
                 [
@@ -279,7 +290,7 @@ class Replayer:
         # A suggestion below the level the battery really had is a hold: no charge.
         wanted = start_kwh if suggested_percent is None else float(b.kwh(suggested_percent))
         suggested_kwh = min(max(wanted, start_kwh), b.capacity_kwh)
-        reachable = reachable_kwh(self.rate, b, start_kwh, cycle.window)
+        reachable = self._reachable(b, start_kwh, cycle.window)
         targets = np.unique(
             np.concatenate(
                 [candidate_targets(b, start_kwh, reachable), [actual_kwh, suggested_kwh]]

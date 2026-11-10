@@ -1,5 +1,5 @@
 {
-  "scenario": "User's two periods kept exactly, unknown fields too",
+  "scenario": "User's two periods replaced by the whole day; their solar limit kept",
   "requests": [
     {
       "method": "POST",
@@ -16,6 +16,19 @@
         "isDefault": false,
         "groups": [
           {
+            "startHour": 0,
+            "startMinute": 0,
+            "endHour": 1,
+            "endMinute": 59,
+            "workMode": "SelfUse",
+            "extraParam": {
+              "pvLimit": 4000,
+              "fdSoc": 10,
+              "fdPwr": 0,
+              "minSocOnGrid": 10
+            }
+          },
+          {
             "startHour": 2,
             "startMinute": 0,
             "endHour": 4,
@@ -28,24 +41,13 @@
             }
           },
           {
-            "startHour": 7,
+            "startHour": 5,
             "startMinute": 0,
-            "endHour": 8,
+            "endHour": 23,
             "endMinute": 59,
             "workMode": "SelfUse",
-            "unknownField": "kept",
             "extraParam": {
-              "maxSoc": 100,
-              "pvLimit": 4000
-            }
-          },
-          {
-            "startHour": 16,
-            "startMinute": 0,
-            "endHour": 18,
-            "endMinute": 59,
-            "workMode": "Feedin",
-            "extraParam": {
+              "pvLimit": 4000,
               "fdSoc": 10,
               "fdPwr": 0,
               "minSocOnGrid": 10
@@ -68,6 +70,19 @@
     "enable": 1,
     "groups": [
       {
+        "startHour": 0,
+        "startMinute": 0,
+        "endHour": 1,
+        "endMinute": 59,
+        "workMode": "SelfUse",
+        "extraParam": {
+          "pvLimit": 4000,
+          "fdSoc": 10,
+          "fdPwr": 0,
+          "minSocOnGrid": 10
+        }
+      },
+      {
         "startHour": 2,
         "startMinute": 0,
         "endHour": 4,
@@ -80,24 +95,13 @@
         }
       },
       {
-        "startHour": 7,
+        "startHour": 5,
         "startMinute": 0,
-        "endHour": 8,
+        "endHour": 23,
         "endMinute": 59,
         "workMode": "SelfUse",
-        "unknownField": "kept",
         "extraParam": {
-          "maxSoc": 100,
-          "pvLimit": 4000
-        }
-      },
-      {
-        "startHour": 16,
-        "startMinute": 0,
-        "endHour": 18,
-        "endMinute": 59,
-        "workMode": "Feedin",
-        "extraParam": {
+          "pvLimit": 4000,
           "fdSoc": 10,
           "fdPwr": 0,
           "minSocOnGrid": 10

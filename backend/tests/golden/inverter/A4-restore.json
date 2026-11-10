@@ -47,7 +47,7 @@
     }
   ],
   "outcome": "ok",
-  "message": "Your original schedule was put back and read back as saved.",
+  "message": "Your manual schedule was put back and read back as saved.",
   "inverter_after": {
     "enable": 0,
     "groups": [

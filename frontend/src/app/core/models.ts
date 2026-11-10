@@ -15,6 +15,8 @@ export interface Battery {
   round_trip_efficiency_percent: number;
   /** Pence of wear per full charge cycle (battery price / rated cycles); 0 to ignore. */
   wear_pence_per_cycle: number;
+  /** The highest level charged to from the grid, leaving room for solar; 100 for no limit. */
+  max_grid_charge_percent: number;
 }
 
 export interface SolarArray {
@@ -374,6 +376,8 @@ export interface PlanLock {
   day: string;
   locks_at: string;
   locked_at: string | null;
+  /** Why it's kept, once it is: its lock time came, or it was sent by hand first. */
+  fixed_by?: 'time' | 'sent' | null;
 }
 
 export interface ReplayDay {
@@ -556,6 +560,42 @@ export interface InverterControl {
   planner_periods: SchedulePeriod[];
   test_periods: SchedulePeriod[];
   actions: ControlAction[];
+  /** The next charge night; null until control is on. */
+  tonight?: Tonight | null;
+  /** The last few charge nights, tonight's first, and how many good ones are wanted. */
+  recent_nights?: RecentNight[];
+  recent_nights_needed?: number;
+}
+
+/** One recent charge night: what was sent, and how it went once metered. */
+export interface RecentNight {
+  day: string;
+  sent: TonightSent | null;
+  verdict: DryRunVerdict | null;
+  /** Good (green), fair (amber) or poor (red); null while waiting, or if nothing was sent. */
+  rating: 'good' | 'fair' | 'poor' | null;
+}
+
+/** The latest write of a night's charge: by hand, at the last minute or automatically. */
+export interface TonightSent {
+  at: string;
+  trigger: 'manual' | 'auto';
+  status: ControlStatus;
+  message: string;
+  target_soc_percent: number | null;
+  periods: SchedulePeriod[];
+}
+
+/** The next charge night, shown until its cheap window ends. */
+export interface Tonight {
+  day: string;
+  locks_at: string;
+  /** When its plan was kept, and why; null while it follows the forecast. */
+  locked_at: string | null;
+  fixed_by: 'time' | 'sent' | null;
+  sent: TonightSent | null;
+  /** When it will be sent, if not yet: once at the lock time, or by the nightly apply. */
+  will_send: 'last_minute' | 'auto' | null;
 }
 
 export interface ControlProposal {

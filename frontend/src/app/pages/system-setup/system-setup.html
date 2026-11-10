@@ -54,6 +54,22 @@
       divided by its rated cycles, e.g. £3,000 ÷ 6,000 cycles = 50p. The planner only charges from
       the grid, or sells before a free window, when it pays after wear. Leave at 0 to ignore wear.
     </p>
+    <div class="row">
+      <label>
+        Grid charge maximum (%)
+        <input
+          type="number"
+          step="1"
+          min="50"
+          max="100"
+          formControlName="max_grid_charge_percent"
+        />
+      </label>
+    </div>
+    <p class="muted">
+      The highest level the planner charges to from the grid overnight, leaving room for the next
+      day's solar. Solar can still fill the battery to 100%. Use 100 for no limit.
+    </p>
   </fieldset>
 
   <fieldset class="card" formArrayName="arrays">

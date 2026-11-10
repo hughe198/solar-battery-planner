@@ -2,7 +2,7 @@
 inverter, a step-by-step write test, and the audit log of every change."""
 
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -11,7 +11,16 @@ from sqlalchemy.orm import Session
 
 from app.api.forecast import _system
 from app.api.imports import get_weather_client
-from app.api.plan import _lock_at, current_plan, make_plan, next_day
+from app.api.plan import (
+    _aware,
+    _lock_at,
+    current_plan,
+    fix_sent_plan,
+    locked_plan,
+    make_plan,
+    next_day,
+    release_sent_plan,
+)
 from app.config import settings
 from app.control import dryrun, service, testing
 from app.control.nightly import control_client
@@ -19,6 +28,7 @@ from app.control.schedule import Period, flag
 from app.crypto import decrypt
 from app.database import get_db
 from app.importers.fox_ess import FoxEssClient, FoxEssError, scheduler_set_body
+from app.planner.optimiser import PEAK_TOLERANCE_KWH
 from app.planner.replay import Replayer
 from app.models import (
     ControlAction,
@@ -42,8 +52,11 @@ from app.schemas import (
     DryRunVerdictOut,
     PeriodOut,
     ProposalOut,
+    RecentNightOut,
     TestStepIn,
     TestStepOut,
+    TonightOut,
+    TonightSentOut,
 )
 from app.security import current_user
 from app.weather.open_meteo import OpenMeteoClient, WeatherError
@@ -54,6 +67,9 @@ LOG_LENGTH = 30
 # Trust ladder stage 3: nights of dry runs before applying (a week, shortened by the owner on
 # 5 November 2026 after the live write tests).
 DRY_RUN_NIGHTS = 3
+# Trust ladder stage 6: real nights shown, and good ones wanted, before automatic apply (the
+# owner's choice, 10 November 2026).
+RECENT_NIGHTS = 7
 
 
 def get_control_client_factory() -> Callable[[str], FoxEssClient]:
@@ -150,6 +166,109 @@ def _nights(db: Session, system: System, nights: dict) -> list[DryRunNightOut]:
     return out
 
 
+def _tonight(db: Session, system: System, control: InverterControl | None) -> TonightOut | None:
+    """The next charge night: when its plan locks, what was sent for it, or when it will be.
+    Shown until its cheap window ends, when the next night takes over."""
+    if not (control and control.enabled and system.fox_ess):
+        return None
+    day = next_day(system)
+    kept = locked_plan(db, system, day)
+    # The latest write that changed the inverter for this night. Remove or Restore since then
+    # means the inverter no longer has what was sent.
+    latest = db.scalars(
+        select(ControlAction)
+        .where(
+            ControlAction.system_id == system.id,
+            ControlAction.status != ControlStatus.skipped,
+            (
+                (ControlAction.kind == ControlActionKind.apply) & (ControlAction.day == day)
+            )
+            | ControlAction.kind.in_([ControlActionKind.clear, ControlActionKind.restore]),
+        )
+        .order_by(ControlAction.id.desc())
+        .limit(1)
+    ).first()
+    sent = latest if latest is not None and latest.kind == ControlActionKind.apply else None
+    sent_out = _sent_out(sent) if sent is not None else None
+    will_send = None
+    if sent is None:
+        if control.last_minute_day == day:
+            will_send = "last_minute"
+        elif control.auto_apply and settings.auto_apply:
+            will_send = "auto"
+    return TonightOut(
+        day=day,
+        locks_at=_lock_at(system, day),
+        locked_at=_aware(kept.locked_at) if kept else None,
+        fixed_by=kept.fixed_by if kept else None,
+        sent=sent_out,
+        will_send=will_send,
+    )
+
+
+def _sent_out(action: ControlAction) -> TonightSentOut:
+    return TonightSentOut(
+        at=_aware(action.created_at),
+        trigger=action.trigger,
+        status=action.status,
+        message=action.message,
+        target_soc_percent=action.target_soc_percent,
+        periods=_periods((action.sent or {}).get("groups")),
+    )
+
+
+def _rating(sent: ControlAction | None, verdict) -> str | None:
+    """How a night went, for its colour: see RecentNightOut."""
+    if sent is None:
+        return None
+    if sent.status == ControlStatus.failed:
+        return "poor"
+    if verdict is None:
+        return None
+    if verdict.peak_import_kwh > PEAK_TOLERANCE_KWH:
+        return "poor"
+    if sent.status == ControlStatus.mismatch or verdict.verdict != "about right":
+        return "fair"
+    return "good"
+
+
+def _recent_nights(
+    db: Session, system: System, control: InverterControl | None
+) -> list[RecentNightOut]:
+    """The last `RECENT_NIGHTS` charge nights, tonight's first: the latest send for each, and
+    its morning verdict once the day has been metered."""
+    if not (control and control.enabled and system.fox_ess):
+        return []
+    tonight = next_day(system)
+    days = [tonight - timedelta(days=i) for i in range(RECENT_NIGHTS)]
+    sends: dict = {}
+    for action in db.scalars(
+        select(ControlAction)
+        .where(
+            ControlAction.system_id == system.id,
+            ControlAction.kind == ControlActionKind.apply,
+            ControlAction.status != ControlStatus.skipped,
+            ControlAction.day.in_(days),
+        )
+        .order_by(ControlAction.id.desc())
+    ):
+        sends.setdefault(action.day, action)  # the latest for each night
+    judge = Replayer(db, system).judge if sends else None
+    out = []
+    for day in days:
+        sent = sends.get(day)
+        verdict = judge(day, sent.target_soc_percent) if sent and judge and day < tonight else None
+        out.append(
+            RecentNightOut(
+                day=day,
+                sent=_sent_out(sent) if sent else None,
+                verdict=DryRunVerdictOut.model_validate(verdict) if verdict else None,
+                rating=_rating(sent, verdict),
+            )
+        )
+    return out
+
+
 def _status(db: Session, system: System) -> ControlStatusOut:
     control = system.inverter_control
     level = control.test_level if control else 0
@@ -197,6 +316,9 @@ def _status(db: Session, system: System) -> ControlStatusOut:
         planner_periods=_periods(control.written_groups if control else None),
         test_periods=_periods(control.test_groups if control else None),
         actions=[ControlActionOut.model_validate(a) for a in actions],
+        tonight=_tonight(db, system, control),
+        recent_nights=_recent_nights(db, system, control),
+        recent_nights_needed=RECENT_NIGHTS,
     )
 
 
@@ -275,13 +397,25 @@ def _proposal(
     weather_client: OpenMeteoClient,
     start_soc_percent: float | None,
 ) -> service.Proposal:
+    return _plan_and_proposal(db, system, control, client, weather_client, start_soc_percent)[1]
+
+
+def _plan_and_proposal(
+    db: Session,
+    system: System,
+    control: InverterControl,
+    client: FoxEssClient,
+    weather_client: OpenMeteoClient,
+    start_soc_percent: float | None,
+):
+    """The next charge's plan, and what applying it would write."""
     plan = _next_plan(db, system, weather_client, start_soc_percent)
     try:
         schedule = service.read_schedule(client, system.fox_ess.device_sn)
     except FoxEssError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
     try:
-        return service.propose(system, control, plan, schedule)
+        return plan, service.propose(system, control, plan, schedule)
     except service.ControlError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
 
@@ -401,7 +535,9 @@ def apply_plan(
             f"Pass the write test up to step {testing.UNLOCKS_APPLY} first",
         )
     client = _client(system, client_factory)
-    proposal = _proposal(db, system, control, client, weather_client, body.start_soc_percent)
+    plan, proposal = _plan_and_proposal(
+        db, system, control, client, weather_client, body.start_soc_percent
+    )
     if proposal.fingerprint != body.fingerprint:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
@@ -409,8 +545,40 @@ def apply_plan(
             "preview before applying.",
         )
     action = service.apply(db, system, control, client, proposal, ControlTrigger.manual)
+    if action.status in (ControlStatus.ok, ControlStatus.mismatch):
+        # What's shown from now on is what was sent, not a plan that keeps moving (the owner's
+        # choice, 10 November 2026).
+        fix_sent_plan(db, system, proposal.day, plan)
     db.commit()
     return action
+
+
+@router.delete("/fixed", response_model=ControlStatusOut)
+def release_fixed_plan(
+    user: User = Depends(current_user), db: Session = Depends(get_db)
+) -> ControlStatusOut:
+    """Let tonight's plan, fixed when it was sent by hand, follow the forecast again until it
+    locks, to send a fresh one. Nothing on the inverter changes until something is sent."""
+    system = _system(user)
+    _enabled(system)
+    day = next_day(system)
+    if not release_sent_plan(db, system, day):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Tonight's plan isn't fixed by a send, or its lock time has passed.",
+        )
+    service._log(
+        db,
+        system,
+        ControlActionKind.apply,
+        ControlTrigger.manual,
+        ControlStatus.skipped,
+        f"Let the plan for {day:%a %d %b} follow the forecast again. What was sent stays on "
+        "the inverter until a new plan is sent.",
+        day=day,
+    )
+    db.commit()
+    return _status(db, system)
 
 
 @router.post("/last-minute", response_model=ControlStatusOut)

@@ -125,6 +125,39 @@ def current_plan(
     return plan, PlanLock(at, now)
 
 
+def fix_sent_plan(
+    db: Session, system: System, day: date, plan: ChargePlan, now: datetime | None = None
+) -> None:
+    """Keep the plan just sent to the inverter by hand, so what's shown from now on is what the
+    inverter has. One already kept, because its lock time came or it was sent before, is
+    replaced. Adds to the session; the caller commits."""
+    kept = locked_plan(db, system, day)
+    now = now or datetime.now(timezone.utc)
+    if kept is None:
+        db.add(
+            LockedPlan(
+                system_id=system.id, day=day, locked_at=now, plan=dump_plan(plan), fixed_by="sent"
+            )
+        )
+    else:
+        if kept.plan != dump_plan(plan):
+            kept.plan, kept.locked_at = dump_plan(plan), now
+        kept.fixed_by = "sent"
+
+
+def release_sent_plan(db: Session, system: System, day: date) -> bool:
+    """Let a plan kept because it was sent by hand follow the forecast again, if its lock time
+    is still to come. The inverter keeps what was sent until something else is sent. Returns
+    whether there was one to let go."""
+    kept = locked_plan(db, system, day)
+    if kept is None or kept.fixed_by != "sent" or _lock_at(system, day) <= datetime.now(
+        timezone.utc
+    ):
+        return False
+    db.delete(kept)
+    return True
+
+
 def make_plan(
     db: Session,
     system: System,
@@ -216,6 +249,7 @@ def _lock_out(system: System, db: Session) -> PlanLockOut:
         day=day,
         locks_at=_lock_at(system, day),
         locked_at=_aware(kept.locked_at) if kept else None,
+        fixed_by=kept.fixed_by if kept else None,
     )
 
 
@@ -230,7 +264,8 @@ def set_plan_lock(
     body: PlanLockIn, user: User = Depends(current_user), db: Session = Depends(get_db)
 ) -> PlanLockOut:
     """Choose when plans lock. If the next charge's plan is already kept but the new lock time
-    is still to come, it is let go so it follows the forecast again until then."""
+    is still to come, it is let go so it follows the forecast again until then. A plan kept
+    because it was sent to the inverter stays, as that's what the inverter has."""
     system = _system(user)
     system.plan_lock_time = (
         time.fromisoformat(body.time) if body.mode == "set_time" and body.time else None
@@ -239,7 +274,11 @@ def set_plan_lock(
     day = next_day(system)
     if _lock_at(system, day) > datetime.now(timezone.utc):
         db.execute(
-            delete(LockedPlan).where(LockedPlan.system_id == system.id, LockedPlan.day == day)
+            delete(LockedPlan).where(
+                LockedPlan.system_id == system.id,
+                LockedPlan.day == day,
+                LockedPlan.fixed_by != "sent",
+            )
         )
     db.commit()
     return _lock_out(system, db)

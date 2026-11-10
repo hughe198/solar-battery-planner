@@ -40,6 +40,18 @@
             }
           },
           {
+            "startHour": 4,
+            "startMinute": 0,
+            "endHour": 22,
+            "endMinute": 29,
+            "workMode": "SelfUse",
+            "extraParam": {
+              "fdSoc": 10,
+              "fdPwr": 0,
+              "minSocOnGrid": 10
+            }
+          },
+          {
             "startHour": 22,
             "startMinute": 30,
             "endHour": 23,
@@ -88,6 +100,18 @@
         "extraParam": {
           "fdSoc": 80,
           "fdPwr": 3600,
+          "minSocOnGrid": 10
+        }
+      },
+      {
+        "startHour": 4,
+        "startMinute": 0,
+        "endHour": 22,
+        "endMinute": 29,
+        "workMode": "SelfUse",
+        "extraParam": {
+          "fdSoc": 10,
+          "fdPwr": 0,
           "minSocOnGrid": 10
         }
       },

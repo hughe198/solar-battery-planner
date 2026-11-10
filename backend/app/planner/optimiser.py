@@ -39,6 +39,7 @@ from app.planner.charging import (
     Discharge,
     Drain,
     discharge,
+    grid_charge_limit_kwh,
     reachable_kwh,
 )
 from app.planner.charging import schedule as charge_schedule
@@ -529,7 +530,12 @@ def plan(
     if len(prices.night_import) and prices.night_import.max() <= 0:
         drain = discharge(battery, before_kwh, cycle.night_start, schedule)
     start_kwh = before_kwh - (drain.stored_kwh if drain else 0.0)
-    max_kwh = reachable_kwh(rate, battery, start_kwh, cycle.window)
+    max_kwh = grid_charge_limit_kwh(
+        battery,
+        getattr(system.battery, "max_grid_charge_percent", None),
+        start_kwh,
+        reachable_kwh(rate, battery, start_kwh, cycle.window),
+    )
     targets = candidate_targets(battery, start_kwh, max_kwh)
 
     runs = {}

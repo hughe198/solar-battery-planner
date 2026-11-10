@@ -1,5 +1,5 @@
 {
-  "scenario": "Remove the planner's charge, keep the user's period",
+  "scenario": "Remove the planner's charge: its hours run in self-use",
   "requests": [
     {
       "method": "POST",
@@ -16,11 +16,23 @@
         "isDefault": false,
         "groups": [
           {
-            "startHour": 16,
+            "startHour": 0,
             "startMinute": 0,
-            "endHour": 18,
+            "endHour": 11,
             "endMinute": 59,
-            "workMode": "Feedin",
+            "workMode": "SelfUse",
+            "extraParam": {
+              "fdSoc": 10,
+              "fdPwr": 0,
+              "minSocOnGrid": 10
+            }
+          },
+          {
+            "startHour": 12,
+            "startMinute": 0,
+            "endHour": 23,
+            "endMinute": 59,
+            "workMode": "SelfUse",
             "extraParam": {
               "fdSoc": 10,
               "fdPwr": 0,
@@ -39,16 +51,28 @@
     }
   ],
   "outcome": "ok",
-  "message": "The planner's force charge periods were removed.",
+  "message": "The planner's force charge periods were removed; their times run in self-use.",
   "inverter_after": {
     "enable": 1,
     "groups": [
       {
-        "startHour": 16,
+        "startHour": 0,
         "startMinute": 0,
-        "endHour": 18,
+        "endHour": 11,
         "endMinute": 59,
-        "workMode": "Feedin",
+        "workMode": "SelfUse",
+        "extraParam": {
+          "fdSoc": 10,
+          "fdPwr": 0,
+          "minSocOnGrid": 10
+        }
+      },
+      {
+        "startHour": 12,
+        "startMinute": 0,
+        "endHour": 23,
+        "endMinute": 59,
+        "workMode": "SelfUse",
         "extraParam": {
           "fdSoc": 10,
           "fdPwr": 0,

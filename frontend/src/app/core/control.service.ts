@@ -43,6 +43,11 @@ export class ControlService {
     return this.http.delete<InverterControl>('/api/control/last-minute');
   }
 
+  /** Let tonight's plan, fixed when it was sent by hand, follow the forecast again. */
+  releaseFixed(): Observable<InverterControl> {
+    return this.http.delete<InverterControl>('/api/control/fixed');
+  }
+
   clear(): Observable<ControlAction> {
     return this.http.post<ControlAction>('/api/control/clear', {});
   }

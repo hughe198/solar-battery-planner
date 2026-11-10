@@ -136,6 +136,10 @@ class Battery(Base):
     round_trip_efficiency_percent: Mapped[float] = mapped_column(Float, default=90)
     # What one full charge cycle wears off the battery, in pence (price / rated cycles).
     wear_pence_per_cycle: Mapped[float] = mapped_column(Float, default=0, server_default="0")
+    # The highest level the planner charges to from the grid, leaving room for solar.
+    max_grid_charge_percent: Mapped[float] = mapped_column(
+        Float, default=100, server_default="100"
+    )
 
     system: Mapped[System] = relationship(back_populates="battery")
 
@@ -352,11 +356,15 @@ class InverterControl(Base):
     # Apply the plan by itself each evening, before the charge window opens.
     auto_apply: Mapped[bool] = mapped_column(Boolean, default=False)
     consented_at: Mapped[datetime | None] = mapped_column(default=None)
-    # The inverter's schedule as it was before the planner first wrote to it, for restoring.
+    # The user's latest manual schedule: saved before the planner replaces one it didn't
+    # write, for Restore to put back.
     original_schedule: Mapped[dict | None] = mapped_column(JSON, default=None)
     original_saved_at: Mapped[datetime | None] = mapped_column(default=None)
     # The force charge periods the planner last wrote, so they can be taken out again.
     written_groups: Mapped[list | None] = mapped_column(JSON, default=None)
+    # The whole schedule as read back after the planner's last write, so a change made by
+    # hand since is noticed (and saved before it's replaced).
+    written_schedule: Mapped[dict | None] = mapped_column(JSON, default=None)
     # Highest step of the write test passed (see app.control.testing); applying needs 4.
     test_level: Mapped[int] = mapped_column(Integer, default=0)
     # The schedule read at the start of the write test, which the test must end back at.
@@ -502,5 +510,8 @@ class LockedPlan(Base):
     locked_at: Mapped[datetime] = mapped_column(default=_now)
     # The whole ChargePlan, as app.planner.locking.dump_plan writes it.
     plan: Mapped[dict] = mapped_column(JSON)
+    # Why it's kept: "time" when its lock time came, "sent" when it was sent to the inverter by
+    # hand before then (so what's shown matches what the inverter has).
+    fixed_by: Mapped[str] = mapped_column(String(10), default="time", server_default="time")
 
     system: Mapped[System] = relationship(back_populates="locked_plans")

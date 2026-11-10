@@ -61,6 +61,10 @@ export class SystemSetup implements OnInit {
         [Validators.required, Validators.min(51), Validators.max(100)],
       ],
       wear_pence_per_cycle: [0, [Validators.required, Validators.min(0), Validators.max(1000)]],
+      max_grid_charge_percent: [
+        100,
+        [Validators.required, Validators.min(50), Validators.max(100)],
+      ],
     }),
     tariff: tariffForm(this.fb),
     tariff_effective_from: [this.today],

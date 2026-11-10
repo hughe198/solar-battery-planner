@@ -21,6 +21,9 @@ household usage and solar generation for the next day. Two planning modes:
 
 ## Running locally
 
+Once both are set up as below, `./start.sh` (Git Bash on Windows, or bash elsewhere) starts the
+backend and frontend together and stops both with Ctrl+C.
+
 Backend (FastAPI, Python 3.12+), on http://localhost:8000 with API docs at `/docs`:
 
 ```bash
@@ -445,12 +448,21 @@ the old `/inverter` link redirects there).
   called only when the schedule must be switched on from off, or off. The plan is written as
   `ForceCharge` and `ForceDischarge` periods with `fdSoc`, `fdPwr`, `minSocOnGrid` (never below
   10%) and `maxSoc` when the inverter has one, clamped to the ranges it reports. Periods that
-  cross midnight are split. The user's other periods are kept with every setting, and one that's
-  partly overlapped keeps the part outside. Fox's all-day default period is never sent.
+  cross midnight are split. **Applying writes the whole day:** the planner's forced periods, and
+  `SelfUse` at every other minute, down to the minimum and filling from solar up to `maxSoc`,
+  carrying the installer's solar, export and import limits from the inverter's own periods. The
+  user's periods are replaced. Fox's all-day default period is never sent, and a day with nothing
+  forced is written as two halves. The night's grid charge never goes above the battery's **grid
+  charge maximum** (System page; 100% means no limit), leaving room for the next day's solar.
 - Preview lists every call Apply would make, in order, with its body and which ones change the
   inverter, and the user ticks to authorise them before **Authorise and send**. Apply recomputes
-  the proposal and refuses if it differs from the preview. Every write is read back and compared, the schedule from before the first write is
-  saved for **Restore**, and every action (with what was sent and read back) goes in an audit log.
+  the proposal and refuses if it differs from the preview. Every write is read back and compared,
+  and every action (with what was sent and read back) goes in an audit log.
+- Before a write, the schedule on the inverter is saved as the user's **latest manual schedule**
+  unless it's the one the planner last wrote (so a change made by hand in the Fox app is kept).
+  **Restore** puts that back and turns off the nightly apply, so the planner leaves the inverter
+  alone until the user turns it on again. **Remove planner periods** takes out only the planner's
+  forced periods; their times run in self-use.
 - A six-step write test must reach step 4 before Apply unlocks, and auto-apply also needs one good
   manual apply. See [the test protocol](docs/inverter-control-test-protocol.md).
 - **Plan lock** (`app/planner/locking.py`): the next charge's plan follows each new forecast and
