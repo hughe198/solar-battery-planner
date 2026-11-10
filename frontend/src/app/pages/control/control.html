@@ -14,6 +14,52 @@
   </p>
 }
 
+@if (lock(); as l) {
+  <section class="card plan-lock">
+    <h2>When tonight's plan is fixed</h2>
+    <p>
+      Until then the plan follows each new forecast and battery reading, so it can move by a few
+      percent through the day. At this time it locks: it's kept exactly as it is, and that's the
+      plan Tonight and Home show and the one sent to your inverter.
+    </p>
+    <label class="choice">
+      <input
+        type="radio"
+        name="lock-mode"
+        [checked]="lockMode() === 'before_window'"
+        (change)="lockMode.set('before_window')"
+      />
+      Just before the cheap rate starts (10 minutes before), using the freshest forecast
+    </label>
+    <label class="choice">
+      <input
+        type="radio"
+        name="lock-mode"
+        [checked]="lockMode() === 'set_time'"
+        (change)="lockMode.set('set_time')"
+      />
+      At a set time
+      <input
+        type="time"
+        aria-label="Lock time"
+        [value]="lockTime()"
+        [disabled]="lockMode() !== 'set_time'"
+        (input)="lockTime.set($any($event.target).value)"
+      />
+    </label>
+    <button type="button" [disabled]="busy() || !lockChanged()" (click)="saveLock()">Save</button>
+    <p class="muted" role="status">
+      @if (l.locked_at) {
+        The plan for {{ nightLabel(l.day) }} locked at {{ lockAt() }} and won't change now.
+      } @else {
+        The plan for {{ nightLabel(l.day) }} locks at <strong>{{ lockAt() }}</strong
+        >.
+      }
+      A set time after the cheap rate starts counts as just before it.
+    </p>
+  </section>
+}
+
 @if (status(); as s) {
   @if (!s.connected) {
     <section class="card">
@@ -285,6 +331,43 @@
           }
         </div>
       }
+
+      <h3>Or send it at the last minute</h3>
+      <p>
+        Approve tonight's send now, and the server sends the plan as it stands when it locks, at
+        {{ lockAt() || 'the lock time' }}. That uses the freshest forecast, so it may differ a
+        little from a preview. It's sent once, and the log shows exactly what was sent.
+      </p>
+      @if (s.last_minute_day) {
+        <p class="notice" role="status">
+          The charge for {{ nightLabel(s.last_minute_day) }} will be sent at {{ lockAt() }}.
+        </p>
+        <button type="button" class="secondary" [disabled]="busy()" (click)="cancelLastMinute()">
+          Don't send it
+        </button>
+      } @else if (s.auto_apply) {
+        <p class="muted">Automatic apply already sends the plan every night when it locks.</p>
+      } @else {
+        <label class="choice">
+          <input
+            type="checkbox"
+            [checked]="lastMinuteAuthorised()"
+            [disabled]="busy() || !s.can_send_last_minute"
+            (change)="lastMinuteAuthorised.set(!lastMinuteAuthorised())"
+          />
+          I authorise sending tonight's plan once, when it locks
+        </label>
+        <button
+          type="button"
+          [disabled]="busy() || !lastMinuteAuthorised() || !s.can_send_last_minute"
+          (click)="sendLastMinute()"
+        >
+          Send at the last minute
+        </button>
+        @if (lastMinuteBlocked(s); as why) {
+          <p class="muted">{{ why }}</p>
+        }
+      }
     </section>
 
     <section class="card">
@@ -348,7 +431,7 @@
           [disabled]="busy() || (!s.can_auto_apply && !s.auto_apply)"
           (change)="setAutoApply(!s.auto_apply)"
         />
-        Apply the plan automatically each evening, up to two hours before the cheap rate starts
+        Apply the plan automatically each evening, when it locks (set at the top of this page)
       </label>
       @if (!s.can_auto_apply && !s.auto_apply) {
         <p class="muted">Unlocks after the write test and one successful Apply by hand.</p>

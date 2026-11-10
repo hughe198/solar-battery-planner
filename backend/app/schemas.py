@@ -1,4 +1,5 @@
 from datetime import date, datetime, time, timezone
+from typing import Literal
 from zoneinfo import available_timezones
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
@@ -430,6 +431,35 @@ class ChargePlanOut(BaseModel):
     history_days: int
     usage_notes: list[str] = []
     weather: WeatherStoryOut | None = None
+    # When this plan locks (stops following the forecast), and when it was kept, if it has.
+    locks_at: datetime | None = None
+    locked_at: datetime | None = None
+
+    _as_utc = field_validator("locks_at", "locked_at")(_utc)
+
+
+class PlanLockIn(BaseModel):
+    """When plans lock: just before the cheap window opens, or at a set local time."""
+
+    mode: Literal["before_window", "set_time"] = "before_window"
+    time: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+
+    @model_validator(mode="after")
+    def needs_time(self) -> "PlanLockIn":
+        if self.mode == "set_time" and not self.time:
+            raise ValueError("choose a time")
+        return self
+
+
+class PlanLockOut(BaseModel):
+    mode: Literal["before_window", "set_time"]
+    time: str | None  # "21:00", for a set time
+    # The next charge night, when its plan locks, and when it was kept if it has been.
+    day: date
+    locks_at: datetime
+    locked_at: datetime | None
+
+    _as_utc = field_validator("locks_at", "locked_at")(_utc)
 
 
 class ReplayDayOut(BaseModel):
@@ -621,6 +651,11 @@ class ControlStatusOut(BaseModel):
     dry_run_nights_needed: int = 3
     can_apply: bool
     can_auto_apply: bool
+    # The night the user asked to have sent at the last minute, when its plan locks.
+    last_minute_day: date | None = None
+    # Whether that can be asked for: apply unlocked, and this server runs the automatic apply
+    # (which is what sends it) and allows writes.
+    can_send_last_minute: bool = False
     has_original: bool
     original_saved_at: datetime | None
     original: list[PeriodOut]

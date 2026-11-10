@@ -11,7 +11,14 @@ from app.control import service, testing
 from app.control.nightly import run_once
 from app.control.schedule import Period, Schedule, charge_periods, fill_gaps, matches, merge
 from app.main import app
-from app.models import Battery, ControlStatus, ControlTrigger, InverterControl, PlanningMode
+from app.models import (
+    Battery,
+    ControlStatus,
+    ControlTrigger,
+    InverterControl,
+    LockedPlan,
+    PlanningMode,
+)
 from tests.conftest import register
 from tests.test_forecast_api import weather  # noqa: F401 (fixture)
 from tests.test_imports_api import UTC_SYSTEM, FakeFox
@@ -700,18 +707,82 @@ def test_nightly_applies_once_in_the_evening(client, headers, inverter, weather)
 
         today = datetime.now(timezone.utc).date()
         cycle = cycle_for(today + timedelta(days=1), TariffSchedule.from_system(system), "UTC")
-        early = cycle.night_start - timedelta(hours=5)
+        # Not until the plan locks, by default ten minutes before the window opens.
+        early = cycle.night_start - timedelta(hours=1)
         assert run_once(db, inverter, weather, early) == []
-        evening = cycle.night_start - timedelta(hours=1)
+        locks = cycle.night_start - timedelta(minutes=10)
+        assert run_once(db, inverter, weather, locks - timedelta(minutes=1)) == []
         # The owner changes the schedule by hand during the day: the nightly apply saves that
         # as the latest manual schedule, then writes the whole day again.
         inverter.groups = [{**inverter.groups[0], "workMode": "Feedin"}]
-        (action,) = run_once(db, inverter, weather, evening)
+        (action,) = run_once(db, inverter, weather, locks)
         assert action.trigger == ControlTrigger.auto
         assert action.status == ControlStatus.ok, action.message
         db.refresh(control)
         assert control.original_schedule["groups"][0]["workMode"] == "Feedin"
-        assert run_once(db, inverter, weather, evening + timedelta(minutes=10)) == []
+        assert run_once(db, inverter, weather, locks + timedelta(minutes=5)) == []
+        # What was sent is the plan as it locked, which is what Tonight now shows.
+        kept = db.query(LockedPlan).one()
+        assert kept.day == cycle.night_end.date()
+        target = kept.plan["recommendations"][0]["target_soc_percent"]
+        assert action.target_soc_percent == pytest.approx(target, abs=1)
+
+
+def unlock_apply(client, headers):
+    opt_in(client, headers)
+    for n in (1, 2, 3, 4):
+        step(client, headers, n)
+
+
+def test_send_at_the_last_minute_needs_the_server_to_send_it(client, headers, inverter):
+    unlock_apply(client, headers)
+    resp = client.post("/api/control/last-minute", headers=headers)
+    assert resp.status_code == 409 and "SBP_AUTO_APPLY" in resp.json()["detail"]
+    assert client.get("/api/control", headers=headers).json()["can_send_last_minute"] is False
+
+
+def test_send_at_the_last_minute_sends_once_when_the_plan_locks(
+    client, headers, inverter, weather, monkeypatch  # noqa: F811
+):
+    from app.database import get_session_factory
+    from app.planner.simulator import cycle_for
+    from app.tariffs import TariffSchedule
+
+    monkeypatch.setattr(settings, "auto_apply", True)
+    opt_in(client, headers)
+    # Locked until the write test reaches step 4.
+    assert client.post("/api/control/last-minute", headers=headers).status_code == 409
+    for n in (1, 2, 3, 4):
+        step(client, headers, n)
+    status = client.post("/api/control/last-minute", headers=headers).json()
+    assert status["can_send_last_minute"] is True
+    day = status["last_minute_day"]
+    assert "at the last minute" in status["actions"][0]["message"]
+    writes = len(inverter.writes)
+
+    factory = app.dependency_overrides[get_session_factory]()
+    with factory() as db:
+        control = db.query(InverterControl).one()
+        assert control.auto_apply is False  # not full automation
+        system = control.system
+        cycle = cycle_for(date.fromisoformat(day), TariffSchedule.from_system(system), "UTC")
+        locks = cycle.night_start - timedelta(minutes=10)
+        assert run_once(db, inverter, weather, locks - timedelta(minutes=30)) == []
+        (action,) = run_once(db, inverter, weather, locks + timedelta(minutes=1))
+        assert action.status == ControlStatus.ok, action.message
+        assert len(inverter.writes) > writes
+        assert control.last_minute_day is None
+        # Once only: the next night isn't sent unless asked again.
+        assert run_once(db, inverter, weather, locks + timedelta(days=1)) == []
+
+
+def test_cancel_send_at_the_last_minute(client, headers, inverter, monkeypatch):
+    monkeypatch.setattr(settings, "auto_apply", True)
+    unlock_apply(client, headers)
+    assert client.post("/api/control/last-minute", headers=headers).json()["last_minute_day"]
+    status = client.delete("/api/control/last-minute", headers=headers).json()
+    assert status["last_minute_day"] is None
+    assert status["actions"][0]["message"].startswith("Cancelled")
 
 
 def test_apply_with_nothing_to_change_writes_nothing(monkeypatch):

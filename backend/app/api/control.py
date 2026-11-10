@@ -3,6 +3,7 @@ inverter, a step-by-step write test, and the audit log of every change."""
 
 from collections.abc import Callable
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
@@ -10,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.api.forecast import _system
 from app.api.imports import get_weather_client
-from app.api.plan import make_plan, next_day
+from app.api.plan import _lock_at, current_plan, make_plan, next_day
 from app.config import settings
 from app.control import dryrun, service, testing
 from app.control.nightly import control_client
@@ -187,6 +188,8 @@ def _status(db: Session, system: System) -> ControlStatusOut:
         dry_run_nights_needed=DRY_RUN_NIGHTS,
         can_apply=can_apply,
         can_auto_apply=can_apply and _has_good_manual_apply(db, system),
+        last_minute_day=control.last_minute_day if enabled else None,
+        can_send_last_minute=can_apply and settings.auto_apply and settings.inverter_writes,
         has_original=original is not None,
         original_saved_at=control.original_saved_at if control else None,
         original=_periods(original.get("groups") if original else None),
@@ -252,6 +255,18 @@ def update_settings(
     return _status(db, system)
 
 
+def _next_plan(db, system, weather_client, start_soc_percent):
+    """The next charge's plan: the locked one once it has locked, unless a level is typed in."""
+    try:
+        if start_soc_percent is None:
+            return current_plan(db, system, weather_client, next_day(system))[0]
+        return make_plan(db, system, weather_client, next_day(system), start_soc_percent)
+    except WeatherError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc))
+
+
 def _proposal(
     db: Session,
     system: System,
@@ -260,12 +275,7 @@ def _proposal(
     weather_client: OpenMeteoClient,
     start_soc_percent: float | None,
 ) -> service.Proposal:
-    try:
-        plan = make_plan(db, system, weather_client, next_day(system), start_soc_percent)
-    except WeatherError as exc:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc))
+    plan = _next_plan(db, system, weather_client, start_soc_percent)
     try:
         schedule = service.read_schedule(client, system.fox_ess.device_sn)
     except FoxEssError as exc:
@@ -305,12 +315,7 @@ def dry_run(
     writes switched off on the server."""
     system = _system(user)
     control = _enabled(system)
-    try:
-        plan = make_plan(db, system, weather_client, next_day(system), None)
-    except WeatherError as exc:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc))
+    plan = _next_plan(db, system, weather_client, None)
     try:
         run = dryrun.build(system, control, _client(system, client_factory), plan)
     except FoxEssError as exc:
@@ -406,6 +411,69 @@ def apply_plan(
     action = service.apply(db, system, control, client, proposal, ControlTrigger.manual)
     db.commit()
     return action
+
+
+@router.post("/last-minute", response_model=ControlStatusOut)
+def send_last_minute(
+    user: User = Depends(current_user), db: Session = Depends(get_db)
+) -> ControlStatusOut:
+    """Send the next charge at the last minute: when its plan locks, the server writes it once,
+    as it stands then. It may differ a little from the preview, and the log shows what was
+    sent. Needs the automatic apply running on this server, as that is what sends it."""
+    system = _system(user)
+    control = _enabled(system)
+    _require_writes()
+    if control.test_level < testing.UNLOCKS_APPLY:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Pass the write test up to step {testing.UNLOCKS_APPLY} first",
+        )
+    if not settings.auto_apply:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This server doesn't run the automatic apply (SBP_AUTO_APPLY), so nothing would "
+            "send it. Use Authorise and send instead.",
+        )
+    day = next_day(system)
+    if control.last_auto_day == day:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Tonight's charge has already been sent automatically"
+        )
+    control.last_minute_day = day
+    when = _lock_at(system, day).astimezone(ZoneInfo(system.timezone))
+    service._log(
+        db,
+        system,
+        ControlActionKind.apply,
+        ControlTrigger.manual,
+        ControlStatus.skipped,
+        f"Asked to send the charge for {day:%a %d %b} at the last minute, when the plan locks "
+        f"at {when:%H:%M}. Nothing written yet.",
+        day=day,
+    )
+    db.commit()
+    return _status(db, system)
+
+
+@router.delete("/last-minute", response_model=ControlStatusOut)
+def cancel_last_minute(
+    user: User = Depends(current_user), db: Session = Depends(get_db)
+) -> ControlStatusOut:
+    """Don't send at the last minute after all. Nothing on the inverter changes."""
+    system = _system(user)
+    control = _enabled(system)
+    if control.last_minute_day is not None:
+        control.last_minute_day = None
+        service._log(
+            db,
+            system,
+            ControlActionKind.apply,
+            ControlTrigger.manual,
+            ControlStatus.skipped,
+            "Cancelled sending at the last minute. Nothing was written.",
+        )
+    db.commit()
+    return _status(db, system)
 
 
 @router.post("/clear", response_model=ControlActionOut)

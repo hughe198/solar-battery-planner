@@ -305,4 +305,71 @@ describe('Control', () => {
     const req = http.expectOne('/api/control/apply');
     expect(req.request.body).toEqual({ fingerprint: 'abc123', start_soc_percent: null });
   });
+  const LOCK = {
+    mode: 'before_window' as const,
+    time: null,
+    day: '2026-11-11',
+    locks_at: '2026-11-10T23:20:00Z',
+    locked_at: null,
+  };
+
+  function named(el: HTMLElement, text: string) {
+    return Array.from(el.querySelectorAll('button')).find((b) => b.textContent?.includes(text))!;
+  }
+
+  it('says when the plan locks and saves a set time', () => {
+    const fixture = render(OFF);
+    http.expectOne('/api/plan/lock').flush(LOCK);
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+    expect(el.textContent).toContain('locks at');
+    expect(el.textContent).toContain('23:20');
+    const save = named(el, 'Save');
+    expect(save.disabled).toBe(true);
+    const radios = el.querySelectorAll<HTMLInputElement>('input[name=lock-mode]');
+    radios[1].click();
+    const time = el.querySelector<HTMLInputElement>('input[type=time]')!;
+    time.value = '21:30';
+    time.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    expect(save.disabled).toBe(false);
+    save.click();
+    const req = http.expectOne('/api/plan/lock');
+    expect(req.request.method).toBe('PUT');
+    expect(req.request.body).toEqual({ mode: 'set_time', time: '21:30' });
+  });
+
+  it('sends at the last minute only once authorised, and can cancel', () => {
+    const ready = { ...OFF, enabled: true, test_level: 4, can_apply: true };
+    const fixture = render({ ...ready, can_send_last_minute: true });
+    http.expectOne('/api/plan/lock').flush(LOCK);
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+    const send = named(el, 'Send at the last minute');
+    expect(send.disabled).toBe(true);
+    const box = Array.from(el.querySelectorAll<HTMLLabelElement>('label')).find((l) =>
+      l.textContent?.includes('when it locks'),
+    )!;
+    box.querySelector('input')!.click();
+    fixture.detectChanges();
+    expect(send.disabled).toBe(false);
+    send.click();
+    const req = http.expectOne('/api/control/last-minute');
+    expect(req.request.method).toBe('POST');
+    req.flush({ ...ready, can_send_last_minute: true, last_minute_day: '2026-11-11' });
+    http.expectOne('/api/plan/lock').flush(LOCK);
+    fixture.detectChanges();
+    expect(el.textContent).toContain('will be sent at 23:20');
+    named(el, "Don't send it").click();
+    expect(http.expectOne('/api/control/last-minute').request.method).toBe('DELETE');
+  });
+
+  it('explains why sending at the last minute needs the automatic apply on the server', () => {
+    const fixture = render({ ...OFF, enabled: true, test_level: 4, can_apply: true });
+    http.expectOne('/api/plan/lock').flush(LOCK);
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+    expect(named(el, 'Send at the last minute').disabled).toBe(true);
+    expect(el.textContent).toContain("doesn't run the automatic apply");
+  });
 });

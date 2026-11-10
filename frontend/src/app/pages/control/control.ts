@@ -14,9 +14,11 @@ import {
   DryRunNight,
   DryRunVerdict,
   InverterControl,
+  PlanLock,
+  PlanLockMode,
   SchedulePeriod,
 } from '../../core/models';
-import { MODE_LABELS } from '../../core/plan.service';
+import { MODE_LABELS, PlanService } from '../../core/plan.service';
 import { SystemService } from '../../core/system.service';
 
 /** What each test step does, shown before the user runs it. */
@@ -53,6 +55,7 @@ const KIND_LABELS: Record<ControlActionKind, string> = {
 })
 export class Control implements OnInit {
   private readonly control = inject(ControlService);
+  private readonly plans = inject(PlanService);
   readonly system = toSignal(inject(SystemService).get());
 
   readonly status = signal<InverterControl | null>(null);
@@ -93,8 +96,82 @@ export class Control implements OnInit {
   });
   readonly testDone = computed(() => (this.status()?.test_level ?? 0) >= 4);
 
+  /** When the plan locks, as saved, and the choice being edited. */
+  readonly lock = signal<PlanLock | null>(null);
+  readonly lockMode = signal<PlanLockMode>('before_window');
+  readonly lockTime = signal('21:00');
+  readonly lockChanged = computed(() => {
+    const l = this.lock();
+    if (!l) return false;
+    if (this.lockMode() !== l.mode) return true;
+    return l.mode === 'set_time' && this.lockTime() !== l.time;
+  });
+  /** "23:20" or "21:00 Wednesday": when the next plan locks (or locked). */
+  readonly lockAt = computed(() => {
+    const l = this.lock();
+    return l ? this.when(l.locked_at ?? l.locks_at) : '';
+  });
+  /** The user has authorised one send at the last minute. */
+  readonly lastMinuteAuthorised = signal(false);
+
   ngOnInit(): void {
     this.refresh();
+    this.loadLock();
+  }
+
+  private loadLock(): void {
+    this.plans.lock().subscribe({
+      next: (l) => this.showLock(l),
+      error: () => this.lock.set(null), // no system yet: nothing to lock
+    });
+  }
+
+  private showLock(l: PlanLock): void {
+    this.lock.set(l);
+    this.lockMode.set(l.mode);
+    if (l.time) this.lockTime.set(l.time);
+  }
+
+  saveLock(): void {
+    const mode = this.lockMode();
+    this.run(this.plans.setLock(mode, mode === 'set_time' ? this.lockTime() : null), (l) =>
+      this.showLock(l),
+    );
+  }
+
+  sendLastMinute(): void {
+    if (!this.lastMinuteAuthorised()) return;
+    this.lastMinuteAuthorised.set(false);
+    this.run(this.control.sendLastMinute(), (s) => {
+      this.status.set(s);
+      this.loadLock();
+    });
+  }
+
+  cancelLastMinute(): void {
+    this.run(this.control.cancelLastMinute(), (s) => this.status.set(s));
+  }
+
+  /** Why "send at the last minute" isn't available, or null when it is. */
+  lastMinuteBlocked(s: InverterControl): string | null {
+    if (s.can_send_last_minute) return null;
+    if (!s.can_apply) return 'Pass the write test up to step 4 to unlock this.';
+    if (!s.writes_allowed) return 'Writes to inverters are switched off on this server.';
+    return (
+      "This server doesn't run the automatic apply (SBP_AUTO_APPLY), which is what sends it " +
+      'at the last minute. Use Authorise and send instead.'
+    );
+  }
+
+  /** "23:20" today, otherwise "23:20 Wednesday", in the system's time zone. */
+  private when(iso: string): string {
+    const zone = this.system()?.timezone;
+    const day = (t: number) =>
+      new Intl.DateTimeFormat('en-CA', { dateStyle: 'short', timeZone: zone }).format(t);
+    const time = this.localTime(iso);
+    if (day(new Date(iso).getTime()) === day(Date.now())) return time;
+    const weekday = new Intl.DateTimeFormat('en-GB', { weekday: 'long', timeZone: zone });
+    return `${time} ${weekday.format(new Date(iso))}`;
   }
 
   refresh(): void {

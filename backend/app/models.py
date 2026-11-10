@@ -77,6 +77,9 @@ class System(Base):
     has_heat_pump: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     has_electric_car: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     car_charger_kw: Mapped[float] = mapped_column(Float, default=7.0, server_default="7")
+    # When the next charge's plan stops following the forecast and is kept as it is (see
+    # app.planner.locking): this local time, or None for just before the cheap window opens.
+    plan_lock_time: Mapped[time | None] = mapped_column(Time, default=None)
     updated_at: Mapped[datetime] = mapped_column(default=_now, onupdate=_now)
 
     user: Mapped[User] = relationship(back_populates="system")
@@ -114,6 +117,9 @@ class System(Base):
         back_populates="system", cascade="all, delete-orphan", order_by="UsageExpectation.day"
     )
     forecast_snapshots: Mapped[list["ForecastSnapshot"]] = relationship(
+        back_populates="system", cascade="all, delete-orphan"
+    )
+    locked_plans: Mapped[list["LockedPlan"]] = relationship(
         back_populates="system", cascade="all, delete-orphan"
     )
 
@@ -367,6 +373,9 @@ class InverterControl(Base):
     test_groups: Mapped[list | None] = mapped_column(JSON, default=None)
     # The local day the last automatic apply was for, so each night is tried once.
     last_auto_day: Mapped[date | None] = mapped_column(Date, default=None)
+    # The local day the user asked to have sent at the last minute: the server sends the plan
+    # as it stands when it locks, once, without full automation.
+    last_minute_day: Mapped[date | None] = mapped_column(Date, default=None)
 
     system: Mapped[System] = relationship(back_populates="inverter_control")
 
@@ -481,3 +490,25 @@ class ForecastSnapshot(Base):
     target_soc_percent: Mapped[float | None] = mapped_column(Float, default=None)
 
     system: Mapped[System] = relationship(back_populates="forecast_snapshots")
+
+
+class LockedPlan(Base):
+    """The plan for a charge night, kept as it was when it locked (see app.planner.locking).
+
+    Until then the plan follows each new forecast and reading; from then on this copy is shown
+    and applied, so it stops moving by a few percent each time it is looked at.
+    """
+
+    __tablename__ = "locked_plans"
+    __table_args__ = (UniqueConstraint("system_id", "day"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    system_id: Mapped[int] = mapped_column(
+        ForeignKey("systems.id", ondelete="CASCADE"), index=True
+    )
+    day: Mapped[date] = mapped_column(Date)
+    locked_at: Mapped[datetime] = mapped_column(default=_now)
+    # The whole ChargePlan, as app.planner.locking.dump_plan writes it.
+    plan: Mapped[dict] = mapped_column(JSON)
+
+    system: Mapped[System] = relationship(back_populates="locked_plans")
