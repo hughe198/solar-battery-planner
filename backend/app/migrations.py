@@ -87,7 +87,23 @@ def add_big_load_settings(engine: Engine) -> None:
                 conn.execute(text(f"ALTER TABLE systems ADD COLUMN {name} {kind}"))
 
 
+def add_plan_lock_settings(engine: Engine) -> None:
+    """When the plan locks (just before the window for existing systems), and the one-night
+    "send at the last minute" request on inverter control."""
+    inspector = inspect(engine)
+    with engine.begin() as conn:
+        for table, column, kind in (
+            ("systems", "plan_lock_time", "TIME"),
+            ("inverter_controls", "last_minute_day", "DATE"),
+        ):
+            if not inspector.has_table(table):
+                continue
+            if column not in {c["name"] for c in inspector.get_columns(table)}:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {kind}"))
+
+
 def upgrade(engine: Engine) -> None:
     upgrade_single_window_tariffs(engine)
     add_battery_wear_cost(engine)
     add_big_load_settings(engine)
+    add_plan_lock_settings(engine)
