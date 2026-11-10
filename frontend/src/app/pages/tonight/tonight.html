@@ -40,6 +40,14 @@
           <span class="badge" [class.good]="s.sent" [class.warn]="!s.sent">{{ s.label }}</span>
         }
       </p>
+      @if (lock(); as l) {
+        <p class="lock-line muted" [class.locked]="l.locked">
+          <span aria-hidden="true">{{ l.locked ? '🔒' : '↻' }}</span> {{ l.text }}
+          @if (!l.locked) {
+            <a routerLink="/automation">Change</a>
+          }
+        </p>
+      }
       <p class="figure">
         @if (r.force_charge_start) {
           {{ r.target_soc_percent | number: '1.0-0' }}%

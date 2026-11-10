@@ -5,6 +5,7 @@ import {
   describeInProgress,
   localDate,
   localTime,
+  lockLine,
   sentBadge,
   weekday,
 } from '../../core/charge-summary';
@@ -355,6 +356,9 @@ export class YesterdayCard {
         }
       </p>
       @if (recommendation(); as r) {
+        @if (lock(); as l) {
+          <p class="lock-line muted">{{ l.text }}</p>
+        }
         <p class="figure">
           {{ headline() }}
           @if (when()) {
@@ -409,4 +413,5 @@ export class TonightCard {
 
   /** Whether tonight's plan has been sent to the inverter; null when automation isn't on. */
   readonly sent = computed(() => sentBadge(this.actions(), this.plan()?.day));
+  readonly lock = computed(() => lockLine(this.plan(), this.timeZone()));
 }

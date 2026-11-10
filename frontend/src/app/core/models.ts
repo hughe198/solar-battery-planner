@@ -358,6 +358,22 @@ export interface ChargePlan {
   /** How the user's day marks and car charges changed the usage forecast. */
   usage_notes?: string[];
   weather?: WeatherStory | null;
+  /** When this plan stops following the forecast, and when it was kept, once it has. */
+  locks_at?: string | null;
+  locked_at?: string | null;
+}
+
+/** When plans lock: just before the cheap window opens, or at a set local time. */
+export type PlanLockMode = 'before_window' | 'set_time';
+
+export interface PlanLock {
+  mode: PlanLockMode;
+  /** "21:00", for a set time. */
+  time: string | null;
+  /** The next charge night, when its plan locks, and when it was kept if it has been. */
+  day: string;
+  locks_at: string;
+  locked_at: string | null;
 }
 
 export interface ReplayDay {
@@ -529,6 +545,10 @@ export interface InverterControl {
   dry_run_nights_needed: number;
   can_apply: boolean;
   can_auto_apply: boolean;
+  /** The night the user asked to have sent at the last minute, when its plan locks. */
+  last_minute_day?: string | null;
+  /** Apply is unlocked and this server runs the automatic apply, which does the sending. */
+  can_send_last_minute?: boolean;
   has_original: boolean;
   original_saved_at: string | null;
   original: SchedulePeriod[];

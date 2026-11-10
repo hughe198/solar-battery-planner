@@ -288,3 +288,13 @@ details.chart-disclosure {
     color: var(--muted);
   }
 }
+
+/* When the plan stops following the forecast (Tonight and Home). */
+.lock-line {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-sm);
+
+  a {
+    margin-left: var(--space-1);
+  }
+}
