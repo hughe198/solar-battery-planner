@@ -30,7 +30,9 @@ echo "Inverter writes: ${writes:-false (not set)}"
 
 (cd backend && exec "$python" -m uvicorn app.main:app --host 127.0.0.1 --port 8000) &
 backend=$!
-(cd frontend && exec npm start) &
+# In a real terminal the Angular CLI stops to ask about autocompletion (and analytics), which a
+# background job can't answer, so it exits. These two settings skip just those questions.
+(cd frontend && NG_FORCE_AUTOCOMPLETE=false NG_CLI_ANALYTICS=false exec npm start </dev/null) &
 frontend=$!
 
 stopped=
