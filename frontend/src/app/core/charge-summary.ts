@@ -1,4 +1,4 @@
-import { ControlAction, InProgressCharge } from './models';
+import { ChargePlan, ControlAction, InProgressCharge } from './models';
 
 /** "YYYY-MM-DD" in a time zone. */
 export function localDate(moment: number, timeZone?: string): string {
@@ -94,4 +94,32 @@ export function sentBadge(
   return applied
     ? { sent: true, label: 'Sent to inverter' }
     : { sent: false, label: 'Not sent yet' };
+}
+
+/**
+ * When the plan stops changing, in a line: "Updates with the forecast until 23:20, then
+ * locks" or "Locked at 23:20". Null for a what-if plan or one from an older server.
+ */
+export function lockLine(
+  plan: Pick<ChargePlan, 'locks_at' | 'locked_at'> | null | undefined,
+  timeZone: string | undefined,
+  now: number = Date.now(),
+): { locked: boolean; text: string } | null {
+  if (!plan) return null;
+  const when = (iso: string) => {
+    const sameDay = localDate(new Date(iso).getTime(), timeZone) === localDate(now, timeZone);
+    return sameDay
+      ? localTime(iso, timeZone)
+      : `${localTime(iso, timeZone)} ${weekday(iso, timeZone)}`;
+  };
+  if (plan.locked_at) {
+    return { locked: true, text: `Locked at ${when(plan.locked_at)}. This plan won't change now.` };
+  }
+  if (plan.locks_at) {
+    return {
+      locked: false,
+      text: `Updates with the forecast until ${when(plan.locks_at)}, then locks.`,
+    };
+  }
+  return null;
 }

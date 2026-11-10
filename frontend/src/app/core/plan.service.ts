@@ -5,6 +5,8 @@ import {
   ChargePlan,
   History,
   LookBack,
+  PlanLock,
+  PlanLockMode,
   PlanningMode,
   Replay,
   ReplayDetail,
@@ -26,6 +28,16 @@ export class PlanService {
     if (options.day) params = params.set('day', options.day);
     if (options.startSoc !== undefined) params = params.set('start_soc_percent', options.startSoc);
     return this.http.get<ChargePlan>('/api/plan', { params });
+  }
+
+  /** When the next charge's plan locks, and whether it has. */
+  lock(): Observable<PlanLock> {
+    return this.http.get<PlanLock>('/api/plan/lock');
+  }
+
+  /** Choose when plans lock; `time` is "HH:MM" for a set time. */
+  setLock(mode: PlanLockMode, time: string | null = null): Observable<PlanLock> {
+    return this.http.put<PlanLock>('/api/plan/lock', { mode, time });
   }
 
   /** Past days replayed from the charge actually made. */

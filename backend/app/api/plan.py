@@ -1,8 +1,10 @@
-from dataclasses import replace
-from datetime import date, datetime, timedelta
+from dataclasses import dataclass, replace
+from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.forecast import MAX_DAYS_AHEAD, _system
@@ -10,14 +12,15 @@ from app.api.imports import get_weather_client
 from app.database import get_db
 from app.forecasting.service import HistoryForecaster
 from app.forecasting.snapshots import remember_forecast
-from app.models import PlanningMode, System, User
+from app.models import LockedPlan, PlanningMode, System, User
 from app.planner import optimiser
 from app.planner.base import ChargePlan, Replay, ReplayDetail
 from app.planner.charging import learn_drain_from_history, learn_rate_from_history
 from app.planner.lead_in import simulate_lead_in, usable_reading
+from app.planner.locking import dump_plan, load_plan, lock_at
 from app.planner.replay import DEFAULT_DAYS, MAX_DAYS, Replayer
 from app.planner.simulator import cycle_for
-from app.schemas import ChargePlanOut, ReplayDetailOut, ReplayOut
+from app.schemas import ChargePlanOut, PlanLockIn, PlanLockOut, ReplayDetailOut, ReplayOut
 from app.security import current_user
 from app.tariffs import TariffSchedule
 from app.weather.open_meteo import OpenMeteoClient, WeatherError
@@ -42,7 +45,11 @@ def charge_plan(
     db: Session = Depends(get_db),
     weather_client: OpenMeteoClient = Depends(get_weather_client),
 ) -> ChargePlan:
-    """Recommended overnight charge for each planning mode, with the reasoning behind it."""
+    """Recommended overnight charge for each planning mode, with the reasoning behind it.
+
+    From the night's lock time on, the plan kept then is returned as it was (`locked_at`);
+    before it, the plan follows the latest forecast. A level typed in is always a fresh what-if
+    and is never kept."""
     system = _system(user)
     today = datetime.now(ZoneInfo(system.timezone)).date()
     day = day or next_day(system)
@@ -52,13 +59,70 @@ def charge_plan(
             f"Plans are available from today to {MAX_DAYS_AHEAD} days ahead",
         )
     try:
-        plan = make_plan(db, system, weather_client, day, start_soc_percent)
+        if start_soc_percent is None:
+            plan, lock = current_plan(db, system, weather_client, day)
+        else:
+            plan = make_plan(db, system, weather_client, day, start_soc_percent)
+            lock = PlanLock(_lock_at(system, day), None)
         db.commit()
-        return plan
+        return ChargePlanOut.model_validate(plan).model_copy(
+            update={"locks_at": lock.locks_at, "locked_at": lock.locked_at}
+        )
     except WeatherError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc))
+
+
+@dataclass(frozen=True)
+class PlanLock:
+    # When the plan locks (or locked), and when it was actually kept: None while it still
+    # follows the forecast. Kept late if nothing asked for the plan at the lock time.
+    locks_at: datetime
+    locked_at: datetime | None
+
+
+def _lock_at(system: System, day: date) -> datetime:
+    return lock_at(system, cycle_for(day, TariffSchedule.from_system(system), system.timezone))
+
+
+def _aware(value: datetime) -> datetime:
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def locked_plan(db: Session, system: System, day: date) -> LockedPlan | None:
+    return db.scalar(
+        select(LockedPlan).where(LockedPlan.system_id == system.id, LockedPlan.day == day)
+    )
+
+
+def current_plan(
+    db: Session,
+    system: System,
+    weather_client: OpenMeteoClient,
+    day: date,
+    now: datetime | None = None,
+) -> tuple[ChargePlan, PlanLock]:
+    """The plan for `day` as it stands: the kept copy once it has locked, otherwise a fresh
+    plan, which is kept if the lock time has come and the window hasn't closed. Adds to the
+    session; the caller commits. Raises as `make_plan` does."""
+    now = now or datetime.now(timezone.utc)
+    cycle = cycle_for(day, TariffSchedule.from_system(system), system.timezone)
+    at = lock_at(system, cycle)
+    kept = locked_plan(db, system, day)
+    if kept is not None:
+        return load_plan(kept.plan), PlanLock(at, _aware(kept.locked_at))
+    plan = make_plan(db, system, weather_client, day)
+    if not at <= now < cycle.night_end:
+        return plan, PlanLock(at, None)
+    db.flush()  # anything else pending, outside the savepoint below
+    try:
+        with db.begin_nested():
+            db.add(LockedPlan(system_id=system.id, day=day, locked_at=now, plan=dump_plan(plan)))
+    except IntegrityError:  # another request kept it first; use theirs, so all agree
+        kept = locked_plan(db, system, day)
+        return load_plan(kept.plan), PlanLock(at, _aware(kept.locked_at))
+    return plan, PlanLock(at, now)
 
 
 def make_plan(
@@ -141,3 +205,41 @@ def replay_day(
     if detail is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "That day can't be replayed")
     return detail
+
+
+def _lock_out(system: System, db: Session) -> PlanLockOut:
+    day = next_day(system)
+    kept = locked_plan(db, system, day)
+    return PlanLockOut(
+        mode="set_time" if system.plan_lock_time else "before_window",
+        time=system.plan_lock_time.strftime("%H:%M") if system.plan_lock_time else None,
+        day=day,
+        locks_at=_lock_at(system, day),
+        locked_at=_aware(kept.locked_at) if kept else None,
+    )
+
+
+@router.get("/lock", response_model=PlanLockOut)
+def plan_lock(user: User = Depends(current_user), db: Session = Depends(get_db)) -> PlanLockOut:
+    """When the next charge's plan locks, and whether it has."""
+    return _lock_out(_system(user), db)
+
+
+@router.put("/lock", response_model=PlanLockOut)
+def set_plan_lock(
+    body: PlanLockIn, user: User = Depends(current_user), db: Session = Depends(get_db)
+) -> PlanLockOut:
+    """Choose when plans lock. If the next charge's plan is already kept but the new lock time
+    is still to come, it is let go so it follows the forecast again until then."""
+    system = _system(user)
+    system.plan_lock_time = (
+        time.fromisoformat(body.time) if body.mode == "set_time" and body.time else None
+    )
+    db.flush()
+    day = next_day(system)
+    if _lock_at(system, day) > datetime.now(timezone.utc):
+        db.execute(
+            delete(LockedPlan).where(LockedPlan.system_id == system.id, LockedPlan.day == day)
+        )
+    db.commit()
+    return _lock_out(system, db)

@@ -2,7 +2,7 @@ import { DecimalPipe } from '@angular/common';
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { RouterLink } from '@angular/router';
-import { dayLabel, sentBadge } from '../../core/charge-summary';
+import { dayLabel, lockLine, sentBadge } from '../../core/charge-summary';
 import { ControlService } from '../../core/control.service';
 import { errorMessage } from '../../core/errors';
 import { ForecastService } from '../../core/forecast.service';
@@ -79,6 +79,10 @@ export class Tonight implements OnInit {
   readonly controlActions = signal<ControlAction[] | null>(null);
   /** Whether the plan shown has been sent to the inverter. */
   readonly sent = computed(() => sentBadge(this.controlActions(), this.plan()?.day));
+  /** When the plan stops following the forecast, or that it has. */
+  readonly lock = computed(() =>
+    lockLine(this.plan(), this.system()?.timezone, this.now() || this.clock()),
+  );
 
   readonly forecast = signal<DayForecast | null>(null);
   readonly plan = signal<ChargePlan | null>(null);

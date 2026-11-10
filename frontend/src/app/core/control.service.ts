@@ -34,6 +34,15 @@ export class ControlService {
     });
   }
 
+  /** Have the server send the next charge once, as it stands when the plan locks. */
+  sendLastMinute(): Observable<InverterControl> {
+    return this.http.post<InverterControl>('/api/control/last-minute', {});
+  }
+
+  cancelLastMinute(): Observable<InverterControl> {
+    return this.http.delete<InverterControl>('/api/control/last-minute');
+  }
+
   clear(): Observable<ControlAction> {
     return this.http.post<ControlAction>('/api/control/clear', {});
   }

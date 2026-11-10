@@ -453,8 +453,16 @@ the old `/inverter` link redirects there).
   saved for **Restore**, and every action (with what was sent and read back) goes in an audit log.
 - A six-step write test must reach step 4 before Apply unlocks, and auto-apply also needs one good
   manual apply. See [the test protocol](docs/inverter-control-test-protocol.md).
-- Auto-apply (`app/control/nightly.py`) runs each system once a night, from two hours before the
-  charge window opens.
+- **Plan lock** (`app/planner/locking.py`): the next charge's plan follows each new forecast and
+  reading until it locks, then is kept (`locked_plans`) and shown and applied as it was. It locks
+  10 minutes before the cheap window opens, or at a local time the user sets on the Automation
+  page (a set time after that counts as just before the window). Tonight and Home say when it
+  locks. A plan nobody has asked for is locked on time by the auto-apply loop, or else the next
+  time it is asked for.
+- Auto-apply (`app/control/nightly.py`) runs each system once a night, from the moment its plan
+  locks, and sends the locked plan. **Send at the last minute** asks for the same thing for one
+  night only, without turning on full automation. Both need the loop running (`SBP_AUTO_APPLY`),
+  which now passes every minute.
 - **Writes are off on the server by default.** `SBP_INVERTER_WRITES=false` makes the Fox client
   refuse both write calls before anything is sent, so only reads, the preview, step 1 of the write
   test and the dry run work. Turn it on only for the live stages of
