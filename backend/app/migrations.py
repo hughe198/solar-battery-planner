@@ -123,9 +123,23 @@ def add_plan_lock_settings(engine: Engine) -> None:
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {kind}"))
 
 
+def add_plan_fixed_by(engine: Engine) -> None:
+    """Why a kept plan is kept: all kept so far were kept when their lock time came."""
+    inspector = inspect(engine)
+    if not inspector.has_table("locked_plans"):
+        return
+    if "fixed_by" in {c["name"] for c in inspector.get_columns("locked_plans")}:
+        return
+    with engine.begin() as conn:
+        conn.execute(
+            text("ALTER TABLE locked_plans ADD COLUMN fixed_by VARCHAR(10) NOT NULL DEFAULT 'time'")
+        )
+
+
 def upgrade(engine: Engine) -> None:
     upgrade_single_window_tariffs(engine)
     add_battery_wear_cost(engine)
     add_big_load_settings(engine)
     add_whole_day_control(engine)
     add_plan_lock_settings(engine)
+    add_plan_fixed_by(engine)

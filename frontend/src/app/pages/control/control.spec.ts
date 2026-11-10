@@ -2,7 +2,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
-import { ControlProposal, InverterControl } from '../../core/models';
+import { ControlProposal, InverterControl, RecentNight } from '../../core/models';
 import { Control } from './control';
 
 const STEPS = [1, 2, 3, 4, 5, 6].map((step) => ({ step, label: `Step ${step}`, passed: false }));
@@ -317,11 +317,32 @@ describe('Control', () => {
     return Array.from(el.querySelectorAll('button')).find((b) => b.textContent?.includes(text))!;
   }
 
-  it('says when the plan locks and saves a set time', () => {
-    const fixture = render(OFF);
+  /** Picks how tonight's charge is sent: 0 now, 1 once when fixed, 2 every night. */
+  function route(fixture: { detectChanges(): void; nativeElement: unknown }, n: number) {
+    const el = fixture.nativeElement as HTMLElement;
+    el.querySelectorAll<HTMLInputElement>('input[name=send-route]')[n].click();
+    fixture.detectChanges();
+  }
+
+  const READY: InverterControl = { ...OFF, enabled: true, test_level: 4, can_apply: true };
+  const TONIGHT = {
+    day: '2026-11-11',
+    locks_at: '2026-11-10T23:20:00Z',
+    locked_at: null,
+    fixed_by: null,
+    sent: null,
+    will_send: null,
+  };
+
+  it('says when the plan is fixed and saves a set time, beside the sends that use it', () => {
+    const fixture = render({ ...READY, tonight: TONIGHT });
     http.expectOne('/api/plan/lock').flush(LOCK);
     fixture.detectChanges();
     const el = fixture.nativeElement as HTMLElement;
+    // Sending by hand doesn't wait for it, so it isn't shown then.
+    expect(el.querySelector('input[name=lock-mode]')).toBeNull();
+    route(fixture, 1);
+    expect(el.textContent).toContain('When the plan is fixed');
     expect(el.textContent).toContain('locks at');
     expect(el.textContent).toContain('23:20');
     const save = named(el, 'Save');
@@ -340,11 +361,12 @@ describe('Control', () => {
   });
 
   it('sends at the last minute only once authorised, and can cancel', () => {
-    const ready = { ...OFF, enabled: true, test_level: 4, can_apply: true };
-    const fixture = render({ ...ready, can_send_last_minute: true });
+    const fixture = render({ ...READY, can_send_last_minute: true, tonight: TONIGHT });
     http.expectOne('/api/plan/lock').flush(LOCK);
     fixture.detectChanges();
+    route(fixture, 1);
     const el = fixture.nativeElement as HTMLElement;
+    expect(el.textContent).toContain('Not sent yet');
     const send = named(el, 'Send at the last minute');
     expect(send.disabled).toBe(true);
     const box = Array.from(el.querySelectorAll<HTMLLabelElement>('label')).find((l) =>
@@ -356,20 +378,143 @@ describe('Control', () => {
     send.click();
     const req = http.expectOne('/api/control/last-minute');
     expect(req.request.method).toBe('POST');
-    req.flush({ ...ready, can_send_last_minute: true, last_minute_day: '2026-11-11' });
+    req.flush({
+      ...READY,
+      can_send_last_minute: true,
+      last_minute_day: '2026-11-11',
+      tonight: { ...TONIGHT, will_send: 'last_minute' },
+    });
     http.expectOne('/api/plan/lock').flush(LOCK);
     fixture.detectChanges();
-    expect(el.textContent).toContain('will be sent at 23:20');
+    expect(el.textContent).toContain('Will be sent at 23:20');
+    expect(el.textContent).toContain('once, at the last minute');
     named(el, "Don't send it").click();
     expect(http.expectOne('/api/control/last-minute').request.method).toBe('DELETE');
   });
 
   it('explains why sending at the last minute needs the automatic apply on the server', () => {
-    const fixture = render({ ...OFF, enabled: true, test_level: 4, can_apply: true });
+    const fixture = render({ ...READY, tonight: TONIGHT });
     http.expectOne('/api/plan/lock').flush(LOCK);
     fixture.detectChanges();
+    route(fixture, 1);
     const el = fixture.nativeElement as HTMLElement;
     expect(named(el, 'Send at the last minute').disabled).toBe(true);
     expect(el.textContent).toContain("doesn't run the automatic apply");
+  });
+
+  it('keeps showing what was sent tonight, and can let the plan follow the forecast again', () => {
+    const sent = {
+      ...TONIGHT,
+      locks_at: '2099-01-01T01:50:00Z', // still to come, so the plan can be let go
+      locked_at: '2026-11-10T18:06:00Z',
+      fixed_by: 'sent' as const,
+      sent: {
+        at: '2026-11-10T18:06:00Z',
+        trigger: 'manual' as const,
+        status: 'ok' as const,
+        message: 'Hold 02:00–03:00; force charge to 89% 03:00–05:00 written and read back.',
+        target_soc_percent: 89,
+        periods: [
+          {
+            start: '00:00',
+            end: '02:00',
+            work_mode: 'SelfUse',
+            charge_to_percent: null,
+            power_w: null,
+            min_soc_percent: 10,
+          },
+          {
+            start: '03:00',
+            end: '05:00',
+            work_mode: 'ForceCharge',
+            charge_to_percent: 89,
+            power_w: 12000,
+            min_soc_percent: 10,
+          },
+        ],
+      },
+    };
+    const fixture = render({ ...READY, tonight: sent });
+    http.expectOne('/api/plan/lock').flush({ ...LOCK, fixed_by: 'sent' });
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+    const card = el.querySelector('.sent-charge')!;
+    expect(card.textContent).toContain('Sent by hand at 18:06');
+    expect(card.textContent).toContain('read back as written');
+    expect(card.textContent).toContain('fixed at what was sent');
+    expect(card.querySelectorAll('tbody tr').length).toBe(2);
+    expect(card.textContent).toContain('89');
+    named(el, 'Make a fresh plan').click();
+    expect(http.expectOne('/api/control/fixed').request.method).toBe('DELETE');
+  });
+
+  it('opens on how the charge is already arranged to be sent', () => {
+    const fixture = render({
+      ...READY,
+      auto_apply: true,
+      tonight: { ...TONIGHT, will_send: 'auto' },
+    });
+    http.expectOne('/api/plan/lock').flush(LOCK);
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+    const radios = el.querySelectorAll<HTMLInputElement>('input[name=send-route]');
+    expect(radios[2].checked).toBe(true);
+    expect(el.textContent).toContain('by the nightly apply');
+  });
+
+  it('lists the last seven nights coloured by how each went', () => {
+    const verdict = (says: 'about right' | 'too little', peak = 0) => ({
+      suggested_percent: 80,
+      charged_percent: 80,
+      enough_percent: 60,
+      lost_pence: says === 'about right' ? 0 : 9,
+      charged_lost_pence: 0,
+      reserve_at: null,
+      peak_import_kwh: peak,
+      verdict: says,
+      summary: `Verdict: ${says}.`,
+    });
+    const sent = (status: 'ok' | 'failed') => ({
+      at: '2026-11-09T18:06:00Z',
+      trigger: 'manual' as const,
+      status,
+      message: 'Written.',
+      target_soc_percent: 89,
+      periods: [],
+    });
+    const nights = [
+      { day: '2026-11-11', sent: sent('ok'), verdict: null, rating: null },
+      { day: '2026-11-10', sent: sent('ok'), verdict: verdict('about right'), rating: 'good' },
+      { day: '2026-11-09', sent: sent('ok'), verdict: verdict('too little'), rating: 'fair' },
+      { day: '2026-11-08', sent: sent('ok'), verdict: verdict('too little', 0.8), rating: 'poor' },
+      { day: '2026-11-07', sent: sent('failed'), verdict: null, rating: 'poor' },
+      { day: '2026-11-06', sent: null, verdict: null, rating: null },
+      { day: '2026-11-05', sent: null, verdict: null, rating: null },
+    ] as RecentNight[];
+    const fixture = render({
+      ...READY,
+      tonight: { ...TONIGHT, sent: sent('ok') },
+      recent_nights: nights,
+      recent_nights_needed: 7,
+    });
+    http.expectOne('/api/plan/lock').flush(LOCK);
+    fixture.detectChanges();
+    const el = fixture.nativeElement as HTMLElement;
+    expect(el.textContent).toContain('The last 7 nights');
+    expect(el.textContent).toContain('1 of 7 good so far');
+    const rows = Array.from(el.querySelectorAll('ol.recent-nights > li'));
+    expect(rows.length).toBe(7);
+    // Oldest first, as the dry runs are.
+    expect(rows[0].textContent).toContain('Thu 5 Nov');
+    expect(rows[0].textContent).toContain('Not sent from the app');
+    expect(rows[2].querySelector('.night-verdict.rating-poor')?.textContent).toContain(
+      'send failed',
+    );
+    expect(rows[3].querySelector('.night-verdict.rating-poor')).not.toBeNull();
+    expect(rows[4].querySelector('.night-verdict.rating-fair')).not.toBeNull();
+    expect(rows[5].querySelector('.night-verdict.rating-good')).not.toBeNull();
+    expect(rows[5].classList).toContain('passed');
+    expect(rows[6].textContent).toContain('charge to 89%, sent by hand');
+    expect(rows[6].textContent).toContain('Tonight.');
   });
 });

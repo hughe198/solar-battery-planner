@@ -510,5 +510,8 @@ class LockedPlan(Base):
     locked_at: Mapped[datetime] = mapped_column(default=_now)
     # The whole ChargePlan, as app.planner.locking.dump_plan writes it.
     plan: Mapped[dict] = mapped_column(JSON)
+    # Why it's kept: "time" when its lock time came, "sent" when it was sent to the inverter by
+    # hand before then (so what's shown matches what the inverter has).
+    fixed_by: Mapped[str] = mapped_column(String(10), default="time", server_default="time")
 
     system: Mapped[System] = relationship(back_populates="locked_plans")

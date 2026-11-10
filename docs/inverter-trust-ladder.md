@@ -193,6 +193,9 @@ evening's dry run, apply, and check the battery level next morning against the p
 **Human verification**
 
 - [ ] One night, then several, with the morning level matching the plan.
+- [ ] Seven good nights (green on the Automation page's "last 7 nights" list: sent and read
+  back as written, and the verdict about right) before stage 7. Amber nights are looked into;
+  any red night restarts the count.
 
 **Whole-day control (from 9 November 2026).** Apply now writes the whole day, replacing the
 owner's own periods (see docs/inverter-api-test-plan.md). Before relying on it nightly:

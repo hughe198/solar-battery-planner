@@ -825,3 +825,98 @@ def test_nightly_does_nothing_while_writes_are_off():
     # Returns before touching the database, the plan or the inverter.
     assert settings.inverter_writes is False
     assert run_once(None, FakeInverter(), None) == []
+
+
+def send_by_hand(client, headers):
+    preview = client.get("/api/control/preview", headers=headers).json()
+    done = client.post(
+        "/api/control/apply", json={"fingerprint": preview["fingerprint"]}, headers=headers
+    ).json()
+    assert done["status"] == "ok", done["message"]
+    return preview
+
+
+def test_sending_by_hand_fixes_tonights_plan_and_is_shown_until_the_window_ends(
+    client, headers, inverter
+):
+    unlock_apply(client, headers)
+    tonight = client.get("/api/control", headers=headers).json()["tonight"]
+    assert tonight["sent"] is None and tonight["fixed_by"] is None
+    assert tonight["will_send"] is None
+
+    preview = send_by_hand(client, headers)
+    tonight = client.get("/api/control", headers=headers).json()["tonight"]
+    # What was sent, when and how, stays on the page.
+    assert tonight["sent"]["trigger"] == "manual" and tonight["sent"]["status"] == "ok"
+    assert [p["start"] for p in tonight["sent"]["periods"]] == [
+        p["start"] for p in preview["after"]
+    ]
+    # The plan stops moving: Tonight and Home show what the inverter has.
+    assert tonight["fixed_by"] == "sent" and tonight["locked_at"]
+    lock = client.get("/api/plan/lock", headers=headers).json()
+    assert lock["fixed_by"] == "sent"
+
+    # Changing when plans lock doesn't let go of a plan that was sent.
+    client.put("/api/plan/lock", json={"mode": "set_time", "time": "23:59"}, headers=headers)
+    assert client.get("/api/plan/lock", headers=headers).json()["fixed_by"] == "sent"
+
+
+def test_a_sent_plan_can_follow_the_forecast_again(client, headers, inverter):
+    unlock_apply(client, headers)
+    send_by_hand(client, headers)
+    writes = len(inverter.writes)
+    status = client.delete("/api/control/fixed", headers=headers).json()
+    assert status["tonight"]["fixed_by"] is None
+    # The inverter keeps what was sent, and the page still says so.
+    assert status["tonight"]["sent"]["status"] == "ok"
+    assert len(inverter.writes) == writes
+    assert "follow the forecast again" in status["actions"][0]["message"]
+    # Only a plan fixed by a send can be let go.
+    assert client.delete("/api/control/fixed", headers=headers).status_code == 409
+
+
+def test_restore_after_sending_means_tonight_isnt_sent(client, headers, inverter):
+    unlock_apply(client, headers)
+    send_by_hand(client, headers)
+    client.post("/api/control/restore", headers=headers)
+    assert client.get("/api/control", headers=headers).json()["tonight"]["sent"] is None
+
+
+def test_tonight_says_when_it_will_be_sent(client, headers, inverter, monkeypatch):
+    monkeypatch.setattr(settings, "auto_apply", True)
+    unlock_apply(client, headers)
+    status = client.post("/api/control/last-minute", headers=headers).json()
+    assert status["tonight"]["will_send"] == "last_minute"
+    assert status["tonight"]["sent"] is None
+
+
+def test_each_recent_night_is_coloured_by_how_it_went():
+    from app.api.control import _rating
+
+    def sent(status):
+        return SimpleNamespace(status=status)
+
+    def verdict(says="about right", peak=0.0):
+        return SimpleNamespace(verdict=says, peak_import_kwh=peak)
+
+    assert _rating(None, None) is None  # nothing sent from the app
+    assert _rating(sent(ControlStatus.ok), None) is None  # waiting for the day's readings
+    assert _rating(sent(ControlStatus.failed), None) == "poor"
+    assert _rating(sent(ControlStatus.ok), verdict()) == "good"
+    assert _rating(sent(ControlStatus.ok), verdict("too little")) == "fair"
+    assert _rating(sent(ControlStatus.ok), verdict("more than needed")) == "fair"
+    assert _rating(sent(ControlStatus.mismatch), verdict()) == "fair"
+    # Running short at the peak rate is what the owner most wants to avoid.
+    assert _rating(sent(ControlStatus.ok), verdict("too little", peak=0.8)) == "poor"
+
+
+def test_the_last_seven_nights_are_listed_with_tonights_send(client, headers, inverter):
+    unlock_apply(client, headers)
+    send_by_hand(client, headers)
+    status = client.get("/api/control", headers=headers).json()
+    nights = status["recent_nights"]
+    assert status["recent_nights_needed"] == 7 and len(nights) == 7
+    assert nights[0]["day"] == status["tonight"]["day"]
+    assert nights[0]["sent"]["status"] == "ok"
+    assert nights[0]["rating"] is None  # not metered yet
+    assert all(n["sent"] is None for n in nights[1:])

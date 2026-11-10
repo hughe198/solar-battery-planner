@@ -30,6 +30,11 @@
     background: var(--rating-fair);
     color: var(--rating-text);
   }
+
+  &.rating-poor {
+    background: var(--rating-poor);
+    color: var(--rating-text);
+  }
 }
 
 .calendar {

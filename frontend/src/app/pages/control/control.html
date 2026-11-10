@@ -14,52 +14,6 @@
   </p>
 }
 
-@if (lock(); as l) {
-  <section class="card plan-lock">
-    <h2>When tonight's plan is fixed</h2>
-    <p>
-      Until then the plan follows each new forecast and battery reading, so it can move by a few
-      percent through the day. At this time it locks: it's kept exactly as it is, and that's the
-      plan Tonight and Home show and the one sent to your inverter.
-    </p>
-    <label class="choice">
-      <input
-        type="radio"
-        name="lock-mode"
-        [checked]="lockMode() === 'before_window'"
-        (change)="lockMode.set('before_window')"
-      />
-      Just before the cheap rate starts (10 minutes before), using the freshest forecast
-    </label>
-    <label class="choice">
-      <input
-        type="radio"
-        name="lock-mode"
-        [checked]="lockMode() === 'set_time'"
-        (change)="lockMode.set('set_time')"
-      />
-      At a set time
-      <input
-        type="time"
-        aria-label="Lock time"
-        [value]="lockTime()"
-        [disabled]="lockMode() !== 'set_time'"
-        (input)="lockTime.set($any($event.target).value)"
-      />
-    </label>
-    <button type="button" [disabled]="busy() || !lockChanged()" (click)="saveLock()">Save</button>
-    <p class="muted" role="status">
-      @if (l.locked_at) {
-        The plan for {{ nightLabel(l.day) }} locked at {{ lockAt() }} and won't change now.
-      } @else {
-        The plan for {{ nightLabel(l.day) }} locks at <strong>{{ lockAt() }}</strong
-        >.
-      }
-      A set time after the cheap rate starts counts as just before it.
-    </p>
-  </section>
-}
-
 @if (status(); as s) {
   @if (!s.connected) {
     <section class="card">
@@ -213,159 +167,364 @@
       }
     </section>
 
-    <section class="card">
-      <h2>3. Review and authorise tonight's schedule</h2>
-      <p>
-        For applying the suggested schedule yourself, one night at a time, without automatic apply.
-        Preview reads your inverter's schedule and works out tonight's plan, then lists every call
-        that would be made to Fox ESS. Nothing is written until you authorise them, and only the
-        calls listed are sent.
-      </p>
-      <button type="button" class="secondary" [disabled]="busy()" (click)="loadPreview()">
-        Preview
-      </button>
-      @if (proposal(); as p) {
-        <div class="preview">
-          <p>
-            Plan for {{ p.day }} ({{ modeLabels[p.mode] }}):
-            @if (p.discharge_start) {
-              force discharge to {{ p.discharge_soc_percent }}% at
-              {{ p.discharge_power_w | number: '1.0-0' }} W from
-              {{ localTime(p.discharge_start) }} to {{ localTime(p.discharge_stop) }},
-            }
-            @if (p.hold_start) {
-              hold the battery from {{ localTime(p.hold_start) }} to
-              {{ localTime(p.hold_stop) }} (house on the grid),
-            }
-            @if (p.target_soc_percent !== null) {
-              force charge to <strong>{{ p.target_soc_percent }}%</strong> at
-              {{ p.power_w | number: '1.0-0' }} W from {{ localTime(p.start) }} to
-              {{ localTime(p.stop) }}, minimum charge {{ p.min_soc_on_grid }}%.
-            } @else {
-              no charge needed.
-            }
-          </p>
-          <div class="table-scroll">
-            <table class="plan-table">
-              <thead>
-                <tr>
-                  <th>Period</th>
-                  <th>Mode</th>
-                  <th>Charge to</th>
-                  <th>Power</th>
-                  <th>Change</th>
-                </tr>
-              </thead>
-              <tbody>
-                @for (r of p.removed; track $index) {
-                  <tr class="removed">
-                    <td>{{ r.start }}–{{ r.end }}</td>
-                    <td>{{ r.work_mode }}</td>
-                    <td>{{ r.charge_to_percent ?? '–' }}</td>
-                    <td>{{ r.power_w ?? '–' }}</td>
-                    <td>Yours, replaced</td>
-                  </tr>
-                }
-                @for (r of p.after; track $index) {
-                  <tr>
-                    <td>{{ r.start }}–{{ r.end }}</td>
-                    <td>{{ r.work_mode }}</td>
-                    <td>{{ r.charge_to_percent ?? '–' }}</td>
-                    <td>{{ r.power_w ?? '–' }}</td>
-                    <td>{{ changeOf(r, p) }}</td>
-                  </tr>
-                }
-              </tbody>
-            </table>
-          </div>
-          <ul class="plain">
-            @for (n of p.notes; track $index) {
-              <li>{{ n }}</li>
-            }
-          </ul>
-          <h3>Calls to Fox ESS</h3>
-          @if (writeCount()) {
+    <section class="card tonight-charge">
+      <h2>3. Tonight's charge</h2>
+      @if (s.tonight; as t) {
+        <p class="muted">
+          The charge on {{ nightLabel(t.day) }}. This stays here until its cheap rate ends, then the
+          next night starts fresh.
+        </p>
+        @if (t.sent; as sent) {
+          <div class="notice sent-charge result-{{ sent.status }}" role="status">
             <p>
-              Authorising sends these {{ p.calls.length }} calls, in this order.
-              {{ writeCount() }} of them {{ writeCount() === 1 ? 'changes' : 'change' }} your
-              inverter. If your schedule or the plan has changed since this preview, the first call
-              stops it and nothing is written.
+              <strong>{{ sentLine(sent) }}</strong>
             </p>
-            <ol class="api-calls">
-              @for (c of p.calls; track $index) {
-                <li [class.writes]="c.writes">
-                  <span class="badge">{{ c.writes ? 'Changes inverter' : 'Read only' }}</span>
-                  {{ c.purpose }}
-                  <details>
-                    <summary>
-                      <code>{{ c.method }} {{ c.path }}</code>
-                    </summary>
-                    <pre>{{ c.body | json }}</pre>
-                  </details>
-                </li>
+            <p>{{ fixedLine(t) }}</p>
+            <div class="table-scroll">
+              <table class="plan-table">
+                <thead>
+                  <tr>
+                    <th>Period</th>
+                    <th>Mode</th>
+                    <th>Charge to</th>
+                    <th>Power</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (r of sent.periods; track $index) {
+                    <tr>
+                      <td>{{ r.start }}–{{ r.end }}</td>
+                      <td>{{ r.work_mode }}</td>
+                      <td>{{ r.charge_to_percent ?? '–' }}</td>
+                      <td>{{ r.power_w ?? '–' }}</td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+            @if (canRelease()) {
+              <button type="button" class="secondary" [disabled]="busy()" (click)="releaseFixed()">
+                Make a fresh plan
+              </button>
+              <p class="muted">
+                Lets tonight's plan follow the forecast again until it's fixed, so you can send a
+                newer one. Your inverter keeps what was sent until then.
+              </p>
+            }
+          </div>
+        } @else if (t.will_send) {
+          <p class="notice" role="status">
+            <strong>Will be sent at {{ when(t.locks_at) }}</strong
+            >, {{ t.will_send === 'auto' ? 'by the nightly apply' : 'once, at the last minute' }},
+            as the plan stands when it's fixed.
+          </p>
+        } @else {
+          <p><strong>Not sent yet.</strong> Your inverter keeps the schedule it has now.</p>
+        }
+      }
+
+      @if (recentNights().length) {
+        <h3>The last {{ s.recent_nights_needed ?? 7 }} nights</h3>
+        <p class="muted">
+          Each night's charge from the app, with its verdict once the next day has been metered:
+          green for about right, amber for more or less than needed (or read back differently), red
+          if the send failed or the battery ran short at the peak rate. {{ goodNights() }} of
+          {{ s.recent_nights_needed ?? 7 }} good so far: a week of good nights is the step before
+          sending every night automatically.
+        </p>
+        <ol class="test-steps recent-nights">
+          @for (n of recentNights(); track n.day) {
+            <li [class.passed]="n.rating === 'good'">
+              <span class="tick" aria-hidden="true">{{
+                n.rating === 'good' ? '✓' : n.rating === 'poor' ? '✗' : '○'
+              }}</span>
+              <div>
+                <strong>
+                  {{ nightLabel(n.day) }}
+                  @if (n.sent; as sent) {
+                    :
+                    {{
+                      sent.target_soc_percent !== null
+                        ? 'charge to ' + sent.target_soc_percent + '%'
+                        : 'no charge'
+                    }}, sent {{ sent.trigger === 'manual' ? 'by hand' : 'automatically' }}
+                  }
+                </strong>
+                @if (n.verdict; as v) {
+                  <p [class]="'night-verdict rating-' + (n.rating ?? 'fair')">
+                    <strong>{{ verdictLabel(v.verdict) }}.</strong> {{ v.summary }}
+                  </p>
+                } @else {
+                  <p
+                    [class]="
+                      n.rating === 'poor' ? 'night-verdict rating-poor' : 'muted night-verdict'
+                    "
+                  >
+                    {{ nightNote(n, s.tonight?.day) }}
+                  </p>
+                }
+              </div>
+            </li>
+          }
+        </ol>
+      }
+
+      <h3>How it's sent</h3>
+      <div class="send-routes" role="radiogroup" aria-label="How tonight's charge is sent">
+        <label class="choice">
+          <input
+            type="radio"
+            name="send-route"
+            [checked]="chosenRoute() === 'now'"
+            (change)="route.set('now')"
+          />
+          Now, by hand: preview it, check it and authorise it
+        </label>
+        <label class="choice">
+          <input
+            type="radio"
+            name="send-route"
+            [checked]="chosenRoute() === 'once'"
+            (change)="route.set('once')"
+          />
+          Once, when the plan is fixed
+        </label>
+        <label class="choice">
+          <input
+            type="radio"
+            name="send-route"
+            [checked]="chosenRoute() === 'nightly'"
+            (change)="route.set('nightly')"
+          />
+          Every night, when the plan is fixed
+        </label>
+      </div>
+
+      @if (chosenRoute() === 'now') {
+        <p>
+          Preview reads your inverter's schedule and works out tonight's plan, then lists every call
+          that would be made to Fox ESS. Nothing is written until you authorise them, and only the
+          calls listed are sent. Sending fixes tonight's plan at what was sent.
+        </p>
+        <button type="button" class="secondary" [disabled]="busy()" (click)="loadPreview()">
+          Preview
+        </button>
+        @if (proposal(); as p) {
+          <div class="preview">
+            <p>
+              Plan for {{ p.day }} ({{ modeLabels[p.mode] }}):
+              @if (p.discharge_start) {
+                force discharge to {{ p.discharge_soc_percent }}% at
+                {{ p.discharge_power_w | number: '1.0-0' }} W from
+                {{ localTime(p.discharge_start) }} to {{ localTime(p.discharge_stop) }},
               }
-            </ol>
+              @if (p.hold_start) {
+                hold the battery from {{ localTime(p.hold_start) }} to
+                {{ localTime(p.hold_stop) }} (house on the grid),
+              }
+              @if (p.target_soc_percent !== null) {
+                force charge to <strong>{{ p.target_soc_percent }}%</strong> at
+                {{ p.power_w | number: '1.0-0' }} W from {{ localTime(p.start) }} to
+                {{ localTime(p.stop) }}, minimum charge {{ p.min_soc_on_grid }}%.
+              } @else {
+                no charge needed.
+              }
+            </p>
+            <div class="table-scroll">
+              <table class="plan-table">
+                <thead>
+                  <tr>
+                    <th>Period</th>
+                    <th>Mode</th>
+                    <th>Charge to</th>
+                    <th>Power</th>
+                    <th>Change</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (r of p.removed; track $index) {
+                    <tr class="removed">
+                      <td>{{ r.start }}–{{ r.end }}</td>
+                      <td>{{ r.work_mode }}</td>
+                      <td>{{ r.charge_to_percent ?? '–' }}</td>
+                      <td>{{ r.power_w ?? '–' }}</td>
+                      <td>Yours, replaced</td>
+                    </tr>
+                  }
+                  @for (r of p.after; track $index) {
+                    <tr>
+                      <td>{{ r.start }}–{{ r.end }}</td>
+                      <td>{{ r.work_mode }}</td>
+                      <td>{{ r.charge_to_percent ?? '–' }}</td>
+                      <td>{{ r.power_w ?? '–' }}</td>
+                      <td>{{ changeOf(r, p) }}</td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+            <ul class="plain">
+              @for (n of p.notes; track $index) {
+                <li>{{ n }}</li>
+              }
+            </ul>
+            <h3>Calls to Fox ESS</h3>
+            @if (writeCount()) {
+              <p>
+                Authorising sends these {{ p.calls.length }} calls, in this order.
+                {{ writeCount() }} of them {{ writeCount() === 1 ? 'changes' : 'change' }} your
+                inverter. If your schedule or the plan has changed since this preview, the first
+                call stops it and nothing is written.
+              </p>
+              <ol class="api-calls">
+                @for (c of p.calls; track $index) {
+                  <li [class.writes]="c.writes">
+                    <span class="badge">{{ c.writes ? 'Changes inverter' : 'Read only' }}</span>
+                    {{ c.purpose }}
+                    <details>
+                      <summary>
+                        <code>{{ c.method }} {{ c.path }}</code>
+                      </summary>
+                      <pre>{{ c.body | json }}</pre>
+                    </details>
+                  </li>
+                }
+              </ol>
+              <label class="choice">
+                <input
+                  type="checkbox"
+                  [checked]="authorised()"
+                  [disabled]="busy() || !s.can_apply || !s.writes_allowed"
+                  (change)="authorised.set(!authorised())"
+                />
+                I've checked these calls and authorise them to be sent once, now
+              </label>
+              <button
+                type="button"
+                [disabled]="busy() || !authorised() || !s.can_apply || !s.writes_allowed"
+                (click)="apply(p)"
+              >
+                Authorise and send
+              </button>
+            } @else {
+              <p class="muted">
+                Nothing needs changing tonight, so no call would change your inverter.
+              </p>
+            }
+            @if (!s.can_apply) {
+              <p class="muted">Pass the write test up to step 4 to unlock this.</p>
+            }
+          </div>
+        }
+      } @else {
+        <h3>When the plan is fixed</h3>
+        @if (lock(); as l) {
+          <p>
+            Until then the plan follows each new forecast and battery reading, so it can move by a
+            few percent through the day. At this time it's fixed: kept exactly as it is, shown on
+            Tonight and Home, and sent to your inverter.
+          </p>
+          <label class="choice">
+            <input
+              type="radio"
+              name="lock-mode"
+              [checked]="lockMode() === 'before_window'"
+              (change)="lockMode.set('before_window')"
+            />
+            Just before the cheap rate starts (10 minutes before), using the freshest forecast
+          </label>
+          <label class="choice">
+            <input
+              type="radio"
+              name="lock-mode"
+              [checked]="lockMode() === 'set_time'"
+              (change)="lockMode.set('set_time')"
+            />
+            At a set time
+            <input
+              type="time"
+              aria-label="Lock time"
+              [value]="lockTime()"
+              [disabled]="lockMode() !== 'set_time'"
+              (input)="lockTime.set($any($event.target).value)"
+            />
+          </label>
+          <button type="button" [disabled]="busy() || !lockChanged()" (click)="saveLock()">
+            Save
+          </button>
+          <p class="muted" role="status">
+            @if (l.fixed_by === 'sent') {
+              The plan for {{ nightLabel(l.day) }} was fixed when it was sent, at {{ lockAt() }}.
+            } @else if (l.locked_at) {
+              The plan for {{ nightLabel(l.day) }} locked at {{ lockAt() }} and won't change now.
+            } @else {
+              The plan for {{ nightLabel(l.day) }} locks at <strong>{{ lockAt() }}</strong
+              >.
+            }
+            A set time after the cheap rate starts counts as just before it.
+          </p>
+        }
+        @if (chosenRoute() === 'once') {
+          <p>
+            The server sends the plan once, as it stands when it's fixed at
+            {{ lockAt() || 'the lock time' }}. That uses the freshest forecast, so it may differ a
+            little from a preview, and the log shows exactly what was sent.
+          </p>
+          @if (s.last_minute_day) {
+            <button
+              type="button"
+              class="secondary"
+              [disabled]="busy()"
+              (click)="cancelLastMinute()"
+            >
+              Don't send it
+            </button>
+          } @else if (s.auto_apply) {
+            <p class="muted">Automatic apply already sends the plan every night when it locks.</p>
+          } @else {
             <label class="choice">
               <input
                 type="checkbox"
-                [checked]="authorised()"
-                [disabled]="busy() || !s.can_apply || !s.writes_allowed"
-                (change)="authorised.set(!authorised())"
+                [checked]="lastMinuteAuthorised()"
+                [disabled]="busy() || !s.can_send_last_minute"
+                (change)="lastMinuteAuthorised.set(!lastMinuteAuthorised())"
               />
-              I've checked these calls and authorise them to be sent once, now
+              I authorise sending tonight's plan once, when it locks
             </label>
             <button
               type="button"
-              [disabled]="busy() || !authorised() || !s.can_apply || !s.writes_allowed"
-              (click)="apply(p)"
+              [disabled]="busy() || !lastMinuteAuthorised() || !s.can_send_last_minute"
+              (click)="sendLastMinute()"
             >
-              Authorise and send
+              Send at the last minute
             </button>
-          } @else {
+            @if (lastMinuteBlocked(s); as why) {
+              <p class="muted">{{ why }}</p>
+            }
+          }
+        } @else {
+          @if (!s.auto_apply_available) {
             <p class="muted">
-              Nothing needs changing tonight, so no call would change your inverter.
+              This server doesn't run the nightly apply. It needs SBP_AUTO_APPLY=true, or
+              <code>python -m app.control.nightly</code> from cron.
             </p>
           }
-          @if (!s.can_apply) {
-            <p class="muted">Pass the write test up to step 4 to unlock this.</p>
+          <label class="choice">
+            <input
+              type="checkbox"
+              [checked]="s.auto_apply"
+              [disabled]="busy() || (!s.can_auto_apply && !s.auto_apply)"
+              (change)="setAutoApply(!s.auto_apply)"
+            />
+            Send the plan automatically every night, when it's fixed
+          </label>
+          @if (!s.can_auto_apply && !s.auto_apply) {
+            <p class="muted">Unlocks after the write test and one successful Apply by hand.</p>
           }
-        </div>
-      }
-
-      <h3>Or send it at the last minute</h3>
-      <p>
-        Approve tonight's send now, and the server sends the plan as it stands when it locks, at
-        {{ lockAt() || 'the lock time' }}. That uses the freshest forecast, so it may differ a
-        little from a preview. It's sent once, and the log shows exactly what was sent.
-      </p>
-      @if (s.last_minute_day) {
-        <p class="notice" role="status">
-          The charge for {{ nightLabel(s.last_minute_day) }} will be sent at {{ lockAt() }}.
-        </p>
-        <button type="button" class="secondary" [disabled]="busy()" (click)="cancelLastMinute()">
-          Don't send it
-        </button>
-      } @else if (s.auto_apply) {
-        <p class="muted">Automatic apply already sends the plan every night when it locks.</p>
-      } @else {
-        <label class="choice">
-          <input
-            type="checkbox"
-            [checked]="lastMinuteAuthorised()"
-            [disabled]="busy() || !s.can_send_last_minute"
-            (change)="lastMinuteAuthorised.set(!lastMinuteAuthorised())"
-          />
-          I authorise sending tonight's plan once, when it locks
-        </label>
-        <button
-          type="button"
-          [disabled]="busy() || !lastMinuteAuthorised() || !s.can_send_last_minute"
-          (click)="sendLastMinute()"
-        >
-          Send at the last minute
-        </button>
-        @if (lastMinuteBlocked(s); as why) {
-          <p class="muted">{{ why }}</p>
+          <p class="muted">
+            If a night's plan or write fails, it's logged below and the inverter keeps the charge it
+            already had.
+          </p>
         }
       }
     </section>
@@ -414,32 +573,6 @@
           }
         </p>
       }
-    </section>
-
-    <section class="card">
-      <h2>5. Automatic nightly apply</h2>
-      @if (!s.auto_apply_available) {
-        <p class="muted">
-          This server doesn't run the nightly apply. It needs SBP_AUTO_APPLY=true, or
-          <code>python -m app.control.nightly</code> from cron.
-        </p>
-      }
-      <label class="choice">
-        <input
-          type="checkbox"
-          [checked]="s.auto_apply"
-          [disabled]="busy() || (!s.can_auto_apply && !s.auto_apply)"
-          (change)="setAutoApply(!s.auto_apply)"
-        />
-        Apply the plan automatically each evening, when it locks (set at the top of this page)
-      </label>
-      @if (!s.can_auto_apply && !s.auto_apply) {
-        <p class="muted">Unlocks after the write test and one successful Apply by hand.</p>
-      }
-      <p class="muted">
-        If a night's plan or write fails, it's logged below and the inverter keeps the charge it
-        already had.
-      </p>
     </section>
 
     <section class="card">
