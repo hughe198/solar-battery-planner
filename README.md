@@ -21,6 +21,9 @@ household usage and solar generation for the next day. Two planning modes:
 
 ## Running locally
 
+Once both are set up as below, `./start.sh` (Git Bash on Windows, or bash elsewhere) starts the
+backend and frontend together and stops both with Ctrl+C.
+
 Backend (FastAPI, Python 3.12+), on http://localhost:8000 with API docs at `/docs`:
 
 ```bash
