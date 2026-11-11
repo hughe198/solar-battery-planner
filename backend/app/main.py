@@ -10,13 +10,12 @@ from app import migrations, models  # noqa: F401  (registers tables)
 from app.api import auth, control, forecast, history, imports, plan, system, usage
 from app.config import settings
 from app.control import nightly
-from app.database import Base, SessionLocal, engine, get_db
+from app.database import SessionLocal, engine, get_db
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    migrations.upgrade(engine)
-    Base.metadata.create_all(engine)
+    migrations.prepare(engine)
     with SessionLocal() as db:
         models.ImportJob.fail_interrupted(db)
     stop = nightly.start_loop(SessionLocal) if settings.auto_apply else None
