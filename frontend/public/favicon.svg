@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <title>Solar Battery Planner</title>
+  <g fill="#16a34a">
+    <rect x="11.5" y="1" width="9" height="6" rx="2" />
+    <rect x="4.5" y="4.5" width="23" height="26.5" rx="5.5" />
+  </g>
+  <circle cx="16" cy="17.5" r="4.6" fill="#fbbf24" />
+  <g stroke="#fbbf24" stroke-width="2" stroke-linecap="round">
+    <line x1="23.00" y1="17.50" x2="25.20" y2="17.50" />
+    <line x1="20.95" y1="22.45" x2="22.51" y2="24.01" />
+    <line x1="16.00" y1="24.50" x2="16.00" y2="26.70" />
+    <line x1="11.05" y1="22.45" x2="9.49" y2="24.01" />
+    <line x1="9.00" y1="17.50" x2="6.80" y2="17.50" />
+    <line x1="11.05" y1="12.55" x2="9.49" y2="10.99" />
+    <line x1="16.00" y1="10.50" x2="16.00" y2="8.30" />
+    <line x1="20.95" y1="12.55" x2="22.51" y2="10.99" />
+  </g>
+</svg>
