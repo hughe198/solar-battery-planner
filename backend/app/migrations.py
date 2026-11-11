@@ -1,6 +1,7 @@
-"""Schema upgrades for databases created by earlier versions, run at startup before
-`create_all`. Each step checks what is there, so running them twice does nothing."""
+"""Schema upgrades for databases created by earlier versions, run at startup by `prepare`
+before `create_all`. Each step checks what is there, so running them twice does nothing."""
 
+from contextlib import contextmanager
 from datetime import time
 
 from sqlalchemy import Engine, inspect, text
@@ -143,3 +144,33 @@ def upgrade(engine: Engine) -> None:
     add_whole_day_control(engine)
     add_plan_lock_settings(engine)
     add_plan_fixed_by(engine)
+
+
+# Any fixed number, the same in every worker: Postgres advisory locks are keyed by it.
+STARTUP_LOCK_KEY = 0x50_1A_B4
+
+
+@contextmanager
+def _startup_lock(engine: Engine):
+    """Let one process at a time prepare the database. The server runs several workers that
+    all start together, and two creating the same table or enum type at once fails. SQLite
+    is only ever used by one process, so it needs no lock."""
+    if engine.dialect.name != "postgresql":
+        yield
+        return
+    with engine.connect() as conn:
+        conn.execute(text("SELECT pg_advisory_lock(:key)"), {"key": STARTUP_LOCK_KEY})
+        try:
+            yield
+        finally:
+            conn.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": STARTUP_LOCK_KEY})
+
+
+def prepare(engine: Engine) -> None:
+    """Bring the database up to date and create any missing tables, one process at a time.
+    The first worker does the work; the rest wait, then find nothing left to do."""
+    from app.database import Base
+
+    with _startup_lock(engine):
+        upgrade(engine)
+        Base.metadata.create_all(engine)

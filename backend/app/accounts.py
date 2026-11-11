@@ -19,7 +19,7 @@ from pydantic import EmailStr, TypeAdapter, ValidationError
 from sqlalchemy import select
 
 from app import migrations
-from app.database import Base, SessionLocal, engine
+from app.database import SessionLocal, engine
 from app.models import User
 from app.security import hash_password
 
@@ -53,8 +53,7 @@ def main(argv: list[str] | None = None, prompt: Callable[[str], str] = getpass) 
         return 2
 
     # As the server does on startup, so this works on a database it hasn't opened yet.
-    migrations.upgrade(engine)
-    Base.metadata.create_all(engine)
+    migrations.prepare(engine)
     with SessionLocal() as db:
         user = db.scalar(select(User).where(User.email == email))
         if args.action == "create" and user is not None:

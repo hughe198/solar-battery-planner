@@ -1,3 +1,4 @@
+import os
 import stat
 
 import pytest
@@ -29,7 +30,8 @@ def test_defaults_write_a_file_settings_can_read(tmp_path):
     assert len(s.jwt_secret) >= 64 and len(s.credentials_secret) >= 64
     assert s.jwt_secret != s.credentials_secret
     assert "dev-only" not in s.jwt_secret
-    assert stat.S_IMODE(out.stat().st_mode) == 0o600
+    if os.name != "nt":  # Windows has no Unix file modes; the server is Linux
+        assert stat.S_IMODE(out.stat().st_mode) == 0o600
 
 
 def test_interactive_answers(tmp_path):
