@@ -26,7 +26,8 @@ from app.weather.open_meteo import OpenMeteoClient, WeatherError
 
 log = logging.getLogger(__name__)
 
-# A local day with at least this many half hours stored is not fetched again.
+# A local day with at least this many half hours stored, its last among them, is not fetched
+# again. Fewer than 48 allows for the clock change and the odd gap in Fox's data.
 COMPLETE_DAY_INTERVALS = 46
 
 
@@ -81,15 +82,22 @@ def save_intervals(
     return len(rows)
 
 
-def intervals_on_local_day(db: Session, system: System, day: date) -> int:
+def local_day_complete(db: Session, system: System, day: date) -> bool:
+    """Whether a local day is stored in full. A day fetched before it ended (a sync late in the
+    evening) can have enough half hours but not its last ones, so it needs the final one too."""
     start, end = local_day_bounds(day, system.timezone)
-    return db.scalar(
-        select(func.count(UsageRecord.id)).where(
+    count, last = db.execute(
+        select(func.count(UsageRecord.id), func.max(UsageRecord.start)).where(
             UsageRecord.system_id == system.id,
             UsageRecord.start >= _naive_utc(start),
             UsageRecord.start < _naive_utc(end),
         )
-    )
+    ).one()
+    if count < COMPLETE_DAY_INTERVALS or last is None:
+        return False
+    if isinstance(last, str):  # SQLite hands back max() of a datetime column as text
+        last = datetime.fromisoformat(last)
+    return last.replace(tzinfo=None) >= _naive_utc(end - timedelta(minutes=30))
 
 
 def sync_weather(db: Session, system: System, client: OpenMeteoClient) -> int:
@@ -186,7 +194,7 @@ def run_fox_backfill(
             )
             day = job.end_date
             while day >= job.start_date:
-                if intervals_on_local_day(db, system, day) >= COMPLETE_DAY_INTERVALS:
+                if local_day_complete(db, system, day):
                     job.days_skipped += 1
                 else:
                     start, end = local_day_bounds(day, system.timezone)

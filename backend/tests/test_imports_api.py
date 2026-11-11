@@ -149,6 +149,27 @@ def test_sync_imports_days_and_matches_weather(client, headers, weather):
     assert FakeFox.calls == []
 
 
+def test_sync_refetches_a_day_synced_before_it_ended(client, headers):
+    """A sync at 23:00 stores 46 half hours; the next sync must still fetch the last two."""
+    connect(client, headers)
+    early = "".join(
+        f"2024-06-01T{h:02d}:{m:02d},0.25,0.1,0.15,0\n" for h in range(23) for m in (0, 30)
+    )
+    upload = {"file": ("u.csv", CSV_HEADER + early, "text/csv")}
+    client.post("/api/import/csv", files=upload, headers=headers)
+    body = {"start_date": "2024-06-01", "end_date": "2024-06-01"}
+    client.post("/api/import/fox-ess/sync", json=body, headers=headers)
+    job = client.get("/api/import/status", headers=headers).json()["latest_job"]
+    assert job["days_skipped"] == 0
+    assert len(FakeFox.calls) == 1
+    rows = client.get(
+        "/api/import/intervals",
+        params={"start": "2024-06-01", "end": "2024-06-01"},
+        headers=headers,
+    ).json()
+    assert len(rows) == 48
+
+
 def test_sync_validation(client, headers):
     body = {"start_date": "2024-06-01", "end_date": "2024-06-02"}
     assert client.post("/api/import/fox-ess/sync", json=body, headers=headers).status_code == 400
