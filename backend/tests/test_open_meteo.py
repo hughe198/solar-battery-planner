@@ -7,6 +7,7 @@ from app.weather.open_meteo import (
     ForecastCache,
     OpenMeteoClient,
     WeatherError,
+    day_ahead_cache,
     parse_hourly,
 )
 
@@ -180,3 +181,23 @@ def test_no_fallback_when_the_cache_misses_part_of_the_range():
     client.forecast(51.85, -2.22, date(2026, 11, 9), date(2026, 11, 9))
     with pytest.raises(WeatherError):
         client.forecast(51.85, -2.22, date(2026, 11, 9), date(2026, 11, 10))
+
+
+def test_day_ahead_asks_for_the_previous_days_forecast_once():
+    asked = []
+
+    def handler(request):
+        asked.append((request.url.host, request.url.params["hourly"]))
+        body = day_payload("2026-11-09")["hourly"]
+        renamed = {k if k == "time" else k + "_previous_day1": v for k, v in body.items()}
+        return httpx.Response(200, json={"hourly": renamed})
+
+    client = OpenMeteoClient(http=httpx.Client(transport=httpx.MockTransport(handler)))
+    day_ahead_cache.clear()
+    rows = client.day_ahead(51.5, -0.1, date(2026, 11, 9), date(2026, 11, 9))
+    assert len(rows) == 24 and rows[0].shortwave_radiation_wm2 == 100.0
+    assert asked[0][0] == "previous-runs-api.open-meteo.com"
+    assert "shortwave_radiation_previous_day1" in asked[0][1]
+    # Past forecasts don't change, so the same question isn't sent again.
+    assert client.day_ahead(51.5, -0.1, date(2026, 11, 9), date(2026, 11, 9)) == rows
+    assert len(asked) == 1

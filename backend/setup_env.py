@@ -151,6 +151,15 @@ VARS: list[Var] = [
         kind="url",
         advanced=True,
     ),
+    Var(
+        "open_meteo_previous_runs_url",
+        "Open-Meteo previous runs API",
+        "What was forecast a day ahead for recent days, to learn how far solar falls short of "
+        "its forecast.",
+        default="https://previous-runs-api.open-meteo.com/v1/forecast",
+        kind="url",
+        advanced=True,
+    ),
 ]
 
 

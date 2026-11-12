@@ -47,6 +47,9 @@ class FakeWeather:
         self.fail = fail
         self.requests = []
 
+    def day_ahead(self, lat, lon, start, end):
+        return []  # no past forecasts: the dull day falls back on the darkest recent day
+
     def hourly(self, lat, lon, start, end):
         if self.fail:
             raise WeatherError("down")
