@@ -4,7 +4,7 @@ import { USAGE_LABELS } from '../core/usage.service';
 import { formatPence } from '../core/plan.service';
 
 /** Lost less than this and the charge was about right, as the replay's own review says. */
-const ABOUT_RIGHT_PENCE = 1;
+const ABOUT_RIGHT_PENCE = 5;
 const COSTLY_PENCE = 20;
 
 type Rating = 'good' | 'fair' | 'poor';

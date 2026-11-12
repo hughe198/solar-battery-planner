@@ -260,6 +260,15 @@ def test_judges_a_suggested_charge_against_what_really_happened(client, headers)
         assert right.verdict == "about right" and right.lost_pence < 1
         assert "Verdict: about right" in right.summary
 
+    # A penny or two out is still about right (owner's request, 12 November 2026: "too
+    # little" for 1p was harsh); 5p or more is not.
+    by_loss = [r.judge(day, float(p)) for p in range(100, 10, -1)]
+    near = [v for v in by_loss if 1 <= v.lost_pence < 5]
+    far = [v for v in by_loss if v.lost_pence >= 5]
+    assert near and far
+    assert all(v.verdict == "about right" for v in near)
+    assert all(v.verdict != "about right" for v in far)
+
     none = r.judge(day, None)  # a night it suggested no charge
     assert none.suggested_percent == pytest.approx(none.before_percent, abs=0.1)
     assert none.summary.startswith("No charge was suggested")
