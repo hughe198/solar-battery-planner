@@ -71,6 +71,10 @@ class Backtest:
     days: list[BacktestDay]
 
 
+# Days looked back over for how far solar has fallen short of its day-ahead forecast.
+SHORTFALL_LOOKBACK_DAYS = 45
+
+
 @dataclass(frozen=True)
 class DayForecast:
     day: date
@@ -87,6 +91,9 @@ class DayForecast:
     usage_notes: list[str] = field(default_factory=list)
     # What the weather does to the day's solar and usage, in a sentence and a few points.
     weather: "WeatherStory | None" = None
+    # The most the day's solar has fallen short of its day-ahead forecast recently (kWh), when
+    # the dull day's solar allows for that; None when it comes from the darkest recent day.
+    solar_shortfall_kwh: float | None = None
 
 
 class Forecaster(Protocol):

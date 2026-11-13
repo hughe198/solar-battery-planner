@@ -26,6 +26,8 @@ HOURLY_VARIABLES = (
 )
 RADIATION_VARIABLES = ("shortwave_radiation", "direct_radiation", "diffuse_radiation")
 RECENT_DAYS = 7
+# Open-Meteo's name for "as forecast a day earlier": each variable with this on the end.
+DAY_AHEAD_SUFFIX = "_previous_day1"
 # Open-Meteo has short outages (502/503/504) and rate limits (429). Retry those a couple of
 # times before giving up; other errors (bad request, bad JSON) won't fix themselves.
 RETRY_DELAYS_SECONDS = (1.0, 3.0)
@@ -82,6 +84,10 @@ class ForecastCache:
 
 
 forecast_cache = ForecastCache()
+# Day-ahead forecasts for past days never change, and a plan is made many times a day: keep
+# the last few answers (by place and dates) rather than ask again each time.
+day_ahead_cache: dict[tuple[float, float, date, date], "list[HourlyWeather]"] = {}
+DAY_AHEAD_CACHE_SIZE = 8
 
 
 def _describe(exc: Exception) -> str:
@@ -157,21 +163,27 @@ class OpenMeteoClient:
         self.cache = forecast_cache if cache is None else cache
         self.now = now or (lambda: datetime.now(timezone.utc))
 
-    def _get(self, url: str, lat: float, lon: float, start: date, end: date) -> list[HourlyWeather]:
+    def _get(
+        self, url: str, lat: float, lon: float, start: date, end: date, suffix: str = ""
+    ) -> list[HourlyWeather]:
         params = {
             "latitude": lat,
             "longitude": lon,
             # One extra day each side so every hour in range has both halves after re-keying.
             "start_date": (start - timedelta(days=1)).isoformat(),
             "end_date": (end + timedelta(days=1)).isoformat(),
-            "hourly": ",".join(HOURLY_VARIABLES),
+            "hourly": ",".join(v + suffix for v in HOURLY_VARIABLES),
             "timezone": "GMT",
         }
         for attempt in range(len(RETRY_DELAYS_SECONDS) + 1):
             try:
                 resp = self.http.get(url, params=params)
                 resp.raise_for_status()
-                return parse_hourly(resp.json())
+                payload = resp.json()
+                if suffix:
+                    hourly = payload.get("hourly") or {}
+                    payload = {"hourly": {k.removesuffix(suffix): v for k, v in hourly.items()}}
+                return parse_hourly(payload)
             except (httpx.HTTPError, ValueError) as exc:
                 # Not timeouts: each already waited a full minute.
                 transient = (
@@ -227,6 +239,24 @@ class OpenMeteoClient:
             return cached
         self.cache.store(lat, lon, rows, self.now())
         return rows
+
+    def day_ahead(self, lat: float, lon: float, start: date, end: date) -> list[HourlyWeather]:
+        """What was forecast a day ahead for the past hours whose UTC date is within
+        [start, end] inclusive: the weather the planner would have been told, to compare with
+        what the panels then made."""
+        key = (round(lat, 4), round(lon, 4), start, end)
+        if key not in day_ahead_cache:
+            rows = self._in_range(
+                self._get(
+                    settings.open_meteo_previous_runs_url, lat, lon, start, end, DAY_AHEAD_SUFFIX
+                ),
+                start,
+                end,
+            )
+            while len(day_ahead_cache) >= DAY_AHEAD_CACHE_SIZE:
+                del day_ahead_cache[next(iter(day_ahead_cache))]
+            day_ahead_cache[key] = rows
+        return day_ahead_cache[key]
 
     @staticmethod
     def _in_range(rows: list[HourlyWeather], start: date, end: date) -> list[HourlyWeather]:

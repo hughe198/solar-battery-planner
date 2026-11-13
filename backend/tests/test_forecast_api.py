@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -5,6 +6,7 @@ import pytest
 
 from app.api.imports import get_weather_client
 from app.main import app
+from app.weather.open_meteo import WeatherError, day_ahead_cache
 from tests.conftest import register
 from tests.test_imports_api import CSV_HEADER, FakeWeather
 from tests.test_system import SYSTEM
@@ -103,3 +105,41 @@ def test_forecast_weather_outage(client, headers):
 def test_needs_a_system(client, weather):
     h = register(client)
     assert client.get("/api/forecast", headers=h).status_code == 404
+
+
+class DayAheadWeather(FakeForecastWeather):
+    """Past day-ahead forecasts that promised `times` as much sun as there was."""
+
+    def __init__(self, times=1.0, down=False):
+        super().__init__()
+        self.times, self.down = times, down
+
+    def day_ahead(self, lat, lon, start, end):
+        if self.down:
+            raise WeatherError("down")
+        return [
+            replace(h, shortwave_radiation_wm2=h.shortwave_radiation_wm2 * self.times)
+            for h in self.hourly(lat, lon, start, end)
+        ]
+
+
+def test_dull_day_allows_for_how_far_solar_has_fallen_short_of_its_forecast(client, headers):
+    upload_days(client, headers, date(2024, 5, 1), 30)
+
+    def solar(weather):
+        app.dependency_overrides[get_weather_client] = lambda: weather
+        day_ahead_cache.clear()
+        resp = client.get("/api/forecast", headers=headers)
+        assert resp.status_code == 200, resp.text
+        return resp.json()["solar"]
+
+    darkest = solar(FakeForecastWeather())  # no past forecasts: the darkest recent day
+    accurate = solar(DayAheadWeather(times=1.0))
+    optimistic = solar(DayAheadWeather(times=2.0))
+    # Forecasts that were right leave the dull day at the forecast; forecasts that promised
+    # twice the sun bring it down.
+    assert accurate["low"] == pytest.approx(accurate["expected"], rel=0.05)
+    assert optimistic["low"] < accurate["low"] - 0.5
+    assert optimistic["expected"] == accurate["expected"] == darkest["expected"]
+    # If the past forecasts can't be fetched the plan still comes, on the darkest day.
+    assert solar(DayAheadWeather(down=True)) == darkest

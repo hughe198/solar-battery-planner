@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date, datetime, time, timedelta, timezone
 
 import numpy as np
@@ -274,6 +275,14 @@ def test_charges_enough_to_last_through_the_peak_on_a_dull_day():
     # Without the rule, leaning under on cost alone ran out in the peak on the dull day.
     assert own.target_soc_percent > 50
     assert any("16:00–19:00" in r and "dull" in r for r in own.reasons)
+    assert not any("fallen short" in r for r in own.reasons)
+
+    # When the dull day comes from the forecast's own recent misses, the plan says so.
+    learned = plan(flux_system(), replace(forecast, solar_shortfall_kwh=3.1), start_soc_percent=10)
+    assert any(
+        "forecast less 3.1 kWh" in r and "in the last 45 days" in r
+        for r in learned.recommendations[0].reasons
+    )
 
 
 def test_never_charges_above_the_owners_grid_charge_maximum():

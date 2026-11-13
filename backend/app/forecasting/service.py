@@ -4,6 +4,7 @@ Training is a few small least-squares solves, so it runs on every request rather
 stored; a forecast always reflects the latest import and the current system description.
 """
 
+import logging
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -13,6 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.forecasting.base import (
+    SHORTFALL_LOOKBACK_DAYS,
     Backtest,
     BacktestDay,
     DayForecast,
@@ -42,6 +44,8 @@ from app.importers.base import INTERVAL
 from app.models import System, UsageExpectation, UsageLevel, UsageRecord, WeatherRecord
 from app.weather.open_meteo import HourlyWeather, OpenMeteoClient, WeatherError
 
+log = logging.getLogger(__name__)
+
 # Below this many days of history the generic prior still carries real weight.
 LEARNED_DAYS = 14
 # A local day needs this many half hours (with weather) to count towards daily accuracy.
@@ -59,6 +63,13 @@ SOLAR_DAY_FLOOR = (0.8, 1.15)
 # follow the season; the 10th percentile of a month's errors missed days like 5 November
 # 2026 (0.52 kWh against a dull day of 0.8).
 DARK_DAY_LOOKBACK_DAYS = 14
+# Better, when it can be measured: the dull day's solar is the forecast less the most the
+# panels have fallen short of their day-ahead forecast in the last `SHORTFALL_LOOKBACK_DAYS`.
+# Backtested on 51 nights to 11 November 2026 against the darkest-day rule: less charge on
+# days forecast sunny (72% against 82% on average in the dull weeks), less bought at the peak
+# (1.1 kWh against 1.9) and less lost against hindsight (163p against 196p).
+# With fewer days than this to compare, the dull day falls back on the darkest recent day.
+SHORTFALL_MIN_DAYS = 14
 NOON_SLOT = 24
 SUNSET_SOLAR_KWH = 0.01
 # Half hours predicted below this share of the panels' rated output (dawn, dusk, heavy cloud)
@@ -299,6 +310,57 @@ def _recent_solar(db: Session, system: System) -> tuple[Calendar, np.ndarray]:
     )
 
 
+def _recent_daily_solar(db: Session, system: System) -> dict[date, float]:
+    """Solar made on each complete local day of the last `SHORTFALL_LOOKBACK_DAYS`."""
+    latest = db.scalar(
+        select(func.max(UsageRecord.start)).where(UsageRecord.system_id == system.id)
+    )
+    if latest is None:
+        return {}
+    records = db.execute(
+        select(UsageRecord.start, UsageRecord.solar_kwh).where(
+            UsageRecord.system_id == system.id,
+            UsageRecord.start > latest - timedelta(days=SHORTFALL_LOOKBACK_DAYS + 1),
+        )
+    ).all()
+    zone = ZoneInfo(system.timezone)
+    count: dict[date, int] = {}
+    total: dict[date, float] = {}
+    for start, solar in records:
+        local = _utc(start).astimezone(zone).date()
+        count[local] = count.get(local, 0) + 1
+        total[local] = total.get(local, 0.0) + float(solar)
+    newest = max(total)
+    return {
+        d: kwh
+        for d, kwh in total.items()
+        if count[d] >= COMPLETE_DAY_INTERVALS and (newest - d).days < SHORTFALL_LOOKBACK_DAYS
+    }
+
+
+def worst_solar_shortfall(
+    system: System, models: Models, made: dict[date, float], day_ahead: list[HourlyWeather]
+) -> float | None:
+    """The most a recent day's solar fell short of what its day-ahead weather forecast promised
+    (kWh; 0 if it never did), or None with too few days to say. `made` is what the panels made
+    on each local day; `day_ahead` is the weather forecast a day before for those days."""
+    hours = [h for h in day_ahead if h.shortwave_radiation_wm2 is not None]
+    if not hours or not system.arrays:
+        return None
+    weather = _half_hour_weather(system, hours)
+    calendar = Calendar.of(weather.starts, system.timezone)
+    _, solar = predict(system, models, weather, calendar)
+    promised: dict[date, float] = {}
+    count: dict[date, int] = {}
+    for local, kwh in zip(calendar.local_day, solar):
+        promised[local] = promised.get(local, 0.0) + float(kwh)
+        count[local] = count.get(local, 0) + 1
+    short = [promised[d] - made[d] for d in made if count.get(d, 0) >= COMPLETE_DAY_INTERVALS]
+    if len(short) < SHORTFALL_MIN_DAYS:
+        return None
+    return max(max(short), 0.0)
+
+
 def _widen(ratios: tuple[float, float], floor: tuple[float, float]) -> tuple[float, float]:
     low, high = ratios
     return (
@@ -489,8 +551,17 @@ class HistoryForecaster:
         # From the readings alone: the history above waits for weather, which can lag a day.
         darkest = darkest_recent_day(*_recent_solar(self.db, system))
         solar_expected = float(solar.sum())
-        if darkest is not None and solar_expected > 0:
-            solar_day = (min(solar_day[0], darkest / solar_expected), solar_day[1])
+        # The shortfall is a day's worth, so it comes off the day's own solar (the half hours
+        # can also cover the evening before).
+        own = np.array([d == day for d in calendar.local_day], dtype=bool)
+        own_solar = float(solar[own].sum())
+        shortfall = self._solar_shortfall(system, models)
+        if shortfall is not None and own_solar > 0:
+            solar_day = (max(own_solar - shortfall, 0.0) / own_solar, solar_day[1])
+        else:
+            shortfall = None
+            if darkest is not None and solar_expected > 0:
+                solar_day = (min(solar_day[0], darkest / solar_expected), solar_day[1])
 
         intervals = [
             IntervalForecast(
@@ -538,7 +609,26 @@ class HistoryForecaster:
             backtest=checked[0] if checked else None,
             usage_notes=notes,
             weather=story,
+            solar_shortfall_kwh=None if shortfall is None else round(shortfall, 2),
         )
+
+    def _solar_shortfall(self, system: System, models: Models) -> float | None:
+        """See `worst_solar_shortfall`. None when there is too little to go on, or the past
+        forecasts can't be fetched: the plan then falls back on the darkest recent day."""
+        made = _recent_daily_solar(self.db, system)
+        if len(made) < SHORTFALL_MIN_DAYS:
+            return None
+        try:
+            day_ahead = self.weather_client.day_ahead(
+                system.latitude,
+                system.longitude,
+                min(made) - timedelta(days=1),
+                max(made) + timedelta(days=1),
+            )
+        except WeatherError as exc:
+            log.warning("Couldn't fetch past day-ahead forecasts, using the darkest day: %s", exc)
+            return None
+        return worst_solar_shortfall(system, models, made, day_ahead)
 
     def _weather_story(
         self,

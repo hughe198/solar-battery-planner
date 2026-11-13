@@ -22,7 +22,7 @@ from zoneinfo import ZoneInfo
 
 import numpy as np
 
-from app.forecasting.base import DayForecast, IntervalForecast
+from app.forecasting.base import SHORTFALL_LOOKBACK_DAYS, DayForecast, IntervalForecast
 from app.importers.base import INTERVAL
 from app.models import PlanningMode, System
 from app.planner.base import (
@@ -600,7 +600,14 @@ def plan(
                 f"peak even on a dull day ({results['dull'].solar_kwh:.1f} kWh solar, "
                 f"{results['dull'].load_kwh:.1f} kWh use). That's about {pence(max(extra, 0))} "
                 f"more on an average day than {battery.percent(targets[cheapest]):.0f}%, against "
-                "the peak rate if it runs short.",
+                "the peak rate if it runs short."
+                + (
+                    ""
+                    if forecast.solar_shortfall_kwh is None
+                    else " The dull day's solar is the forecast less "
+                    f"{forecast.solar_shortfall_kwh:.1f} kWh, the most your panels have fallen "
+                    f"short of their forecast in the last {SHORTFALL_LOOKBACK_DAYS} days."
+                ),
             )
         if drain:
             reasons.insert(0, explainer.discharge(drain, before_kwh, start_kwh))

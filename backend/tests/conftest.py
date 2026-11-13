@@ -8,7 +8,7 @@ from app.config import settings
 from app.control import service
 from app.database import Base, get_db, get_session_factory
 from app.main import app
-from app.weather.open_meteo import forecast_cache
+from app.weather.open_meteo import day_ahead_cache, forecast_cache
 
 
 @pytest.fixture(autouse=True)
@@ -20,6 +20,7 @@ def isolated(monkeypatch):
     monkeypatch.setattr(settings, "inverter_writes", False)
     monkeypatch.setattr(settings, "registration_open", True)
     forecast_cache.clear()
+    day_ahead_cache.clear()
 
 
 @pytest.fixture

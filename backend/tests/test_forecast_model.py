@@ -4,8 +4,16 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from app.forecasting import service
 from app.forecasting.model import Calendar, LoadModel, SolarModel, typical_profile
-from app.forecasting.service import History, backtest, darkest_recent_day, day_half_hours, fit
+from app.forecasting.service import (
+    History,
+    backtest,
+    darkest_recent_day,
+    day_half_hours,
+    fit,
+    worst_solar_shortfall,
+)
 from app.forecasting.solar import (
     DEFAULT_PERFORMANCE_RATIO,
     HalfHourWeather,
@@ -14,6 +22,7 @@ from app.forecasting.solar import (
     split_hours,
     sun_position,
 )
+from app.weather.open_meteo import HourlyWeather
 
 LAT, LON = 51.5, -0.12
 ARRAYS = [Orientation(4.0, 35, 180), Orientation(2.0, 30, 90)]
@@ -183,3 +192,40 @@ def test_load_heating_term_raises_cold_day_usage():
 def test_solar_model_never_predicts_negative():
     model = SolarModel(np.array([0.8, 0.0]), 10)
     assert np.all(model.predict(np.array([[0.0, 1.0], [1.0, 1.0]])) >= 0)
+
+
+def promised_days(first: date, days: int, wm2: float = 500.0) -> list[HourlyWeather]:
+    """Day-ahead weather promising sun for four hours a day."""
+    hours = []
+    for d in range(days):
+        midnight = datetime.combine(first + timedelta(days=d), datetime.min.time(), timezone.utc)
+        for h in range(24):
+            sun = wm2 if 10 <= h < 14 else 0.0
+            hours.append(HourlyWeather(midnight + timedelta(hours=h), 10.0, 50.0, sun, sun, 0.0))
+    return hours
+
+
+def test_worst_solar_shortfall_is_the_biggest_recent_miss(monkeypatch):
+    # The planner's dull day (owner's request, 12 November 2026): how far the panels have really
+    # fallen short of the day-ahead forecast, not the darkest day whatever the forecast says.
+    # A stand-in model: 1 kWh for each 1000 W/m2 in a half hour, so each day promises 4 kWh.
+    monkeypatch.setattr(
+        service, "predict", lambda system, models, weather, calendar: (None, weather.ghi / 1000)
+    )
+    system = SimpleNamespace(latitude=LAT, longitude=LON, timezone="UTC", arrays=[object()])
+    first = date(2026, 10, 1)
+    made = {first + timedelta(days=d): 4.0 for d in range(20)}
+    made[first + timedelta(days=3)] = 1.5  # promised 4, made 1.5
+    made[first + timedelta(days=7)] = 6.0  # more than promised doesn't count
+    ahead = promised_days(first, 20)
+    assert worst_solar_shortfall(system, None, made, ahead) == pytest.approx(2.5)
+
+    # Never short: nothing to allow for.
+    assert worst_solar_shortfall(system, None, {d: 5.0 for d in made}, ahead) == 0
+    # Too few days to judge, a day without its forecast, or no panels: no answer.
+    few = dict(list(made.items())[:13])
+    assert worst_solar_shortfall(system, None, few, ahead) is None
+    assert worst_solar_shortfall(system, None, made, promised_days(first, 13)) is None
+    assert worst_solar_shortfall(system, None, made, []) is None
+    no_panels = SimpleNamespace(latitude=LAT, longitude=LON, timezone="UTC", arrays=[])
+    assert worst_solar_shortfall(no_panels, None, made, ahead) is None
