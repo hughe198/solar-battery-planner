@@ -55,7 +55,10 @@ MAX_DAYS = 120
 # Days of earlier history the review compares the latest day with.
 TYPICAL_DAYS = 28
 # A charge within this of the hindsight best counts as about right.
-ABOUT_RIGHT_PENCE = 1.0
+ABOUT_RIGHT_PENCE = 5.0
+# The hindsight yardstick ("the least that would have done as well") is the lowest charge
+# within this of the best: tighter than about right, so it doesn't understate what was needed.
+AS_GOOD_PENCE = 1.0
 FULL_SOC_PERCENT = 99
 # A day's chart opens this evening before the window, if the window opens later.
 LEAD_UP_FROM = time(21, 0)
@@ -316,7 +319,7 @@ class Replayer:
         best = best_index(scores, tolerance=0.0)
         # Leftover charge carries over, so on a day that never runs short many charges cost
         # within a penny of the cheapest: the least of them is the useful yardstick.
-        enough = best_index(scores, tolerance=ABOUT_RIGHT_PENCE)
+        enough = best_index(scores, tolerance=AS_GOOD_PENCE)
         lost = float(max(scores[suggested] - scores[best], 0.0))
         charged_lost = float(max(scores[actual] - scores[best], 0.0))
 
